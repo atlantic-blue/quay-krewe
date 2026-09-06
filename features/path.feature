@@ -17,6 +17,10 @@ Feature: A project holds a numbered path of steps
   A step that names no predecessor waits for the number below it, and step one waits for nobody. A
   default of nothing would make the gate worthless, because every step would be ready at once.
 
+  A feature is delivered in milestones. One heading with one hash names a milestone, and every step
+  under it belongs to it, so a reader sees what a run of steps adds up to. Step numbers stay unique
+  across the whole feature and do not start again under each milestone.
+
   There is no way to empty a path. A document with no step heading is refused, so a wrong file path
   cannot take somebody's path away.
 
@@ -292,6 +296,187 @@ Feature: A project holds a numbered path of steps
       a project carries a brief
       """
     Then the path write warns about nothing
+
+  # The milestones. A feature is delivered in milestones, and one document carries the whole path of
+  # one feature, so the milestone headings sit in the same document as the steps. One hash names a
+  # milestone and two name a step, so a milestone heading sits above the steps under it.
+
+  Scenario: A document with three milestone headings writes three milestone rows
+    When the operator sets the path to:
+      """
+      # 1. A project carries a design
+      The project has nowhere to keep what it is for.
+
+      ## 1. The store holds a project's brief
+      ## 2. The store holds a project's design
+
+      # 2. A design carries an approval
+      Nothing is built from a design nobody read.
+
+      ## 3. The operator approves the design
+
+      # 3. A design carries a numbered path
+      The design has nowhere to keep the atomised changes.
+
+      ## 4. The store holds a path
+      """
+    And the operator reads the path
+    Then the path holds 3 milestones
+    And the milestones read 1, 2, 3 in that order
+    And milestone 1 is titled "A project carries a design"
+    And milestone 3 is titled "A design carries a numbered path"
+    And milestone 1 says its intention is "The project has nowhere to keep what it is for."
+    And step 1 is in milestone 1
+    And step 2 is in milestone 1
+    And step 3 is in milestone 2
+    And step 4 is in milestone 3
+
+  # A path is a path before anybody groups it, so a document that names no milestone is not an error.
+  Scenario: A document with no milestone heading gives every step a milestone of 0
+    When the operator sets the path to:
+      """
+      ## 1. The store holds a project's brief
+      ## 2. The store holds a project's design
+      """
+    And the operator reads the path
+    Then the path holds 0 milestones
+    And step 1 is in milestone 0
+    And step 2 is in milestone 0
+
+  Scenario: A step before the first milestone heading is in no milestone
+    When the operator sets the path to:
+      """
+      ## 1. The store holds a project's brief
+
+      # 1. A design carries a numbered path
+
+      ## 2. The store holds a path
+      """
+    And the operator reads the path
+    Then step 1 is in milestone 0
+    And step 2 is in milestone 1
+
+  # The trap in this grammar. A reader expects the numbering to start again under each milestone, and
+  # it does not: a feature holds one step 1. So the refusal says that, rather than naming the number
+  # and leaving the person to work out why two milestones did not make two paths.
+  Scenario: Two steps numbered 1 under different milestones are refused, naming both lines
+    When the operator sets the path to:
+      """
+      # 1. A project carries a design
+
+      ## 1. The store holds a project's brief
+
+      # 2. A design carries a numbered path
+
+      ## 1. The store holds a path
+      """
+    Then the control plane refuses it as invalid
+    And the refusal names lines 3 and 7
+    And the refusal says "Step numbers are unique across the whole feature, and not inside a milestone"
+    And the project has no path
+
+  # A document may still open with a title, so a hash line carrying no number is ignored the way a
+  # paragraph is rather than read as a milestone with no number.
+  Scenario: A document opening with a hash line that carries no number parses, and that line is ignored
+    When the operator sets the path to:
+      """
+      # The path
+
+      Two steps, and the order they go in.
+
+      ## 1. The store holds a project's brief
+      ## 2. The store holds a project's design
+      """
+    And the operator reads the path
+    Then the path holds 2 steps
+    And the path holds 0 milestones
+    And step 1 is in milestone 0
+
+  Scenario: A milestone numbered zero is refused
+    When the operator sets the path to:
+      """
+      # 0. A project carries a design
+
+      ## 1. The store holds a project's brief
+      """
+    Then the control plane refuses it as invalid
+    And the refusal names line 1
+    And the project has no path
+
+  Scenario: A document with a duplicate milestone number is refused, naming both lines
+    When the operator sets the path to:
+      """
+      # 1. A project carries a design
+
+      ## 1. The store holds a project's brief
+
+      # 1. A design carries a numbered path
+
+      ## 2. The store holds a path
+      """
+    Then the control plane refuses it as invalid
+    And the refusal names lines 1 and 5
+    And the project has no path
+
+  Scenario: A milestone with no title is refused
+    When the operator sets the path to:
+      """
+      # 1.
+
+      ## 1. The store holds a project's brief
+      """
+    Then the control plane refuses it as invalid
+    And the refusal names line 1
+    And the project has no path
+
+  # A milestone nobody planned steps for is worth seeing, so it is kept and said out loud.
+  Scenario: A milestone with no step under it warns and is kept
+    When the operator sets the path to:
+      """
+      # 1. A project carries a design
+
+      # 2. A design carries a numbered path
+
+      ## 1. The store holds a path
+      """
+    Then the path write warns "milestone 1 has no step under it"
+    And the operator reads the path
+    And the path holds 2 milestones
+
+  Scenario: A milestone with no line under its heading warns and is kept
+    When the operator sets the path to:
+      """
+      # 1. A project carries a design
+
+      ## 1. The store holds a project's brief
+      """
+    Then the path write warns "milestone 1 says nothing under its heading"
+    And the operator reads the path
+    And the path holds 1 milestones
+
+  # The milestones are replaced whole by the document that writes the steps, so a milestone the new
+  # document does not carry is gone. A milestone holds no state of its own, so nothing is lost.
+  Scenario: A second document replaces the milestones of the first
+    When the operator sets the path to:
+      """
+      # 1. A project carries a design
+
+      ## 1. The store holds a project's brief
+
+      # 2. A design carries an approval
+
+      ## 2. The operator approves the design
+      """
+    And the operator sets the path to:
+      """
+      # 5. A design carries a numbered path
+
+      ## 1. The store holds a path
+      """
+    And the operator reads the path
+    Then the path holds 1 milestones
+    And the milestones read 5 in that order
+    And step 1 is in milestone 5
 
   Scenario: A feature with no path answers with nothing
     When the operator reads the path
