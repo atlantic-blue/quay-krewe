@@ -82,6 +82,20 @@ type Step struct {
 	Proof         string
 	ProofScenario string
 	After         int32
+	// Milestone is which milestone of the feature this step belongs to, and zero when it belongs to
+	// none. It is a caller's to set because it comes off the document that declares the path, beside
+	// the number and the title.
+	Milestone int32
+}
+
+// Milestone is what a caller may set about one milestone of a feature's path.
+//
+// A milestone holds nothing else. What it reached is counted from the steps under it, so there is no
+// state here for a caller to set and none for the store to keep.
+type Milestone struct {
+	Number    int32
+	Title     string
+	Intention string
 }
 
 // StepReady is the state a step is born in, and the same word the table's own default writes. It is
@@ -326,11 +340,20 @@ type Store interface {
 	// The store keeps what it is given. Whether a number is unique, whether `after` names a step
 	// that exists, and whether a title says anything are the control plane's questions, because the
 	// document is where a person can be told which line is wrong.
-	SetPath(ctx context.Context, feature string, steps []Step) ([]*quaycrewv1.Step, error)
+	//
+	// The milestones and the steps are written in one transaction, from the one document that
+	// declares both. Writing them apart would let a step name a milestone the same write dropped.
+	SetPath(ctx context.Context, feature string, milestones []Milestone, steps []Step) ([]*quaycrewv1.Step, error)
 	// ListSteps returns a feature's path in number order, or every feature's when the identifier is
 	// empty, ordered by feature and then by number. A feature with no path is an empty slice and not
 	// an error, the way a project with no design is.
 	ListSteps(ctx context.Context, feature string) ([]*quaycrewv1.Step, error)
+	// ListMilestones returns a feature's milestones in number order. A feature with no milestone is
+	// an empty slice and not an error, the way one with no path is.
+	//
+	// Nothing writes a milestone except SetPath, so this read always agrees with the last path
+	// document.
+	ListMilestones(ctx context.Context, feature string) ([]*quaycrewv1.Milestone, error)
 	// GetStep returns one step of a feature's path, whole. A feature that does not exist and a path
 	// that holds no step of that number are both ErrNotFound: neither answers the question asked.
 	GetStep(ctx context.Context, feature string, number int32) (*quaycrewv1.Step, error)

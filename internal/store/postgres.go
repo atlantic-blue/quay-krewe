@@ -820,7 +820,7 @@ func (p *Postgres) ApproveProjectDesign(ctx context.Context, project string) (*q
 // a deleted project's path, and an unqualified name would be one the join could make ambiguous
 // later.
 const stepColumns = `s.feature, s.number, s.title, s.intention, s.touches, s.proof, ` +
-	`s.proof_scenario, s.after, s.state, s.session, s.result, s.taken_at, s.finished_at`
+	`s.proof_scenario, s.after, s.milestone, s.state, s.session, s.result, s.taken_at, s.finished_at`
 
 // stepJoins is the join every path read goes through: a step to its feature, that feature to its
 // project, and that project to its workspace.
@@ -837,11 +837,11 @@ func scanStep(row pgx.Row) (*quaycrewv1.Step, error) {
 	var (
 		feature, title, intention, touches, proof string
 		scenario, state, session, result          string
-		number, after                             int32
+		number, after, milestone                  int32
 		takenAt, finishedAt                       *time.Time
 	)
 	if err := row.Scan(&feature, &number, &title, &intention, &touches, &proof,
-		&scenario, &after, &state, &session, &result, &takenAt, &finishedAt); err != nil {
+		&scenario, &after, &milestone, &state, &session, &result, &takenAt, &finishedAt); err != nil {
 		return nil, err
 	}
 	step := &quaycrewv1.Step{
@@ -853,6 +853,7 @@ func scanStep(row pgx.Row) (*quaycrewv1.Step, error) {
 		Proof:         proof,
 		ProofScenario: scenario,
 		After:         after,
+		Milestone:     milestone,
 		State:         state,
 		Session:       session,
 		Result:        result,
@@ -875,7 +876,8 @@ func scanStep(row pgx.Row) (*quaycrewv1.Step, error) {
 // half a path. The rows are read back through ListSteps rather than returned from the inserts,
 // because number order is what a caller is promised and the insert order is whatever the document
 // happened to be written in.
-func (p *Postgres) SetPath(ctx context.Context, feature string, steps []Step) ([]*quaycrewv1.Step, error) {
+func (p *Postgres) SetPath(ctx context.Context, feature string, milestones []Milestone, steps []Step) (
+	[]*quaycrewv1.Step, error) {
 	if err := p.featureExists(ctx, feature); err != nil {
 		return nil, err
 	}
@@ -889,13 +891,27 @@ func (p *Postgres) SetPath(ctx context.Context, feature string, steps []Step) ([
 		`delete from feature_steps where feature = $1`, feature); err != nil {
 		return nil, fmt.Errorf("clear the path: %w", err)
 	}
+	// The milestones are replaced whole beside the steps. A milestone this document does not carry is
+	// dropped, and it loses nothing: a milestone holds no state of its own.
+	if _, err := transaction.Exec(ctx,
+		`delete from milestones where feature = $1`, feature); err != nil {
+		return nil, fmt.Errorf("clear the milestones: %w", err)
+	}
+	for _, milestone := range milestones {
+		if _, err := transaction.Exec(ctx, `
+			insert into milestones (feature, number, title, intention)
+			values ($1, $2, $3, $4)`,
+			feature, milestone.Number, milestone.Title, milestone.Intention); err != nil {
+			return nil, fmt.Errorf("write milestone %d: %w", milestone.Number, err)
+		}
+	}
 	for _, step := range steps {
 		if _, err := transaction.Exec(ctx, `
 			insert into feature_steps
-				(feature, number, title, intention, touches, proof, proof_scenario, after)
-			values ($1, $2, $3, $4, $5, $6, $7, $8)`,
+				(feature, number, title, intention, touches, proof, proof_scenario, after, milestone)
+			values ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
 			feature, step.Number, step.Title, step.Intention, step.Touches, step.Proof,
-			step.ProofScenario, step.After); err != nil {
+			step.ProofScenario, step.After, step.Milestone); err != nil {
 			return nil, fmt.Errorf("write step %d: %w", step.Number, err)
 		}
 	}
@@ -953,6 +969,45 @@ func (p *Postgres) ListSteps(ctx context.Context, feature string) ([]*quaycrewv1
 		return nil, fmt.Errorf("list steps: %w", err)
 	}
 	return steps, nil
+}
+
+// ListMilestones returns a feature's milestones in number order.
+//
+// The join is the one the path reads go through, so a deleted project answers about its milestones
+// the same way it answers about its steps.
+func (p *Postgres) ListMilestones(ctx context.Context, feature string) ([]*quaycrewv1.Milestone, error) {
+	if err := p.featureExists(ctx, feature); err != nil {
+		return nil, err
+	}
+	rows, err := p.pool.Query(ctx, `
+		select m.feature, m.number, m.title, m.intention from milestones m
+		join features f on f.id = m.feature
+		join projects p on p.id = f.project
+		join workspaces w on w.id = p.workspace
+		where m.feature = $1 and p.deleted_at is null and w.deleted_at is null
+		order by m.number`, feature)
+	if err != nil {
+		return nil, fmt.Errorf("list milestones: %w", err)
+	}
+	defer rows.Close()
+
+	milestones := make([]*quaycrewv1.Milestone, 0)
+	for rows.Next() {
+		var (
+			held             string
+			number           int32
+			title, intention string
+		)
+		if err := rows.Scan(&held, &number, &title, &intention); err != nil {
+			return nil, fmt.Errorf("read milestone: %w", err)
+		}
+		milestones = append(milestones, &quaycrewv1.Milestone{
+			Feature: held, Number: number, Title: title, Intention: intention})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list milestones: %w", err)
+	}
+	return milestones, nil
 }
 
 // GetStep returns one step of a feature's path.

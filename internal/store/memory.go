@@ -41,6 +41,10 @@ type Memory struct {
 	// steps is each feature's path, keyed by feature and held in number order. A feature with no
 	// entry has no path, which is the normal state.
 	steps map[string][]*quaycrewv1.Step
+	// milestones is each feature's milestones, keyed by feature and held in number order. It is a
+	// second map rather than a field on the feature, because the path write replaces both it and the
+	// steps whole and the feature row is untouched by that write.
+	milestones map[string][]*quaycrewv1.Milestone
 	// features is each project's narrowed parts, keyed by project and held in number order. A project
 	// with no entry has no feature, which is the normal state.
 	features map[string][]*quaycrewv1.Feature
@@ -699,7 +703,8 @@ func copyDesign(design *quaycrewv1.Design) *quaycrewv1.Design {
 //
 // The state word is written here rather than left absent, because Postgres writes it from the
 // column's own default and the two stores have to answer the same thing about a fresh step.
-func (m *Memory) SetPath(_ context.Context, feature string, steps []Step) ([]*quaycrewv1.Step, error) {
+func (m *Memory) SetPath(_ context.Context, feature string, milestones []Milestone, steps []Step) (
+	[]*quaycrewv1.Step, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, err := m.featureLocked(feature); err != nil {
@@ -708,6 +713,20 @@ func (m *Memory) SetPath(_ context.Context, feature string, steps []Step) ([]*qu
 	if m.steps == nil {
 		m.steps = make(map[string][]*quaycrewv1.Step)
 	}
+	if m.milestones == nil {
+		m.milestones = make(map[string][]*quaycrewv1.Milestone)
+	}
+	grouped := make([]*quaycrewv1.Milestone, 0, len(milestones))
+	for _, milestone := range milestones {
+		grouped = append(grouped, &quaycrewv1.Milestone{
+			Feature:   feature,
+			Number:    milestone.Number,
+			Title:     milestone.Title,
+			Intention: milestone.Intention,
+		})
+	}
+	sort.SliceStable(grouped, func(i, j int) bool { return grouped[i].GetNumber() < grouped[j].GetNumber() })
+
 	written := make([]*quaycrewv1.Step, 0, len(steps))
 	for _, step := range steps {
 		written = append(written, &quaycrewv1.Step{
@@ -719,12 +738,33 @@ func (m *Memory) SetPath(_ context.Context, feature string, steps []Step) ([]*qu
 			Proof:         step.Proof,
 			ProofScenario: step.ProofScenario,
 			After:         step.After,
+			Milestone:     step.Milestone,
 			State:         StepReady,
 		})
 	}
 	sort.SliceStable(written, func(i, j int) bool { return written[i].GetNumber() < written[j].GetNumber() })
+	// Both maps are written under the one lock, because Postgres writes both in one transaction and
+	// no reader of either store may see the steps of a path beside the milestones of the last one.
+	m.milestones[feature] = grouped
 	m.steps[feature] = written
 	return copySteps(written), nil
+}
+
+// ListMilestones returns a feature's milestones in number order.
+//
+// The path write is the only thing that makes one, so this answers with whatever the last document
+// carried. A feature nobody gave a milestone answers with nothing, which is not an error.
+func (m *Memory) ListMilestones(_ context.Context, feature string) ([]*quaycrewv1.Milestone, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if _, err := m.featureLocked(feature); err != nil {
+		return nil, err
+	}
+	copied := make([]*quaycrewv1.Milestone, 0, len(m.milestones[feature]))
+	for _, milestone := range m.milestones[feature] {
+		copied = append(copied, proto.Clone(milestone).(*quaycrewv1.Milestone))
+	}
+	return copied, nil
 }
 
 // ListSteps returns a feature's path in number order, or every feature's when it names none.

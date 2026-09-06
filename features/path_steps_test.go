@@ -29,6 +29,9 @@ type pathWorld struct {
 	// feature is the one the scenarios that name no feature are about. A path belongs to a feature,
 	// and most of these scenarios are about the path rather than about which feature holds it.
 	feature *quaycrewv1.Feature
+	// milestones are what the last read of the path answered with. They travel with the steps, so a
+	// scenario that asserts a grouping reads one answer rather than asking twice.
+	milestones []*quaycrewv1.Milestone
 }
 
 // theFeature is the feature a scenario means when it names none.
@@ -87,6 +90,22 @@ func stepNumbered(ctx context.Context, number int32) (*quaycrewv1.Step, error) {
 		held = append(held, fmt.Sprintf("%d", step.GetNumber()))
 	}
 	return nil, fmt.Errorf("the path has no step %d, it holds %s", number, strings.Join(held, ", "))
+}
+
+// milestoneNumbered finds one milestone of the path last read. It reports which numbers are there,
+// for the reason stepNumbered does.
+func milestoneNumbered(ctx context.Context, number int32) (*quaycrewv1.Milestone, error) {
+	p := pathFrom(ctx)
+	for _, milestone := range p.milestones {
+		if milestone.GetNumber() == number {
+			return milestone, nil
+		}
+	}
+	var held []string
+	for _, milestone := range p.milestones {
+		held = append(held, fmt.Sprintf("%d", milestone.GetNumber()))
+	}
+	return nil, fmt.Errorf("the path has no milestone %d, it holds %s", number, strings.Join(held, ", "))
 }
 
 func initializePathSteps(sc *godog.ScenarioContext) {
@@ -149,6 +168,14 @@ func initializePathSteps(sc *godog.ScenarioContext) {
 			return err
 		}
 		return readPath(ctx, held.GetId())
+	})
+
+	// The empty identifier is what lets a caller count the steps of every feature in one call.
+	sc.Step(`^the operator reads the path of every feature$`, func(ctx context.Context) error {
+		if _, err := theFeature(ctx); err != nil {
+			return err
+		}
+		return readPath(ctx, "")
 	})
 
 	sc.Step(`^the operator reads the path of a feature that does not exist$`, func(ctx context.Context) error {
@@ -257,6 +284,62 @@ func initializePathSteps(sc *godog.ScenarioContext) {
 		}
 		if got := step.GetAfter(); got != int32(want) {
 			return fmt.Errorf("step %d waits for step %d, want %d", number, got, want)
+		}
+		return nil
+	})
+
+	sc.Step(`^the path holds (\d+) milestones$`, func(ctx context.Context, want int) error {
+		if got := len(pathFrom(ctx).milestones); got != want {
+			return fmt.Errorf("the path holds %d milestones, want %d", got, want)
+		}
+		return nil
+	})
+
+	// Order is what the control plane promises, so it is asserted as an order and not as a set,
+	// for the reason the steps are.
+	sc.Step(`^the milestones read ([\d, ]+) in that order$`, func(ctx context.Context, wanted string) error {
+		var got []string
+		for _, milestone := range pathFrom(ctx).milestones {
+			got = append(got, fmt.Sprintf("%d", milestone.GetNumber()))
+		}
+		if reads := strings.Join(got, ", "); reads != wanted {
+			return fmt.Errorf("the milestones read %s, want %s", reads, wanted)
+		}
+		return nil
+	})
+
+	sc.Step(`^milestone (\d+) is titled "([^"]*)"$`, func(ctx context.Context, number int, want string) error {
+		milestone, err := milestoneNumbered(ctx, int32(number))
+		if err != nil {
+			return err
+		}
+		if got := milestone.GetTitle(); got != want {
+			return fmt.Errorf("milestone %d is titled %q, want %q", number, got, want)
+		}
+		return nil
+	})
+
+	sc.Step(`^milestone (\d+) says its intention is "([^"]*)"$`,
+		func(ctx context.Context, number int, want string) error {
+			milestone, err := milestoneNumbered(ctx, int32(number))
+			if err != nil {
+				return err
+			}
+			if got := milestone.GetIntention(); got != unescape(want) {
+				return fmt.Errorf("milestone %d says its intention is %q, want %q", number, got, unescape(want))
+			}
+			return nil
+		})
+
+	// Zero is the answer for a step under no milestone, so it is asserted like any other number
+	// rather than as an absence.
+	sc.Step(`^step (\d+) is in milestone (\d+)$`, func(ctx context.Context, number, want int) error {
+		step, err := stepNumbered(ctx, int32(number))
+		if err != nil {
+			return err
+		}
+		if got := step.GetMilestone(); got != int32(want) {
+			return fmt.Errorf("step %d is in milestone %d, want %d", number, got, want)
 		}
 		return nil
 	})
@@ -581,7 +664,7 @@ func readPath(ctx context.Context, feature string) error {
 	if err != nil {
 		return nil
 	}
-	p.steps = resp.GetSteps()
+	p.steps, p.milestones = resp.GetSteps(), resp.GetMilestones()
 	return nil
 }
 

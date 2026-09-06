@@ -651,6 +651,28 @@ message Step {
   // proof_scenario is the exact name of the scenario that proves it, as the feature file writes it.
   // This is what krewe runs.
   string proof_scenario = 13;
+  // milestone is which milestone of the feature this step belongs to. Zero means the step belongs to
+  // no milestone, and zero is never a milestone row.
+  //
+  // The number is 24 rather than 14 because the fields between them belong to the restatement and to
+  // the proof state, which are written in the same revision as this one and reach the wire later.
+  int32 milestone = 24;
+}
+
+// Milestone is one group of a feature's steps. A feature is delivered in milestones, and a milestone
+// says what a run of steps adds up to.
+//
+// It carries no state of its own: what a milestone reached is counted from the steps under it. The
+// two stamps of its row are not here, because nothing reads them.
+message Milestone {
+  string feature = 1;
+  // number is where in the feature this milestone sits, counting from one. Numbers restart in each
+  // feature, and zero is never a milestone.
+  int32 number = 2;
+  // title is one line.
+  string title = 3;
+  // intention is one line saying what the milestone is for.
+  string intention = 4;
 }
 
 // SetPathRequest carries the path document, in the grammar the control plane parses. The document is
@@ -671,6 +693,14 @@ message ListStepsRequest {
 }
 message ListStepsResponse {
   repeated Step steps = 1;
+  // milestones travel with the steps, so a caller groups the listing without a second call. This is
+  // why a milestone has no read of its own on this service.
+  //
+  // They are empty when the request names no feature, because a milestone number restarts in each
+  // feature and a merged list would read as one run of numbers.
+  //
+  // Field 2 is left for next, which says which step may be taken now.
+  repeated Milestone milestones = 3;
 }
 
 // TakeStepRequest gives one step of a feature's path to a session that starts now.

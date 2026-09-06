@@ -368,6 +368,15 @@ const (
 // a number below one could only ever fire for zero.
 var stepHeading = regexp.MustCompile(`^##\s+(-?\d+)\s*\.\s*(.*)$`)
 
+// milestoneHeading matches a milestone's own line: `# <number>. <title>`. One hash, so it sits above
+// the step headings, which carry two.
+//
+// A hash line carrying no number and no full stop matches nothing here, so a document may still
+// open with a title and that title is read as the prose around it is.
+//
+// The sign is matched for the reason stepHeading matches it.
+var milestoneHeading = regexp.MustCompile(`^#\s+(-?\d+)\s*\.\s*(.*)$`)
+
 // pathStepMark is the count past which a path is long enough to say so. It refuses nothing: the
 // path is kept whole and a person decides.
 const pathStepMark = 200
@@ -389,41 +398,75 @@ type declaredStep struct {
 	scenarioExtraLine int
 }
 
-// parsePath reads a path document and returns the steps in ascending number order, with any
-// warnings. Every refusal is an InvalidArgument naming the line, so a person can go and fix it.
-func parsePath(document string) ([]store.Step, []string, error) {
-	declared := readPathDocument(document)
+// declaredMilestone is one milestone as the document declares it, with the line a refusal has to
+// name and the lines under the heading that are its intention.
+type declaredMilestone struct {
+	milestone   store.Milestone
+	headingLine int
+	// numberText is the number as the document wrote it, for the reason declaredStep keeps one.
+	numberText string
+	intention  []string
+}
+
+// parsePath reads a path document and returns the milestones and the steps, each in ascending number
+// order, with any warnings. Every refusal is an InvalidArgument naming the line, so a person can go
+// and fix it.
+func parsePath(document string) ([]store.Milestone, []store.Step, []string, error) {
+	grouped, declared := readPathDocument(document)
 	if len(declared) == 0 {
-		return nil, nil, status.Error(codes.InvalidArgument,
+		return nil, nil, nil, status.Error(codes.InvalidArgument,
 			"this document has no steps in it. A step starts with a line reading ## 1. <title>")
 	}
-	if err := refuseBadHeadings(declared); err != nil {
-		return nil, nil, err
+	// The milestones first, because a milestone heading sits above the steps it groups and a person
+	// reading the refusal reads the document from the top.
+	if err := refuseBadMilestones(grouped); err != nil {
+		return nil, nil, nil, err
 	}
+	if err := refuseBadHeadings(declared); err != nil {
+		return nil, nil, nil, err
+	}
+	sort.SliceStable(grouped, func(i, j int) bool {
+		return grouped[i].milestone.Number < grouped[j].milestone.Number
+	})
 	sort.SliceStable(declared, func(i, j int) bool {
 		return declared[i].step.Number < declared[j].step.Number
 	})
 	if err := resolveAfter(declared); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
+	milestones := make([]store.Milestone, 0, len(grouped))
+	for _, one := range grouped {
+		one.milestone.Intention = joinBlock(one.intention)
+		milestones = append(milestones, one.milestone)
+	}
 	steps := make([]store.Step, 0, len(declared))
 	for _, one := range declared {
 		steps = append(steps, one.step)
 	}
-	return steps, pathWarnings(steps), nil
+	return milestones, steps, pathWarnings(milestones, steps), nil
 }
 
-// readPathDocument walks the document once and collects what each step declared.
+// readPathDocument walks the document once and collects what each milestone and each step declared.
 //
 // Text before the first heading is ignored, so a document may carry a title and a paragraph saying
 // what the path is for. Every label is optional: a step needs only its heading.
-func readPathDocument(document string) []*declaredStep {
+//
+// A step belongs to the milestone heading above it, and to no milestone when there is none above it.
+// The number is stamped on the step as it is read, so the grouping is the document's own order and
+// never a second pass over it.
+func readPathDocument(document string) ([]*declaredMilestone, []*declaredStep) {
 	var (
+		grouped  []*declaredMilestone
 		declared []*declaredStep
 		current  *declaredStep
-		blocks   map[string][]string
-		label    string
+		// milestone is the last milestone heading read, which every step after it belongs to.
+		milestone *declaredMilestone
+		// underMilestone is whether the lines being read are still the milestone's intention. A
+		// heading of either kind ends it, which is what stops a step's own blocks being read as one.
+		underMilestone bool
+		blocks         map[string][]string
+		label          string
 	)
 	// finish writes the blocks read so far onto the step they belong to. It runs at the next heading
 	// and again at the end, because the last step's blocks have no heading after them.
@@ -443,6 +486,7 @@ func readPathDocument(document string) []*declaredStep {
 		number := at + 1
 		if found := stepHeading.FindStringSubmatch(line); found != nil {
 			finish()
+			underMilestone = false
 			// Parsed at the width the column holds, so a number larger than that is refused by the
 			// rule below rather than wrapping into a different step silently.
 			read, err := strconv.ParseInt(found[1], 10, 32)
@@ -450,11 +494,35 @@ func readPathDocument(document string) []*declaredStep {
 				read = 0
 			}
 			current = &declaredStep{
-				step:        store.Step{Number: int32(read), Title: strings.TrimSpace(found[2])},
+				step: store.Step{
+					Number:    int32(read),
+					Title:     strings.TrimSpace(found[2]),
+					Milestone: milestoneAbove(milestone),
+				},
 				headingLine: number,
 				numberText:  found[1],
 			}
 			blocks, label = map[string][]string{}, ""
+			continue
+		}
+		if found := milestoneHeading.FindStringSubmatch(line); found != nil {
+			// A heading of either kind ends the blocks of the step above it.
+			finish()
+			current, underMilestone = nil, true
+			read, err := strconv.ParseInt(found[1], 10, 32)
+			if err != nil {
+				read = 0
+			}
+			milestone = &declaredMilestone{
+				milestone:   store.Milestone{Number: int32(read), Title: strings.TrimSpace(found[2])},
+				headingLine: number,
+				numberText:  found[1],
+			}
+			grouped = append(grouped, milestone)
+			continue
+		}
+		if underMilestone {
+			milestone.intention = append(milestone.intention, line)
 			continue
 		}
 		if current == nil {
@@ -481,7 +549,16 @@ func readPathDocument(document string) []*declaredStep {
 		blocks[label] = append(blocks[label], line)
 	}
 	finish()
-	return declared
+	return grouped, declared
+}
+
+// milestoneAbove is the number a step read now belongs to, and zero when no milestone heading has
+// been read yet. Zero is never a milestone row, so it is how a step says it belongs to none.
+func milestoneAbove(milestone *declaredMilestone) int32 {
+	if milestone == nil {
+		return 0
+	}
+	return milestone.milestone.Number
 }
 
 // saidSomething says whether a block already holds a line with anything on it, so a blank line
@@ -518,6 +595,32 @@ func joinBlock(lines []string) string {
 	return strings.TrimSpace(strings.Join(lines, "\n"))
 }
 
+// refuseBadMilestones holds the rules about a milestone's own line: its number and its title. They
+// are the step's rules, counted apart, because a milestone number and a step number are two
+// numberings and neither constrains the other.
+func refuseBadMilestones(grouped []*declaredMilestone) error {
+	seen := make(map[int32]int, len(grouped))
+	for _, one := range grouped {
+		if one.milestone.Number < 1 {
+			return status.Errorf(codes.InvalidArgument,
+				"line %d: this milestone is numbered %s, and milestones are numbered from one",
+				one.headingLine, one.numberText)
+		}
+		if before, already := seen[one.milestone.Number]; already {
+			return status.Errorf(codes.InvalidArgument,
+				"line %d: milestone %d is already declared on line %d, and two milestones cannot share a number",
+				one.headingLine, one.milestone.Number, before)
+		}
+		if one.milestone.Title == "" {
+			return status.Errorf(codes.InvalidArgument,
+				"line %d: milestone %d has no title, and a title is the one line saying what the milestone is",
+				one.headingLine, one.milestone.Number)
+		}
+		seen[one.milestone.Number] = one.headingLine
+	}
+	return nil
+}
+
 // refuseBadHeadings holds the rules about a step's own line: its number and its title.
 //
 // A duplicate names both lines, because the person fixing it has to see the one they forgot as well
@@ -532,7 +635,8 @@ func refuseBadHeadings(declared []*declaredStep) error {
 		}
 		if before, already := seen[one.step.Number]; already {
 			return status.Errorf(codes.InvalidArgument,
-				"line %d: step %d is already declared on line %d, and two steps cannot share a number",
+				"line %d: step %d is already declared on line %d. Step numbers are unique across the whole "+
+					"feature, and not inside a milestone, so a milestone heading does not start the numbering again",
 				one.headingLine, one.step.Number, before)
 		}
 		if one.step.Title == "" {
@@ -599,8 +703,24 @@ func resolveAfter(declared []*declaredStep) error {
 }
 
 // pathWarnings is what the write says about a path it kept whole. No warning refuses a document.
-func pathWarnings(steps []store.Step) []string {
+func pathWarnings(milestones []store.Milestone, steps []store.Step) []string {
 	var warnings []string
+	under := make(map[int32]int, len(milestones))
+	for _, step := range steps {
+		under[step.Milestone]++
+	}
+	for _, milestone := range milestones {
+		// A milestone nobody planned steps for is worth seeing on the listing, so it is kept and said
+		// out loud rather than dropped for being empty.
+		if under[milestone.Number] == 0 {
+			warnings = append(warnings, fmt.Sprintf(
+				"milestone %d has no step under it. It is kept as it is.", milestone.Number))
+		}
+		if milestone.Intention == "" {
+			warnings = append(warnings, fmt.Sprintf(
+				"milestone %d says nothing under its heading. It is kept as it is.", milestone.Number))
+		}
+	}
 	if len(steps) > pathStepMark {
 		warnings = append(warnings, fmt.Sprintf(
 			"this path has %d steps, over the %d mark. It is kept whole.", len(steps), pathStepMark))
@@ -652,11 +772,11 @@ func (s *Server) SetPath(ctx context.Context, req *quaycrewv1.SetPathRequest) (*
 	if req.GetFeature() == "" {
 		return nil, status.Error(codes.InvalidArgument, "which feature: a path belongs to one, so say its number")
 	}
-	steps, warnings, err := parsePath(req.GetDocument())
+	milestones, steps, warnings, err := parsePath(req.GetDocument())
 	if err != nil {
 		return nil, err
 	}
-	written, err := s.store.SetPath(ctx, req.GetFeature(), steps)
+	written, err := s.store.SetPath(ctx, req.GetFeature(), milestones, steps)
 	if err != nil {
 		return nil, storeError(err, "feature")
 	}
@@ -744,7 +864,8 @@ func stepBlock(step *quaycrewv1.Step) string {
 	return strings.Join(lines, "\n")
 }
 
-// ListSteps reads a feature's path, or every feature's when it names none.
+// ListSteps reads a feature's path and the milestones it is grouped into, or every feature's path
+// when it names none.
 //
 // A feature with no path answers with an empty list rather than an error, because nothing written is
 // the normal state. Reading records nothing.
@@ -753,7 +874,18 @@ func (s *Server) ListSteps(ctx context.Context, req *quaycrewv1.ListStepsRequest
 	if err != nil {
 		return nil, storeError(err, "feature")
 	}
-	return &quaycrewv1.ListStepsResponse{Steps: steps}, nil
+	answer := &quaycrewv1.ListStepsResponse{Steps: steps}
+	// The milestones travel with the steps, so a caller groups the listing without a second call.
+	// They are left out when the request names no feature, because a milestone number restarts in
+	// each feature and a merged list would read as one run of numbers.
+	if req.GetFeature() != "" {
+		milestones, err := s.store.ListMilestones(ctx, req.GetFeature())
+		if err != nil {
+			return nil, storeError(err, "feature")
+		}
+		answer.Milestones = milestones
+	}
+	return answer, nil
 }
 
 // Taking a step: the gate the operator's own command is refused by, the write that records who holds
