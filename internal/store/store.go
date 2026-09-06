@@ -326,6 +326,14 @@ type Store interface {
 	// The same write clears the approval, because approval is a statement about one text. One write
 	// rather than two, so no reader ever sees a row that says approved over a body nobody read.
 	SetProjectDesign(ctx context.Context, project, body, writtenBy string) (*quaycrewv1.Design, error)
+	// SetProjectContracts records the contracts document whole, and creates the row on first use. It
+	// is a second body beside the design, and writtenBy is a claim the same way.
+	//
+	// It leaves the approval where it is. The operator's word is about the design body, and the
+	// contracts are read from that body, so a contract written down is not a design that changed.
+	//
+	// An empty body is kept: it is how a project says it carries no contracts document.
+	SetProjectContracts(ctx context.Context, project, body, writtenBy string) (*quaycrewv1.Design, error)
 	// ApproveProjectDesign records the operator's word on the design as it stands, and refuses a
 	// design with no body as ErrNothingToApprove. Approving one that is already approved is allowed
 	// and moves the moment.

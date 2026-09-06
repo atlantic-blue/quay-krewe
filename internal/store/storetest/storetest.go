@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -2048,6 +2049,103 @@ func runDesignConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 		}
 		if !afterBrief.GetApproved() {
 			t.Fatal("writing a brief took the approval away, and a brief says nothing about the design")
+		}
+	})
+
+	// The contracts document is a second body on the same row, read out of the design the operator
+	// already approved. A write that took the word away would ask them to approve a design nobody
+	// rewrote, so this is the rule the whole slice exists to hold.
+	t.Run("writing a contracts document leaves the approval alone", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		project := newProject(t, s, "acme", "house-bills")
+
+		if _, err := s.SetProjectDesign(ctx, project.GetId(), "the whole design", ""); err != nil {
+			t.Fatalf("SetProjectDesign: %v", err)
+		}
+		if _, err := s.ApproveProjectDesign(ctx, project.GetId()); err != nil {
+			t.Fatalf("ApproveProjectDesign: %v", err)
+		}
+		written, err := s.SetProjectContracts(ctx, project.GetId(), "### STORE-1: SetProjectBrief\n", "")
+		if err != nil {
+			t.Fatalf("SetProjectContracts: %v", err)
+		}
+		if !written.GetApproved() || written.GetApprovedAt() == nil {
+			t.Fatal("writing a contracts document took the approval away, and the contracts are read from the design")
+		}
+		if written.GetBody() != "the whole design" {
+			t.Fatalf("writing the contracts left the design body as %q", written.GetBody())
+		}
+		read, err := s.GetDesign(ctx, project.GetId())
+		if err != nil {
+			t.Fatalf("GetDesign: %v", err)
+		}
+		if !read.GetApproved() {
+			t.Fatal("the design reads back unapproved after a contracts write")
+		}
+		if read.GetContracts() != "### STORE-1: SetProjectBrief\n" {
+			t.Fatalf("the contracts read back as %q", read.GetContracts())
+		}
+	})
+
+	// A contracts document is the largest text this row carries after the design body, and a body
+	// read short is a body read wrong.
+	t.Run("a contracts document is kept whole at 140,000 characters", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		project := newProject(t, s, "acme", "house-bills")
+
+		body := strings.Repeat("c", 140_000)
+		if _, err := s.SetProjectContracts(ctx, project.GetId(), body, "sess-1"); err != nil {
+			t.Fatalf("SetProjectContracts: %v", err)
+		}
+		read, err := s.GetDesign(ctx, project.GetId())
+		if err != nil {
+			t.Fatalf("GetDesign: %v", err)
+		}
+		if len(read.GetContracts()) != len(body) {
+			t.Fatalf("the contracts were written at %d characters and read back at %d",
+				len(body), len(read.GetContracts()))
+		}
+		if read.GetWrittenBy() != "sess-1" {
+			t.Fatalf("the row says it was written by %q, want sess-1", read.GetWrittenBy())
+		}
+	})
+
+	// The row is made on first use, exactly as SetProjectDesign makes it, so a project can carry
+	// contracts before it carries a design body.
+	t.Run("a contracts document makes the design row", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		project := newProject(t, s, "acme", "house-bills")
+
+		written, err := s.SetProjectContracts(ctx, project.GetId(), "### WIRE-1: message Design\n", "")
+		if err != nil {
+			t.Fatalf("SetProjectContracts on a project with no design row: %v", err)
+		}
+		if written.GetContracts() != "### WIRE-1: message Design\n" {
+			t.Fatalf("the write answered contracts %q", written.GetContracts())
+		}
+		if written.GetBody() != "" || written.GetApproved() {
+			t.Fatalf("the new row carries body %q and approved %v", written.GetBody(), written.GetApproved())
+		}
+
+		// An empty body is a value, not an absence: it is how a project says it carries none.
+		cleared, err := s.SetProjectContracts(ctx, project.GetId(), "", "")
+		if err != nil {
+			t.Fatalf("clearing the contracts: %v", err)
+		}
+		if cleared.GetContracts() != "" {
+			t.Fatalf("the cleared contracts read %q, want empty", cleared.GetContracts())
+		}
+	})
+
+	t.Run("a contracts document written for a project that does not exist is not found", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+
+		if _, err := s.SetProjectContracts(ctx, "no-such-project", "anything", ""); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("SetProjectContracts on a missing project answered %v, want ErrNotFound", err)
 		}
 	})
 

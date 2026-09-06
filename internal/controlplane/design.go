@@ -93,6 +93,30 @@ func (s *Server) SetDesign(ctx context.Context, req *quaycrewv1.SetDesignRequest
 	}, nil
 }
 
+// SetContracts records the contracts a project builds against, whole.
+//
+// It is a second body on the design row and the approval is not touched, which is the whole rule of
+// this call. SetDesign clears the approval because approval is a statement about one text; the
+// contracts document is read out of the design the operator already approved, so writing one is not
+// a design that changed. The command line says so on every write, because an operator who thinks a
+// contracts write undid their approval approves a design nobody rewrote.
+//
+// Nothing parses the body. A contract a step names is never checked against it, and the deferred
+// list in the design records that.
+//
+// written_by is what the caller claimed, exactly as SetDesign takes it, and it grants nothing.
+func (s *Server) SetContracts(ctx context.Context, req *quaycrewv1.SetContractsRequest) (*quaycrewv1.SetContractsResponse, error) {
+	if req.GetProject() == "" {
+		return nil, status.Error(codes.InvalidArgument, "which project: say where with an address")
+	}
+	design, err := s.store.SetProjectContracts(ctx, req.GetProject(), req.GetBody(), req.GetWrittenBy())
+	if err != nil {
+		return nil, storeError(err, "project")
+	}
+	s.renderDesignTo(ctx, req.GetProject())
+	return &quaycrewv1.SetContractsResponse{Design: design}, nil
+}
+
 // ApproveDesign records the operator's word on the design as it stands.
 //
 // It approves the text that is in the store now, and it asks nothing: a call that opened an editor
@@ -148,6 +172,11 @@ const (
 	// pathFile is the path document, beside the design in the same dot directory and for the same
 	// reason.
 	pathFile = "path.md"
+	// contractsFile is the contracts document, beside the design and written the same way. It is a
+	// file rather than a section in the memory file because that file is read on every exec of every
+	// session in the project and a contracts document is long: this repository carries 127 contracts
+	// across 44 slices. The take text names it, and a model that needs it opens it.
+	contractsFile = "contracts.md"
 )
 
 // renderDesign puts the design body in the session's working directory and returns the summary that
@@ -175,6 +204,24 @@ func (s *Server) renderDesign(ctx context.Context, session *quaycrewv1.Session, 
 	hasBody := s.writeSessionFile(dir, designFile, "design", design.GetBody())
 	on, inThePath := s.stepThisSessionHolds(ctx, session)
 	return designSummary(project.GetName(), design, hasBody, hasPath, on, inThePath)
+}
+
+// renderContracts puts the project's contracts document where the model can open it.
+//
+// It reads the design row for itself rather than being a line inside renderDesign, because that
+// render returns early for a project carrying neither a brief nor a design body, and a project can
+// carry a contracts document before it carries either.
+//
+// A project with an empty contracts body gets no file. An empty body is a value rather than an
+// absence: it is how a project says it carries no contracts document.
+//
+// Nothing here fails an exec, for the same reason renderDesign fails none.
+func (s *Server) renderContracts(ctx context.Context, project, dir string) {
+	design, err := s.store.GetDesign(ctx, project)
+	if err != nil {
+		return
+	}
+	s.writeSessionFile(dir, contractsFile, "contracts", design.GetContracts())
 }
 
 // stepThisSessionHolds is the step this session took and how many steps that step's path has, and

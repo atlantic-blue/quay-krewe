@@ -267,3 +267,93 @@ Feature: A project carries what it is for and what was designed
     And a session started by dispatching "hello"
     When the operator writes the project's design as ""
     Then the session has no design file
+
+  # The contracts a project builds against sit beside the design, on the same row. They are a second
+  # body: a session opens the file when it needs one, and the memory file never carries them, because
+  # that file is read on every exec of every session in the project and a contracts document is long.
+
+  Scenario: A session finds the whole contracts document in its working directory
+    Given the project's contracts are "### STORE-2: SetProjectBrief\n\nThe row is made on first use.\n"
+    When the operator dispatches "hello" to the project
+    Then the session's contracts file reads "### STORE-2: SetProjectBrief\n\nThe row is made on first use.\n"
+
+  # The rule this whole capability turns on. The approval is the operator's word about the design
+  # body, and the contracts are read out of that body, so writing them is not a design that changed.
+  # A write that cleared the word would ask the operator to approve a design nobody rewrote.
+  Scenario: Writing a contracts document leaves the approval alone
+    Given the project's design is "# Bills\n"
+    And the operator approved the project's design
+    When the operator sets the project's contracts to "### STORE-2: SetProjectBrief\n"
+    And the operator reads the project's design
+    Then the design is approved
+    And the contracts read "### STORE-2: SetProjectBrief\n"
+
+  Scenario: A contracts document on a project with no design makes the row
+    When the operator sets the project's contracts to "### STORE-2: SetProjectBrief\n"
+    And the operator reads the project's design
+    Then the contracts read "### STORE-2: SetProjectBrief\n"
+    And the design body reads ""
+
+  Scenario: Rewriting the contracts gives the session the new text
+    Given the project's contracts are "### STORE-2\n"
+    And a session started by dispatching "hello"
+    When the operator sets the project's contracts to "### STORE-2\n### STORE-23\n"
+    Then the session's contracts file reads "### STORE-2\n### STORE-23\n"
+
+  # A file that exists and says nothing costs a read.
+  Scenario: A project with no contracts document has no contracts file
+    Given the project's design is "# Bills\n"
+    When the operator dispatches "hello" to the project
+    Then the session has no contracts file
+
+  # An empty body is a value rather than an absence: it is how a project says it carries no contracts
+  # document. The store keeps it, and the session gets no file at all.
+  Scenario: A project with an empty contracts body has no contracts file
+    Given the project's contracts are "### STORE-2\n"
+    And a session started by dispatching "hello"
+    When the operator sets the project's contracts to ""
+    Then the session has no contracts file
+
+  # A contracts document is the largest text this row carries after the design body, and a body read
+  # short is a body read wrong.
+  Scenario: A contracts document is read back whole at 140,000 characters
+    When the operator sets the project's contracts to 140000 characters
+    And the operator reads the project's design
+    Then the contracts are kept whole
+
+  # A write that fails leaves the session without the file. It never fails the exec: the session works
+  # in the project whether or not the render reached its working directory.
+  Scenario: A contracts document that cannot be written does not fail the exec
+    Given the project's contracts are "### STORE-2\n"
+    And a session started by dispatching "hello"
+    And the contracts document cannot be written
+    When the operator dispatches "and again" to the same session
+    Then the session was asked "and again"
+
+  Scenario: The operator writes the contracts from a file and reads them back
+    Given the system listens on an address the tool can dial
+    And a contracts file saying "### STORE-2: SetProjectBrief\n"
+    When the caller writes the contracts from that file
+    And the caller reads the project's contracts
+    Then standard output is the contracts document and one newline
+    And the command succeeds
+
+  # Said on every write. An operator who reads a contracts write as taking the approval away goes and
+  # approves a design nobody rewrote.
+  Scenario: Writing contracts says the approval is untouched, and leaves it
+    Given the system listens on an address the tool can dial
+    And the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And a contracts file saying "### STORE-2\n"
+    When the caller writes the contracts from that file
+    Then standard output carries "the approval is untouched"
+    And the caller reads the project's design
+    And standard output carries "approval: approved "
+    And the command succeeds
+
+  Scenario: A project with no contracts document tells the caller how to write one
+    Given the system listens on an address the tool can dial
+    When the caller reads the project's contracts
+    Then standard output carries "this project has no contracts document yet"
+    And standard output carries "krewe design contracts"
+    And the command succeeds
