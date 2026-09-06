@@ -875,6 +875,17 @@ func (s *Server) ListSteps(ctx context.Context, req *quaycrewv1.ListStepsRequest
 	if err != nil {
 		return nil, storeError(err, "feature")
 	}
+	// Number order is this call's promise, so it is made here rather than left to the store. Two
+	// surfaces draw this listing, and an order either one worked out for itself would let the two
+	// disagree about one path in front of somebody.
+	//
+	// A request that names no feature is left as the store answered it: that order is by feature and
+	// then by number, and sorting on the number alone would shuffle the features together.
+	if req.GetFeature() != "" {
+		sort.SliceStable(steps, func(one, two int) bool {
+			return steps[one].GetNumber() < steps[two].GetNumber()
+		})
+	}
 	answer := &quaycrewv1.ListStepsResponse{Steps: steps}
 	// The milestones travel with the steps, so a caller groups the listing without a second call.
 	// They are left out when the request names no feature, because a milestone number restarts in
@@ -884,6 +895,9 @@ func (s *Server) ListSteps(ctx context.Context, req *quaycrewv1.ListStepsRequest
 		if err != nil {
 			return nil, storeError(err, "feature")
 		}
+		sort.SliceStable(milestones, func(one, two int) bool {
+			return milestones[one].GetNumber() < milestones[two].GetNumber()
+		})
 		answer.Milestones = milestones
 	}
 	return answer, nil
