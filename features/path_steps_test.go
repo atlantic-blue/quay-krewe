@@ -816,9 +816,10 @@ func sessionPathFile(ctx context.Context) (string, error) {
 	return string(body), nil
 }
 
-// pathHeading matches a step's own line in the rendered document, which is the same line the grammar
-// reads.
-var pathHeading = regexp.MustCompile(`(?m)^##\s+(\d+)\.`)
+// pathHeading matches a step's own line in the rendered document. The document reads the grammar the
+// operator writes and hangs it under a feature heading, so a step sits a level lower here than in the
+// document that declared it.
+var pathHeading = regexp.MustCompile(`(?m)^###\s+(\d+)\.`)
 
 func initializePathRenderSteps(sc *godog.ScenarioContext) {
 	sc.Step(`^the session's path file carries "([^"]*)"$`, func(ctx context.Context, want string) error {
@@ -872,6 +873,33 @@ func initializePathRenderSteps(sc *godog.ScenarioContext) {
 		}
 		if !os.IsNotExist(err) {
 			return err
+		}
+		return nil
+	})
+
+	// The write is made to fail the way a filesystem fails one: the file the render writes is a
+	// directory, so the write is refused whoever runs the suite. A mode the test takes away is not
+	// enough, because root writes through it and the scenario then proves nothing.
+	sc.Step(`^the path document cannot be written$`, func(ctx context.Context) error {
+		at, err := pathFileAt(ctx)
+		if err != nil {
+			return err
+		}
+		if err := os.Remove(at); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return os.Mkdir(at, 0o755)
+	})
+
+	// What the model was given, which is what says the exec ran at all. A render that failed and took
+	// the exec with it leaves the memory file from the exec before, so an assertion on that file alone
+	// passes either way.
+	sc.Step(`^the session was asked "([^"]*)"$`, func(ctx context.Context, want string) error {
+		if err := worldFrom(ctx).lastErr; err != nil {
+			return fmt.Errorf("the exec was refused: %w", err)
+		}
+		if asked := worldFrom(ctx).runner.lastRequest().Text; asked != want {
+			return fmt.Errorf("the session was asked %q, want %q", asked, want)
 		}
 		return nil
 	})

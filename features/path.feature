@@ -26,7 +26,9 @@ Feature: A project holds a numbered path of steps
 
   The session working in the project reads the path in its own working directory, in number order.
   That is what lets a session start from what is true: a session on step 4 reads what steps 1 to 3
-  produced.
+  produced. It reads the open features only, each under a heading of its own, and each step under the
+  milestone it belongs to. A step block names its milestone as well, because a session opens the file
+  at its own step and reads down.
 
   Background:
     Given a running control plane
@@ -936,7 +938,7 @@ Feature: A project holds a numbered path of steps
       """
     When the operator dispatches "hello" to the project
     Then the session's path file lists steps 1, 2, 3 in that order
-    And the session's path file carries "## 1. The store holds a project's brief"
+    And the session's path file carries "### 1. The store holds a project's brief"
     And the session's path file carries "state: ready"
     And the session's path file carries "The design has nowhere to live, so a project cannot carry one."
     And the session's path file carries "internal/store/postgres.go"
@@ -955,11 +957,84 @@ Feature: A project holds a numbered path of steps
     When the operator dispatches "hello" to the project
     Then the session's path file lists steps 1, 2, 5, 12 in that order
 
+  # A feature is delivered in milestones, so the document a session reads is grouped the way the
+  # listing is: a heading for the feature, a heading for each milestone, and the steps under it.
+  #
+  # The milestone line in each block says what the heading above it says. A session opens this file at
+  # its own step and reads down, so a block that named no milestone would leave it scrolling.
+  Scenario: Each step block names the milestone it belongs to
+    Given the project's path is:
+      """
+      # 1. A project carries a design
+
+      It gives a design somewhere to live.
+
+      ## 1. The store holds a project's brief
+      ## 2. The store holds a project's design
+
+      # 2. A design carries an approval
+
+      ## 3. The operator approves the design
+      """
+    When the operator dispatches "hello" to the project
+    Then the session's path file carries "## 1. A project carries a design"
+    And the session's path file carries "## 2. A design carries an approval"
+    And the session's path file carries "### 1. The store holds a project's brief\nmilestone: 1. A project carries a design"
+    And the session's path file carries "### 3. The operator approves the design\nmilestone: 2. A design carries an approval"
+
+  # The order is the number's between milestones as well as inside one, whatever order the document
+  # declared them in. Written the other way round, the file would say step 3 comes first.
+  Scenario: The steps are in number order inside a milestone and between milestones
+    Given the project's path is:
+      """
+      # 2. A design carries an approval
+
+      ## 4. The command line reads it back
+      ## 3. The operator approves the design
+
+      # 1. A project carries a design
+
+      ## 2. The store holds a project's design
+      ## 1. The store holds a project's brief
+      """
+    When the operator dispatches "hello" to the project
+    Then the session's path file lists steps 1, 2, 3, 4 in that order
+
+  # A step that fell out of the file because nobody gave it a milestone is the worst thing this
+  # document can do, because what is left still reads as the whole path.
+  Scenario: A step in no milestone is written under a heading of its own
+    Given the project's path is:
+      """
+      ## 1. The store holds a project's brief
+
+      # 1. A design carries an approval
+
+      ## 2. The operator approves the design
+      """
+    When the operator dispatches "hello" to the project
+    Then the session's path file lists steps 1, 2 in that order
+    And the session's path file carries "## No milestone"
+    And the session's path file carries "### 1. The store holds a project's brief\nmilestone: no milestone"
+
   # A file that exists and says nothing costs a read.
   Scenario: A project with no path has no path file
     Given the project's design is "# Bills\n"
     When the operator dispatches "hello" to the project
     Then the session has no path file
+    And the session's memory file does not carry ".krewe/path.md"
+
+  # A write that fails leaves the session without the file. It never fails the exec: the session works
+  # in the project whether or not the render reached its working directory.
+  Scenario: A path that cannot be written does not fail the exec
+    Given the project's design is "# Bills\n"
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+      """
+    And a session started by dispatching "hello"
+    And the path document cannot be written
+    When the operator dispatches "and again" to the same session
+    Then the session was asked "and again"
     And the session's memory file does not carry ".krewe/path.md"
 
   Scenario: Setting a new path and dispatching again gives the session the new text
@@ -973,7 +1048,7 @@ Feature: A project holds a numbered path of steps
       ## 1. The store holds a project's design
       """
     And the operator dispatches "and again" to the same session
-    Then the session's path file carries "## 1. The store holds a project's design"
+    Then the session's path file carries "### 1. The store holds a project's design"
     And the session's path file does not carry "The store holds a project's brief"
 
   # A line naming a file that is not there sends the model to open nothing, so the summary names the
@@ -1181,8 +1256,9 @@ Feature: A project holds a numbered path of steps
     Then the session's memory file carries "You are on step 1 of 2: Checkout"
 
   # The session reads the whole project in its working directory, because it works in the project
-  # rather than in one feature of it.
-  Scenario: The session's path file carries every feature's path
+  # rather than in one feature of it. Each feature is under a heading of its own: two features each
+  # hold a step 1, and without the headings the file reads as one path that counts up twice.
+  Scenario: The session's path file carries every open feature's path under its own heading
     Given the project's feature "authentication"
     And the project's feature "payment"
     And the operator sets the path of feature 1 to:
@@ -1194,8 +1270,10 @@ Feature: A project holds a numbered path of steps
       ## 1. Checkout
       """
     When the operator dispatches "hello" to the project
-    Then the session's path file carries "## 1. Sign up"
-    And the session's path file carries "## 1. Checkout"
+    Then the session's path file carries "# 1. authentication"
+    And the session's path file carries "# 2. payment"
+    And the session's path file carries "### 1. Sign up"
+    And the session's path file carries "### 1. Checkout"
 
   # A session nobody gave a step to is most sessions, and the line costs context on every one of them.
   Scenario: A session that took no step reads no step line
@@ -1568,6 +1646,39 @@ Feature: A project holds a numbered path of steps
     And the operator reads the features
     Then feature 1 is open
 
+
+  # A closed feature leaves the file, which is what keeps it from growing with every finished feature.
+  # A session reading mostly history is reading the wrong document.
+  Scenario: A closed feature is left out of the path the session reads
+    Given the project's feature "authentication"
+    And the project's feature "payment"
+    And the operator sets the path of feature 1 to:
+      """
+      ## 1. Sign up
+      """
+    And the operator sets the path of feature 2 to:
+      """
+      ## 1. Checkout
+      """
+    And the operator closes feature 1
+    When the operator dispatches "hello" to the project
+    Then the session's path file carries "### 1. Checkout"
+    And the session's path file does not carry "Sign up"
+    And the session's path file does not carry "# 1. authentication"
+
+  # A file that exists and says nothing costs a read, and a project whose only path is closed has
+  # nothing to say.
+  Scenario: A project whose open features hold no step has no path file
+    Given the project's design is "# Bills\n"
+    And the project's feature "authentication"
+    And the operator sets the path of feature 1 to:
+      """
+      ## 1. Sign up
+      """
+    And the operator closes feature 1
+    When the operator dispatches "hello" to the project
+    Then the session has no path file
+    And the session's memory file does not carry ".krewe/path.md"
   # A closed feature leaves the file, and reopening brings it back on the next dispatch.
   Scenario: A reopened feature is back in the path the session reads
     Given the project's path is:
@@ -1577,7 +1688,7 @@ Feature: A project holds a numbered path of steps
     And the operator closes feature 1
     And the operator opens feature 1 again
     When the operator dispatches "hello" to the project
-    Then the session's path file carries "## 1. Sign up"
+    Then the session's path file carries "### 1. Sign up"
 
   # These scenarios run the command line tool as a caller runs it: its own process, its own standard
   # output, its own exit status.

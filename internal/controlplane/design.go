@@ -793,10 +793,15 @@ func (s *Server) SetPath(ctx context.Context, req *quaycrewv1.SetPathRequest) (*
 // renderPath puts the project's path where the model can open it, and says whether it is there to
 // open. A project with no path has no file: a file that exists and says nothing costs a read.
 //
-// Every feature of the project goes in, one whole path after another, because the session reads this
-// as what the project is building and it works in the project rather than in one feature of it. Each
-// feature's steps are written together rather than merged into one run of numbers, since two
-// features each start at step 1 and a merged list would read as one path with the numbers repeating.
+// Every open feature of the project goes in, one whole path after another, because the session reads
+// this as what the project is building and it works in the project rather than in one feature of it.
+// Each feature's steps are written under a heading of their own rather than merged into one run of
+// numbers, since two features each start at step 1 and a merged list would read as one path with the
+// numbers repeating.
+//
+// A feature that is done or stopped is left out, which is what keeps this file from growing with
+// every finished feature. The store answers with every state, so the filter is here. Reopening a
+// feature brings it back on the next render.
 //
 // Nothing here fails an exec, for the same reason renderDesign fails none.
 func (s *Server) renderPath(ctx context.Context, project, dir string) bool {
@@ -806,23 +811,32 @@ func (s *Server) renderPath(ctx context.Context, project, dir string) bool {
 	}
 	paths := make([]string, 0, len(features))
 	for _, feature := range features {
+		if feature.GetState() != store.FeatureOpen {
+			continue
+		}
 		steps, err := s.store.ListSteps(ctx, feature.GetId())
 		if err != nil {
 			continue
 		}
-		if document := pathDocument(steps); document != "" {
+		milestones, err := s.store.ListMilestones(ctx, feature.GetId())
+		if err != nil {
+			continue
+		}
+		if document := pathDocument(feature, milestones, steps); document != "" {
 			paths = append(paths, document)
 		}
 	}
 	return s.writeSessionFile(dir, pathFile, "path", strings.Join(paths, "\n"))
 }
 
-// pathDocument writes the steps back out in the grammar they were read in, one block each.
+// pathDocument is one feature's path: a heading naming the feature, a heading for each milestone it
+// is delivered in, and one block for each step under the milestone it belongs to.
 //
 // The order is the number's and never the store's. A session reads this file as the path, so steps
 // out of order are a different path: the one thing the file is for is saying what came before this
 // step.
-func pathDocument(steps []*quaycrewv1.Step) string {
+func pathDocument(feature *quaycrewv1.Feature,
+	milestones []*quaycrewv1.Milestone, steps []*quaycrewv1.Step) string {
 	if len(steps) == 0 {
 		return ""
 	}
@@ -832,19 +846,94 @@ func pathDocument(steps []*quaycrewv1.Step) string {
 		return ordered[i].GetNumber() < ordered[j].GetNumber()
 	})
 
-	blocks := make([]string, 0, len(ordered))
-	for _, step := range ordered {
-		blocks = append(blocks, stepBlock(step))
+	parts := []string{featureHeading(feature)}
+	for _, group := range groupPath(milestones, ordered) {
+		parts = append(parts, "## "+group.heading)
+		for _, step := range group.steps {
+			parts = append(parts, stepBlock(step, group.named))
+		}
 	}
-	return strings.Join(blocks, "\n\n") + "\n"
+	return strings.Join(parts, "\n\n") + "\n"
 }
 
-// stepBlock is one step: its heading, where it stands, and the blocks the operator wrote under it,
-// in the words they set. A block they left empty is left out rather than written as a bare label,
+// featureHeading is the feature's own line and what it narrows to, which is one line or none.
+//
+// The heading is there so a session reading two paths knows which project part each one belongs to.
+// Two features of a project each hold a step 1, and without the heading the file reads as one path
+// that counts up twice.
+func featureHeading(feature *quaycrewv1.Feature) string {
+	heading := fmt.Sprintf("# %d. %s", feature.GetNumber(), feature.GetTitle())
+	if feature.GetIntention() == "" {
+		return heading
+	}
+	return heading + "\n" + feature.GetIntention()
+}
+
+// pathGroup is one milestone of the document and the steps written under it.
+type pathGroup struct {
+	// heading is the milestone's own line, under two hashes.
+	heading string
+	// named is what the step blocks under it say their milestone is. It repeats the heading, so a
+	// reader who opens the file at one step still knows where the step sits.
+	named string
+	steps []*quaycrewv1.Step
+}
+
+// groupPath puts every step under the milestone it belongs to.
+//
+// The steps under no milestone come first, because a milestone of 0 is below every milestone number
+// and the document is in number order between milestones as well as inside one. A step whose
+// milestone matches no milestone of the feature is written there too. A step that falls out of the
+// document is the worst thing this render can do, because what is left still reads as the whole path.
+func groupPath(milestones []*quaycrewv1.Milestone, steps []*quaycrewv1.Step) []pathGroup {
+	under := func(wanted func(*quaycrewv1.Step) bool) []*quaycrewv1.Step {
+		held := make([]*quaycrewv1.Step, 0, len(steps))
+		for _, step := range steps {
+			if wanted(step) {
+				held = append(held, step)
+			}
+		}
+		return held
+	}
+	named := make(map[int32]bool, len(milestones))
+	for _, milestone := range milestones {
+		named[milestone.GetNumber()] = true
+	}
+
+	grouped := make([]pathGroup, 0, len(milestones)+1)
+	if loose := under(func(step *quaycrewv1.Step) bool { return !named[step.GetMilestone()] }); len(loose) > 0 {
+		grouped = append(grouped, pathGroup{heading: noMilestoneHeading, named: noMilestone, steps: loose})
+	}
+	for _, milestone := range milestones {
+		number := milestone.GetNumber()
+		line := fmt.Sprintf("%d. %s", number, milestone.GetTitle())
+		grouped = append(grouped, pathGroup{
+			heading: line,
+			named:   line,
+			steps:   under(func(step *quaycrewv1.Step) bool { return step.GetMilestone() == number }),
+		})
+	}
+	return grouped
+}
+
+// What a step with no milestone reads under, and what its own line says. The two differ by one
+// capital letter, because one of them opens a heading.
+const (
+	noMilestoneHeading = "No milestone"
+	noMilestone        = "no milestone"
+)
+
+// stepBlock is one step: its heading, where it sits, and the blocks the operator wrote under it, in
+// the words they set. A block they left empty is left out rather than written as a bare label,
 // because a label with nothing under it costs a read and answers nothing.
-func stepBlock(step *quaycrewv1.Step) string {
+//
+// The milestone line says what the heading above it says. A session opens this file at its own step
+// and reads down, not from the top, so a block that named no milestone would leave the reader
+// scrolling for the heading it sits under.
+func stepBlock(step *quaycrewv1.Step, milestone string) string {
 	lines := []string{
-		fmt.Sprintf("## %d. %s", step.GetNumber(), step.GetTitle()),
+		fmt.Sprintf("### %d. %s", step.GetNumber(), step.GetTitle()),
+		"milestone: " + milestone,
 		"state: " + step.GetState(),
 	}
 	for _, block := range []struct {
