@@ -478,6 +478,27 @@ Feature: A project holds a numbered path of steps
     And the milestones read 5 in that order
     And step 1 is in milestone 5
 
+  # A milestone number restarts in each feature, so a listing that names no feature carries no
+  # milestones. Merged, milestone 1 of one feature and milestone 1 of another read as one.
+  Scenario: Reading every feature's path answers with the steps and no milestones
+    Given the project's feature "authentication"
+    And the project's feature "payment"
+    And the operator sets the path of feature 1 to:
+      """
+      # 1. Sign up works
+
+      ## 1. Sign up
+      """
+    And the operator sets the path of feature 2 to:
+      """
+      # 1. Money moves
+
+      ## 1. Checkout
+      """
+    When the operator reads the path of every feature
+    Then the path holds 2 steps
+    And the path holds 0 milestones
+
   Scenario: A feature with no path answers with nothing
     When the operator reads the path
     Then the path holds 0 steps

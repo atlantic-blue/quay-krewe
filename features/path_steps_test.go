@@ -170,6 +170,14 @@ func initializePathSteps(sc *godog.ScenarioContext) {
 		return readPath(ctx, held.GetId())
 	})
 
+	// The empty identifier is what lets a caller count the steps of every feature in one call.
+	sc.Step(`^the operator reads the path of every feature$`, func(ctx context.Context) error {
+		if _, err := theFeature(ctx); err != nil {
+			return err
+		}
+		return readPath(ctx, "")
+	})
+
 	sc.Step(`^the operator reads the path of a feature that does not exist$`, func(ctx context.Context) error {
 		w := worldFrom(ctx)
 		_, w.lastErr = w.client.ListSteps(ctx, &quaycrewv1.ListStepsRequest{Feature: "no-such-feature"})
