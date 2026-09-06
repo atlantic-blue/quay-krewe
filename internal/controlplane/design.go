@@ -656,7 +656,7 @@ func (s *Server) SetPath(ctx context.Context, req *quaycrewv1.SetPathRequest) (*
 	if err != nil {
 		return nil, err
 	}
-	written, err := s.store.SetPath(ctx, req.GetFeature(), steps)
+	written, err := s.store.SetPath(ctx, req.GetFeature(), nil, steps)
 	if err != nil {
 		return nil, storeError(err, "feature")
 	}

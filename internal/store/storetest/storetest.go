@@ -2228,7 +2228,7 @@ func runPathConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 		ctx := context.Background()
 		feature := newFeature(t, s, newProject(t, s, "acme", "house-bills"), "the bills")
 
-		written, err := s.SetPath(ctx, feature.GetId(), []store.Step{
+		written, err := s.SetPath(ctx, feature.GetId(), nil, []store.Step{
 			{Number: 3, Title: "the third", After: 2},
 			{Number: 1, Title: "the first"},
 			{Number: 2, Title: "the second", After: 1},
@@ -2254,7 +2254,7 @@ func runPathConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 		ctx := context.Background()
 		feature := newFeature(t, s, newProject(t, s, "acme", "house-bills"), "the bills")
 
-		if _, err := s.SetPath(ctx, feature.GetId(), []store.Step{
+		if _, err := s.SetPath(ctx, feature.GetId(), nil, []store.Step{
 			{Number: 1, Title: "the first"},
 			{Number: 2, Title: "the second", After: 1},
 			{Number: 5, Title: "the fifth", After: 2},
@@ -2278,7 +2278,7 @@ func runPathConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 		ctx := context.Background()
 		feature := newFeature(t, s, newProject(t, s, "acme", "house-bills"), "the bills")
 
-		written, err := s.SetPath(ctx, feature.GetId(), []store.Step{{
+		written, err := s.SetPath(ctx, feature.GetId(), nil, []store.Step{{
 			Number:        1,
 			Title:         "the store holds a project's brief",
 			Intention:     "The design has nowhere to live.",
@@ -2326,6 +2326,180 @@ func runPathConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 		}
 	})
 
+	// The milestones. They are written by the path write, from the one document that declares the
+	// steps, so everything below writes both and reads them back apart.
+
+	t.Run("a feature with no milestone answers with nothing, and it is not an error", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		feature := newFeature(t, s, newProject(t, s, "acme", "house-bills"), "the bills")
+
+		milestones, err := s.ListMilestones(ctx, feature.GetId())
+		if err != nil {
+			t.Fatalf("ListMilestones on a feature with no milestone: %v", err)
+		}
+		if len(milestones) != 0 {
+			t.Fatalf("a feature nobody gave a milestone answered %d milestones", len(milestones))
+		}
+	})
+
+	t.Run("the milestones of a feature that does not exist are not found", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+
+		if _, err := s.ListMilestones(ctx, "no-such-feature"); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("ListMilestones on a missing feature answered %v, want ErrNotFound", err)
+		}
+	})
+
+	// Number order is what a caller is promised, whatever order the document declared them in, and
+	// every field a caller may set travels.
+	t.Run("the milestones are written whole and read back in number order", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		feature := newFeature(t, s, newProject(t, s, "acme", "house-bills"), "the bills")
+
+		if _, err := s.SetPath(ctx, feature.GetId(), []store.Milestone{
+			{Number: 5, Title: "a design carries a numbered path", Intention: "The atomised changes."},
+			{Number: 1, Title: "a project carries a design"},
+		}, []store.Step{
+			{Number: 1, Title: "the first", Milestone: 1},
+			{Number: 2, Title: "the second", After: 1, Milestone: 5},
+		}); err != nil {
+			t.Fatalf("SetPath: %v", err)
+		}
+		read, err := s.ListMilestones(ctx, feature.GetId())
+		if err != nil {
+			t.Fatalf("ListMilestones: %v", err)
+		}
+		if got := milestoneNumbersOf(read); !slices.Equal(got, []int32{1, 5}) {
+			t.Fatalf("the milestones read back as %v, want 1 and 5 in order", got)
+		}
+		if read[0].GetFeature() != feature.GetId() {
+			t.Errorf("milestone 1 names feature %q, want %q", read[0].GetFeature(), feature.GetId())
+		}
+		if read[0].GetTitle() != "a project carries a design" {
+			t.Errorf("milestone 1 is titled %q", read[0].GetTitle())
+		}
+		if read[0].GetIntention() != "" {
+			t.Errorf("milestone 1 says %q under its heading, and the document said nothing", read[0].GetIntention())
+		}
+		if read[1].GetIntention() != "The atomised changes." {
+			t.Errorf("milestone 5 says %q under its heading", read[1].GetIntention())
+		}
+	})
+
+	// A step carries the number of the milestone it belongs to, and zero when it belongs to none.
+	// Zero is never a milestone row, so the two answers have to travel from one write.
+	t.Run("a step carries its milestone, and zero when it has none", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		feature := newFeature(t, s, newProject(t, s, "acme", "house-bills"), "the bills")
+
+		written, err := s.SetPath(ctx, feature.GetId(),
+			[]store.Milestone{{Number: 2, Title: "a design carries a numbered path"}},
+			[]store.Step{
+				{Number: 1, Title: "the first"},
+				{Number: 2, Title: "the second", After: 1, Milestone: 2},
+			})
+		if err != nil {
+			t.Fatalf("SetPath: %v", err)
+		}
+		if len(written) != 2 {
+			t.Fatalf("the write answered %d steps, want 2", len(written))
+		}
+		if written[0].GetMilestone() != 0 {
+			t.Errorf("step 1 is in milestone %d, and the document put it under none", written[0].GetMilestone())
+		}
+		if written[1].GetMilestone() != 2 {
+			t.Errorf("step 2 is in milestone %d, want 2", written[1].GetMilestone())
+		}
+		read, err := s.ListSteps(ctx, feature.GetId())
+		if err != nil {
+			t.Fatalf("ListSteps: %v", err)
+		}
+		if read[1].GetMilestone() != 2 {
+			t.Errorf("step 2 reads back in milestone %d, want 2", read[1].GetMilestone())
+		}
+	})
+
+	// The milestones are replaced whole beside the steps. A milestone the new document does not carry
+	// is dropped, and it loses nothing, because a milestone holds no state of its own.
+	t.Run("writing a path again replaces the milestones that were there", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		feature := newFeature(t, s, newProject(t, s, "acme", "house-bills"), "the bills")
+
+		if _, err := s.SetPath(ctx, feature.GetId(), []store.Milestone{
+			{Number: 1, Title: "a project carries a design"},
+			{Number: 2, Title: "a design carries an approval"},
+		}, []store.Step{{Number: 1, Title: "the first", Milestone: 1}}); err != nil {
+			t.Fatalf("SetPath: %v", err)
+		}
+		if _, err := s.SetPath(ctx, feature.GetId(),
+			[]store.Milestone{{Number: 3, Title: "a design carries a numbered path"}},
+			[]store.Step{{Number: 1, Title: "the first", Milestone: 3}}); err != nil {
+			t.Fatalf("SetPath again: %v", err)
+		}
+		read, err := s.ListMilestones(ctx, feature.GetId())
+		if err != nil {
+			t.Fatalf("ListMilestones: %v", err)
+		}
+		if got := milestoneNumbersOf(read); !slices.Equal(got, []int32{3}) {
+			t.Fatalf("the milestones read back as %v after the rewrite, want 3 alone", got)
+		}
+	})
+
+	// A milestone number restarts in each feature, so two features each hold a milestone 1 and
+	// writing one leaves the other whole.
+	t.Run("setting one feature's milestones leaves another feature's whole", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		project := newProject(t, s, "acme", "house-bills")
+		first := newFeature(t, s, project, "authentication")
+		second := newFeature(t, s, project, "payment")
+
+		if _, err := s.SetPath(ctx, first.GetId(),
+			[]store.Milestone{{Number: 1, Title: "sign up works"}},
+			[]store.Step{{Number: 1, Title: "sign up", Milestone: 1}}); err != nil {
+			t.Fatalf("SetPath for authentication: %v", err)
+		}
+		if _, err := s.SetPath(ctx, second.GetId(),
+			[]store.Milestone{{Number: 1, Title: "money moves"}},
+			[]store.Step{{Number: 1, Title: "checkout", Milestone: 1}}); err != nil {
+			t.Fatalf("SetPath for payment: %v", err)
+		}
+
+		read, err := s.ListMilestones(ctx, first.GetId())
+		if err != nil {
+			t.Fatalf("ListMilestones for authentication: %v", err)
+		}
+		if len(read) != 1 || read[0].GetTitle() != "sign up works" {
+			t.Fatalf("authentication holds %+v after payment was written", read)
+		}
+	})
+
+	// Deleting a project takes its features, and a feature takes its milestones with it through the
+	// cascade. Nothing else deletes one.
+	t.Run("deleting a project takes the milestones of its features with it", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		project := newProject(t, s, "acme", "house-bills")
+		feature := newFeature(t, s, project, "the bills")
+
+		if _, err := s.SetPath(ctx, feature.GetId(),
+			[]store.Milestone{{Number: 1, Title: "a project carries a design"}},
+			[]store.Step{{Number: 1, Title: "the first", Milestone: 1}}); err != nil {
+			t.Fatalf("SetPath: %v", err)
+		}
+		if err := s.DeleteProject(ctx, project.GetId()); err != nil {
+			t.Fatalf("DeleteProject: %v", err)
+		}
+		if _, err := s.ListMilestones(ctx, feature.GetId()); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("a deleted project answered %v for its milestones, want ErrNotFound", err)
+		}
+	})
+
 	// Writing a path replaces it. A step the new path does not name is gone, which is the whole of
 	// what this slice of SetPath does.
 	t.Run("writing a path again replaces the one that was there", func(t *testing.T) {
@@ -2333,14 +2507,14 @@ func runPathConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 		ctx := context.Background()
 		feature := newFeature(t, s, newProject(t, s, "acme", "house-bills"), "the bills")
 
-		if _, err := s.SetPath(ctx, feature.GetId(), []store.Step{
+		if _, err := s.SetPath(ctx, feature.GetId(), nil, []store.Step{
 			{Number: 1, Title: "the first"},
 			{Number: 2, Title: "the second", After: 1},
 			{Number: 3, Title: "the third", After: 2},
 		}); err != nil {
 			t.Fatalf("SetPath: %v", err)
 		}
-		written, err := s.SetPath(ctx, feature.GetId(), []store.Step{
+		written, err := s.SetPath(ctx, feature.GetId(), nil, []store.Step{
 			{Number: 1, Title: "the first, rewritten"},
 			{Number: 3, Title: "the third", After: 1},
 		})
@@ -2367,13 +2541,13 @@ func runPathConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 		first := newFeature(t, s, project, "authentication")
 		second := newFeature(t, s, project, "payment")
 
-		if _, err := s.SetPath(ctx, first.GetId(), []store.Step{
+		if _, err := s.SetPath(ctx, first.GetId(), nil, []store.Step{
 			{Number: 1, Title: "sign up"},
 			{Number: 2, Title: "sign in", After: 1},
 		}); err != nil {
 			t.Fatalf("SetPath for authentication: %v", err)
 		}
-		if _, err := s.SetPath(ctx, second.GetId(), []store.Step{
+		if _, err := s.SetPath(ctx, second.GetId(), nil, []store.Step{
 			{Number: 1, Title: "checkout"},
 		}); err != nil {
 			t.Fatalf("SetPath for payment: %v", err)
@@ -2397,10 +2571,10 @@ func runPathConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 		bills := newFeature(t, s, newProject(t, s, "acme", "house-bills"), "the bills")
 		garden := newFeature(t, s, newProject(t, s, "acme", "the-garden"), "the garden")
 
-		if _, err := s.SetPath(ctx, bills.GetId(), []store.Step{{Number: 1, Title: "pay the water"}}); err != nil {
+		if _, err := s.SetPath(ctx, bills.GetId(), nil, []store.Step{{Number: 1, Title: "pay the water"}}); err != nil {
 			t.Fatalf("SetPath for house-bills: %v", err)
 		}
-		if _, err := s.SetPath(ctx, garden.GetId(), []store.Step{
+		if _, err := s.SetPath(ctx, garden.GetId(), nil, []store.Step{
 			{Number: 1, Title: "cut the grass"},
 			{Number: 2, Title: "plant the beds", After: 1},
 		}); err != nil {
@@ -2444,7 +2618,7 @@ func runPathConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 		project := newProject(t, s, "acme", "house-bills")
 		feature := newFeature(t, s, project, "the bills")
 
-		if _, err := s.SetPath(ctx, feature.GetId(), []store.Step{{Number: 1, Title: "pay the water"}}); err != nil {
+		if _, err := s.SetPath(ctx, feature.GetId(), nil, []store.Step{{Number: 1, Title: "pay the water"}}); err != nil {
 			t.Fatalf("SetPath: %v", err)
 		}
 		if err := s.DeleteProject(ctx, project.GetId()); err != nil {
@@ -2466,7 +2640,7 @@ func runPathConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 		s := newDataset(t)(t)
 		ctx := context.Background()
 
-		if _, err := s.SetPath(ctx, "no-such-feature", []store.Step{{Number: 1, Title: "the first"}}); !errors.Is(err, store.ErrNotFound) {
+		if _, err := s.SetPath(ctx, "no-such-feature", nil, []store.Step{{Number: 1, Title: "the first"}}); !errors.Is(err, store.ErrNotFound) {
 			t.Fatalf("SetPath on a missing feature answered %v, want ErrNotFound", err)
 		}
 		if _, err := s.ListSteps(ctx, "no-such-feature"); !errors.Is(err, store.ErrNotFound) {
@@ -2485,6 +2659,17 @@ func numbersOf(steps []*quaycrewv1.Step) []int32 {
 }
 
 // newFeature gives a project one narrowed part of itself, which is what a path hangs off.
+// milestoneNumbersOf is the milestone numbers in the order they came back, which is what the order
+// assertions read. It is beside numbersOf for the same reason: order is a promise, so it is asserted
+// as an order and not as a set.
+func milestoneNumbersOf(milestones []*quaycrewv1.Milestone) []int32 {
+	numbers := make([]int32, 0, len(milestones))
+	for _, milestone := range milestones {
+		numbers = append(numbers, milestone.GetNumber())
+	}
+	return numbers
+}
+
 func newFeature(t *testing.T, s store.Store, project *quaycrewv1.Project, title string) *quaycrewv1.Feature {
 	t.Helper()
 	feature, err := s.AddFeature(context.Background(), project.GetId(), title)
@@ -2503,7 +2688,7 @@ func runTakeConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 		ctx := context.Background()
 		feature := newFeature(t, s, newProject(t, s, "acme", "house-bills"), "the bills")
 
-		if _, err := s.SetPath(ctx, feature.GetId(), []store.Step{
+		if _, err := s.SetPath(ctx, feature.GetId(), nil, []store.Step{
 			{Number: 1, Title: "the first"},
 			{Number: 2, Title: "the second", Intention: "The second thing.",
 				Touches: "internal/store/store.go", Proof: "It reads back.",
@@ -2538,7 +2723,7 @@ func runTakeConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 		ctx := context.Background()
 		feature := newFeature(t, s, newProject(t, s, "acme", "house-bills"), "the bills")
 
-		if _, err := s.SetPath(ctx, feature.GetId(), []store.Step{{Number: 1, Title: "the first"}}); err != nil {
+		if _, err := s.SetPath(ctx, feature.GetId(), nil, []store.Step{{Number: 1, Title: "the first"}}); err != nil {
 			t.Fatalf("SetPath: %v", err)
 		}
 		if _, err := s.GetStep(ctx, feature.GetId(), 7); !errors.Is(err, store.ErrNotFound) {
@@ -2554,7 +2739,7 @@ func runTakeConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 		ctx := context.Background()
 		feature := newFeature(t, s, newProject(t, s, "acme", "house-bills"), "the bills")
 
-		if _, err := s.SetPath(ctx, feature.GetId(), []store.Step{{Number: 1, Title: "the first"}}); err != nil {
+		if _, err := s.SetPath(ctx, feature.GetId(), nil, []store.Step{{Number: 1, Title: "the first"}}); err != nil {
 			t.Fatalf("SetPath: %v", err)
 		}
 		taken, err := s.TakeStep(ctx, feature.GetId(), 1, "session-one")
@@ -2588,7 +2773,7 @@ func runTakeConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 		ctx := context.Background()
 		feature := newFeature(t, s, newProject(t, s, "acme", "house-bills"), "the bills")
 
-		if _, err := s.SetPath(ctx, feature.GetId(), []store.Step{{Number: 1, Title: "the first"}}); err != nil {
+		if _, err := s.SetPath(ctx, feature.GetId(), nil, []store.Step{{Number: 1, Title: "the first"}}); err != nil {
 			t.Fatalf("SetPath: %v", err)
 		}
 		if _, err := s.TakeStep(ctx, feature.GetId(), 1, "session-one"); err != nil {
@@ -2612,7 +2797,7 @@ func runTakeConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 		ctx := context.Background()
 		feature := newFeature(t, s, newProject(t, s, "acme", "house-bills"), "the bills")
 
-		if _, err := s.SetPath(ctx, feature.GetId(), []store.Step{
+		if _, err := s.SetPath(ctx, feature.GetId(), nil, []store.Step{
 			{Number: 1, Title: "the first"},
 			{Number: 2, Title: "the second", After: 1},
 		}); err != nil {
@@ -2646,7 +2831,7 @@ func runTakeConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 		second := newFeature(t, s, project, "payment")
 
 		for _, feature := range []string{first.GetId(), second.GetId()} {
-			if _, err := s.SetPath(ctx, feature, []store.Step{{Number: 3, Title: "the third"}}); err != nil {
+			if _, err := s.SetPath(ctx, feature, nil, []store.Step{{Number: 3, Title: "the third"}}); err != nil {
 				t.Fatalf("SetPath: %v", err)
 			}
 		}
@@ -2671,7 +2856,7 @@ func runTakeConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 		ctx := context.Background()
 		feature := newFeature(t, s, newProject(t, s, "acme", "house-bills"), "the bills")
 
-		if _, err := s.SetPath(ctx, feature.GetId(), []store.Step{{Number: 1, Title: "the first"}}); err != nil {
+		if _, err := s.SetPath(ctx, feature.GetId(), nil, []store.Step{{Number: 1, Title: "the first"}}); err != nil {
 			t.Fatalf("SetPath: %v", err)
 		}
 		if _, err := s.TakeStep(ctx, feature.GetId(), 7, "session-one"); !errors.Is(err, store.ErrNotFound) {
