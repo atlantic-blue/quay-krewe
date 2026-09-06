@@ -3113,6 +3113,108 @@ func runFeatureConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 		if _, err := s.SetFeatureIntention(ctx, "no-such-feature", "anything"); !errors.Is(err, store.ErrNotFound) {
 			t.Fatalf("SetFeatureIntention on a missing feature answered %v, want ErrNotFound", err)
 		}
+		if _, err := s.FinishFeature(ctx, "no-such-feature", "done"); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("FinishFeature on a missing feature answered %v, want ErrNotFound", err)
+		}
+	})
+
+	// A state is not a delete. The steps are read after the close and compared field by field, because
+	// what this proves is that a closed feature keeps its whole path: a session reads that path back
+	// the moment the feature is open again.
+	t.Run("closing a feature leaves its steps unchanged", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		project := newProject(t, s, "acme", "house-bills")
+		feature := newFeature(t, s, project, "authentication")
+
+		before, err := s.SetPath(ctx, feature.GetId(), nil, []store.Step{
+			{Number: 1, Title: "sign up", Intention: "somebody has to get in"},
+			{Number: 2, Title: "sign in", After: 1},
+		})
+		if err != nil {
+			t.Fatalf("SetPath: %v", err)
+		}
+		closed, err := s.FinishFeature(ctx, feature.GetId(), "done")
+		if err != nil {
+			t.Fatalf("FinishFeature: %v", err)
+		}
+		if closed.GetState() != "done" {
+			t.Fatalf("the write answered state %q, want done", closed.GetState())
+		}
+		// The write touches that column and nothing else on the row.
+		if closed.GetNumber() != feature.GetNumber() || closed.GetTitle() != feature.GetTitle() ||
+			closed.GetIntention() != feature.GetIntention() {
+			t.Fatalf("the write answered feature %d %q narrowing to %q, want %d %q narrowing to %q",
+				closed.GetNumber(), closed.GetTitle(), closed.GetIntention(),
+				feature.GetNumber(), feature.GetTitle(), feature.GetIntention())
+		}
+		after, err := s.ListSteps(ctx, feature.GetId())
+		if err != nil {
+			t.Fatalf("ListSteps on a closed feature: %v", err)
+		}
+		if len(after) != len(before) {
+			t.Fatalf("the closed feature reads back %d steps, want %d", len(after), len(before))
+		}
+		for at, step := range after {
+			was := before[at]
+			if step.GetNumber() != was.GetNumber() || step.GetTitle() != was.GetTitle() ||
+				step.GetState() != was.GetState() || step.GetIntention() != was.GetIntention() {
+				t.Fatalf("step %d reads %q in state %q, want %q in state %q",
+					step.GetNumber(), step.GetTitle(), step.GetState(), was.GetTitle(), was.GetState())
+			}
+		}
+		read, err := s.ListFeatures(ctx, project.GetId())
+		if err != nil {
+			t.Fatalf("ListFeatures: %v", err)
+		}
+		if len(read) != 1 || read[0].GetState() != "done" {
+			t.Fatalf("the listing reads %v, want one feature reading done", read)
+		}
+	})
+
+	// The store keeps the word it is given and judges none of them, so the way back from both closed
+	// words is this same call. The control plane is the one layer that refuses a fourth word.
+	t.Run("a feature is stopped and opened again through the one call", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		project := newProject(t, s, "acme", "house-bills")
+		feature := newFeature(t, s, project, "authentication")
+
+		stopped, err := s.FinishFeature(ctx, feature.GetId(), "stopped")
+		if err != nil {
+			t.Fatalf("FinishFeature: %v", err)
+		}
+		if stopped.GetState() != "stopped" {
+			t.Fatalf("the write answered state %q, want stopped", stopped.GetState())
+		}
+		opened, err := s.FinishFeature(ctx, feature.GetId(), store.FeatureOpen)
+		if err != nil {
+			t.Fatalf("FinishFeature back to open: %v", err)
+		}
+		if opened.GetState() != store.FeatureOpen {
+			t.Fatalf("the write answered state %q, want open", opened.GetState())
+		}
+		read, err := s.ListFeatures(ctx, project.GetId())
+		if err != nil {
+			t.Fatalf("ListFeatures: %v", err)
+		}
+		if len(read) != 1 || read[0].GetState() != store.FeatureOpen {
+			t.Fatalf("the listing reads %v, want one feature reading open", read)
+		}
+	})
+
+	t.Run("a deleted project's feature cannot be closed", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		project := newProject(t, s, "acme", "house-bills")
+		feature := newFeature(t, s, project, "authentication")
+
+		if err := s.DeleteProject(ctx, project.GetId()); err != nil {
+			t.Fatalf("DeleteProject: %v", err)
+		}
+		if _, err := s.FinishFeature(ctx, feature.GetId(), "done"); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("FinishFeature on a deleted project's feature answered %v, want ErrNotFound", err)
+		}
 	})
 }
 

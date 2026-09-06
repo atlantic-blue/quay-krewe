@@ -156,6 +156,15 @@ commands:
                                           same one
   feature intention [<address>]           say which part of the project one feature narrows to, in
     <feature> "<text>"                    one line. A second line is refused
+  feature done [<address>] <feature>      say a feature finished. It warns about each step still
+                                          open under it and closes it anyway: the operator decides
+                                          when a feature is finished. A closed feature leaves
+                                          .krewe/path.md, so a session stops reading its path
+  feature stop [<address>] <feature>      say a feature stopped. It keeps its steps, and the reason
+    "<reason>"                            is printed back rather than stored: what came of the work
+                                          is on the steps
+  feature open [<address>] <feature>      open a feature again. It is the way back from done and from
+                                          stopped, and it warns nothing
   path [<address>] [<feature>]            the steps one feature was broken into, in number order,
                                           with the state of each one and the session holding it. With
                                           no feature number it prints the path of every open feature

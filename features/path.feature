@@ -1287,3 +1287,168 @@ Feature: A project holds a numbered path of steps
     When the caller sets an intention without saying which feature
     Then standard error says "usage: krewe feature intention"
     And the command fails
+
+  # A feature is closed when the operator says so. It is closed while steps under it are ready or
+  # taken all the time: the work moved on, or somebody abandoned it, and the operator is the one who
+  # knows which. So the control plane warns about each step still open and writes the state anyway. A
+  # refusal here would make somebody finish every step of a feature nobody works on before the record
+  # of the work could stop growing.
+  #
+  # The warning also says what closing costs. A closed feature leaves .krewe/path.md, so a session in
+  # the project stops reading its path, and a person who closes a feature and then finds a session
+  # with nothing to read would take the silence for a fault.
+  #
+  # Closing touches no step and no milestone. A closed feature keeps its whole path, and krewe feature
+  # open is the way back from both closed words.
+
+  Scenario: Closing a feature with a taken step warns about that step and closes it anyway
+    Given the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And the project's path is:
+      """
+      ## 1. Sign up
+      ## 2. Sign in
+      """
+    And the operator takes step 1
+    When the operator closes feature 1
+    Then the feature write warns "step 1 is taken"
+    And the operator reads the features
+    And feature 1 reads as "done"
+
+  # A person who closes a feature and finds a session idle reads the silence as a fault, so the write
+  # says what it takes away.
+  Scenario: The warning says the feature leaves the path document a session reads
+    Given the project's feature "authentication"
+    When the operator closes feature 1
+    Then the feature write warns ".krewe/path.md"
+
+  # The store keeps the word it is given, so the vocabulary is guarded in one place and the refusal
+  # names every word that works.
+  Scenario: A state word outside the three is refused, and the refusal names the three
+    Given the project's feature "authentication"
+    When the operator sets feature 1's state to "finished"
+    Then the control plane refuses it as invalid
+    And the refusal says "open, done, stopped"
+    And the operator reads the features
+    And feature 1 is open
+
+  # A state is not a delete.
+  Scenario: The steps of a closed feature read back unchanged
+    Given the project's path is:
+      """
+      ## 1. Sign up
+      ## 2. Sign in
+      """
+    And the operator takes step 1
+    And the path as it stands is written down
+    When the operator closes feature 1
+    And the operator reads the path
+    Then the path reads back as it was written down
+
+  Scenario: The steps of a stopped feature read back unchanged
+    Given the project's path is:
+      """
+      ## 1. Sign up
+      ## 2. Sign in
+      """
+    And the path as it stands is written down
+    When the operator stops feature 1
+    And the operator reads the path
+    Then the path reads back as it was written down
+
+  # Reopening costs nothing and starts nothing, so it warns about nothing.
+  Scenario: Reopening a closed feature writes the word open, and warns nothing
+    Given the project's feature "authentication"
+    And the operator closes feature 1
+    When the operator opens feature 1 again
+    Then the feature write warns nothing
+    And the operator reads the features
+    And feature 1 is open
+
+  Scenario: Reopening a stopped feature writes the word open
+    Given the project's feature "authentication"
+    And the operator stops feature 1
+    When the operator opens feature 1 again
+    And the operator reads the features
+    Then feature 1 is open
+
+  # A closed feature leaves the file, and reopening brings it back on the next dispatch.
+  Scenario: A reopened feature is back in the path the session reads
+    Given the project's path is:
+      """
+      ## 1. Sign up
+      """
+    And the operator closes feature 1
+    And the operator opens feature 1 again
+    When the operator dispatches "hello" to the project
+    Then the session's path file carries "## 1. Sign up"
+
+  # These scenarios run the command line tool as a caller runs it: its own process, its own standard
+  # output, its own exit status.
+
+  Scenario: The caller closes a feature that holds a taken step, and reads what it cost
+    Given the system listens on an address the tool can dial
+    And the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And the project's path is:
+      """
+      ## 1. Sign up
+      """
+    And the operator takes step 1
+    When the caller closes feature 1
+    Then standard output carries "is done"
+    And standard output carries "step 1 is taken"
+    And standard output carries ".krewe/path.md"
+    And the command succeeds
+
+  Scenario: The caller closes a feature and the listing shows the word done
+    Given the system listens on an address the tool can dial
+    And the project's feature "authentication"
+    When the caller closes feature 1
+    And the caller reads the features
+    Then standard output carries "done"
+    And the command succeeds
+
+  # The reason is printed back and never stored. A feature carries no result column, because what came
+  # of the work is on its steps.
+  Scenario: The caller stops a feature and the reason is printed back and not kept
+    Given the system listens on an address the tool can dial
+    And the project's feature "authentication"
+    When the caller stops feature 1 saying "the customer withdrew it"
+    Then standard output carries "is stopped: the customer withdrew it"
+    And the caller reads the features
+    And standard output carries "stopped"
+    And standard output does not carry "the customer withdrew it"
+    And the command succeeds
+
+  Scenario: The caller opens a feature again
+    Given the system listens on an address the tool can dial
+    And the project's feature "authentication"
+    And the caller closes feature 1
+    When the caller opens feature 1 again
+    Then standard output carries "is open again"
+    And the caller reads the features
+    And standard output carries "open"
+    And the command succeeds
+
+  # A number nobody wrote and a number one past the end read the same to whoever typed it.
+  Scenario: Closing a feature number that names no feature is refused, naming the numbers that exist
+    Given the system listens on an address the tool can dial
+    And the project's feature "authentication"
+    When the caller closes feature 9
+    Then standard error says "has no feature 9"
+    And standard error says "it has 1"
+    And the command fails
+
+  Scenario: Closing a feature without saying which one is refused
+    Given the system listens on an address the tool can dial
+    When the caller closes a feature without saying which one
+    Then standard error says "usage: krewe feature done"
+    And the command fails
+
+  Scenario: Stopping a feature without saying why is refused
+    Given the system listens on an address the tool can dial
+    And the project's feature "authentication"
+    When the caller stops feature 1 and says nothing more
+    Then standard error says "usage: krewe feature stop"
+    And the command fails

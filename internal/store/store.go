@@ -387,6 +387,15 @@ type Store interface {
 	// returns the feature after the write. It touches no other column. An empty intention is kept: a
 	// feature that says nothing yet is the normal state.
 	SetFeatureIntention(ctx context.Context, feature string, intention string) (*quaycrewv1.Feature, error)
+	// FinishFeature writes a feature's state and returns the feature after the write.
+	//
+	// The store keeps the word it is given and judges none of them, so a word outside the three is
+	// refused at the control plane and the check lives in one place. Setting the state back to open
+	// goes through here too, which is why there is no separate method for reopening.
+	//
+	// It touches no step and no milestone. A closed feature keeps its whole path, and a feature may be
+	// closed while steps under it are ready or taken: the operator decides when a feature is finished.
+	FinishFeature(ctx context.Context, feature string, state string) (*quaycrewv1.Feature, error)
 
 	// ImportSkill takes a skill into the system at the version its manifest declares.
 	//

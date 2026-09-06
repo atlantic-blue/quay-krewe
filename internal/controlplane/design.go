@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -1117,4 +1118,80 @@ func (s *Server) SetFeatureIntention(ctx context.Context, req *quaycrewv1.SetFea
 		Warnings: overMark("feature intention", utf8.RuneCountInString(intention), featureIntentionMark,
 			"one line saying which part of the project the feature narrows to"),
 	}, nil
+}
+
+// The three words a feature reads as. They are here rather than in the store because the store keeps
+// the word it is given: one layer owns the vocabulary, so the two cannot disagree about it.
+const (
+	featureOpen    = "open"
+	featureDone    = "done"
+	featureStopped = "stopped"
+)
+
+// featureStates are the three, in the order the refusal names them.
+func featureStates() []string { return []string{featureOpen, featureDone, featureStopped} }
+
+// The two step states that mean nobody will do any more to that step. They read the same as two of
+// the words above and they are a different list: a step is also ready or taken, so a step nobody
+// finished is what the warning below names.
+const (
+	stepDone    = "done"
+	stepStopped = "stopped"
+)
+
+// FinishFeature says a feature finished, or stopped, or is open again.
+//
+// It warns and it never refuses. A feature is closed while steps under it are ready or taken all the
+// time: the work moved on, or it was abandoned, and the operator is the one who knows which. A
+// refusal here would make the operator finish or stop every step of a feature nobody is working on
+// before the record of it could stop growing.
+//
+// The warning says what closing costs, because a closed feature leaves the path document a session
+// reads and a person who closes a feature and then finds a session with nothing to read would take
+// the silence for a fault.
+func (s *Server) FinishFeature(ctx context.Context, req *quaycrewv1.FinishFeatureRequest) (*quaycrewv1.FinishFeatureResponse, error) {
+	if req.GetFeature() == "" {
+		return nil, status.Error(codes.InvalidArgument, "which feature: say its number")
+	}
+	state := req.GetState()
+	if !slices.Contains(featureStates(), state) {
+		return nil, status.Errorf(codes.InvalidArgument,
+			"%q is not a state a feature reads as. A feature is %s, and nothing else",
+			state, strings.Join(featureStates(), ", "))
+	}
+	warnings := s.whatClosingCosts(ctx, req.GetFeature(), state)
+	feature, err := s.store.FinishFeature(ctx, req.GetFeature(), state)
+	if err != nil {
+		return nil, storeError(err, "feature")
+	}
+	return &quaycrewv1.FinishFeatureResponse{Feature: feature, Warnings: warnings}, nil
+}
+
+// whatClosingCosts is what the operator loses by closing this feature: every step under it that
+// nobody finished, and the path document the feature leaves.
+//
+// Reopening warns nothing. It costs nothing and it starts nothing, so a warning there would be noise
+// on the one call that takes nothing away.
+//
+// The steps are read before the write rather than after, because the write is what the warning is
+// about. A read that fails leaves the warnings empty and the write still happens: the operator asked
+// for the state, and a warning that cannot be composed is not a reason to refuse one.
+func (s *Server) whatClosingCosts(ctx context.Context, feature, state string) []string {
+	if state == featureOpen {
+		return nil
+	}
+	steps, err := s.store.ListSteps(ctx, feature)
+	if err != nil {
+		return nil
+	}
+	warnings := make([]string, 0, len(steps)+1)
+	for _, step := range steps {
+		if step.GetState() == stepDone || step.GetState() == stepStopped {
+			continue
+		}
+		warnings = append(warnings, fmt.Sprintf("step %d is %s, and closing the feature leaves it that way: %s",
+			step.GetNumber(), step.GetState(), step.GetTitle()))
+	}
+	return append(warnings, "this feature leaves "+designDir+"/"+pathFile+
+		", so a session in this project stops reading its path. Open it again with krewe feature open.")
 }

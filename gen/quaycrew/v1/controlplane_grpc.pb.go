@@ -59,6 +59,7 @@ const (
 	ControlPlaneService_ListFeatures_FullMethodName             = "/quaycrew.v1.ControlPlaneService/ListFeatures"
 	ControlPlaneService_AddFeature_FullMethodName               = "/quaycrew.v1.ControlPlaneService/AddFeature"
 	ControlPlaneService_SetFeatureIntention_FullMethodName      = "/quaycrew.v1.ControlPlaneService/SetFeatureIntention"
+	ControlPlaneService_FinishFeature_FullMethodName            = "/quaycrew.v1.ControlPlaneService/FinishFeature"
 	ControlPlaneService_ReadSessionWork_FullMethodName          = "/quaycrew.v1.ControlPlaneService/ReadSessionWork"
 	ControlPlaneService_LocateDirectory_FullMethodName          = "/quaycrew.v1.ControlPlaneService/LocateDirectory"
 	ControlPlaneService_ImportSkill_FullMethodName              = "/quaycrew.v1.ControlPlaneService/ImportSkill"
@@ -142,6 +143,9 @@ type ControlPlaneServiceClient interface {
 	ListFeatures(ctx context.Context, in *ListFeaturesRequest, opts ...grpc.CallOption) (*ListFeaturesResponse, error)
 	AddFeature(ctx context.Context, in *AddFeatureRequest, opts ...grpc.CallOption) (*AddFeatureResponse, error)
 	SetFeatureIntention(ctx context.Context, in *SetFeatureIntentionRequest, opts ...grpc.CallOption) (*SetFeatureIntentionResponse, error)
+	// Saying a feature finished, stopped, or is open again. It warns about the steps still open under
+	// it and refuses nothing: the operator decides when a feature is finished.
+	FinishFeature(ctx context.Context, in *FinishFeatureRequest, opts ...grpc.CallOption) (*FinishFeatureResponse, error)
 	// Reads a file, or a listing, out of the work a session left behind, without attaching to it.
 	ReadSessionWork(ctx context.Context, in *ReadSessionWorkRequest, opts ...grpc.CallOption) (*ReadSessionWorkResponse, error)
 	// Says where an address is on the machine, so a person can put a file in it by hand. It reads the
@@ -575,6 +579,16 @@ func (c *controlPlaneServiceClient) SetFeatureIntention(ctx context.Context, in 
 	return out, nil
 }
 
+func (c *controlPlaneServiceClient) FinishFeature(ctx context.Context, in *FinishFeatureRequest, opts ...grpc.CallOption) (*FinishFeatureResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FinishFeatureResponse)
+	err := c.cc.Invoke(ctx, ControlPlaneService_FinishFeature_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *controlPlaneServiceClient) ReadSessionWork(ctx context.Context, in *ReadSessionWorkRequest, opts ...grpc.CallOption) (*ReadSessionWorkResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ReadSessionWorkResponse)
@@ -791,6 +805,9 @@ type ControlPlaneServiceServer interface {
 	ListFeatures(context.Context, *ListFeaturesRequest) (*ListFeaturesResponse, error)
 	AddFeature(context.Context, *AddFeatureRequest) (*AddFeatureResponse, error)
 	SetFeatureIntention(context.Context, *SetFeatureIntentionRequest) (*SetFeatureIntentionResponse, error)
+	// Saying a feature finished, stopped, or is open again. It warns about the steps still open under
+	// it and refuses nothing: the operator decides when a feature is finished.
+	FinishFeature(context.Context, *FinishFeatureRequest) (*FinishFeatureResponse, error)
 	// Reads a file, or a listing, out of the work a session left behind, without attaching to it.
 	ReadSessionWork(context.Context, *ReadSessionWorkRequest) (*ReadSessionWorkResponse, error)
 	// Says where an address is on the machine, so a person can put a file in it by hand. It reads the
@@ -943,6 +960,9 @@ func (UnimplementedControlPlaneServiceServer) AddFeature(context.Context, *AddFe
 }
 func (UnimplementedControlPlaneServiceServer) SetFeatureIntention(context.Context, *SetFeatureIntentionRequest) (*SetFeatureIntentionResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SetFeatureIntention not implemented")
+}
+func (UnimplementedControlPlaneServiceServer) FinishFeature(context.Context, *FinishFeatureRequest) (*FinishFeatureResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method FinishFeature not implemented")
 }
 func (UnimplementedControlPlaneServiceServer) ReadSessionWork(context.Context, *ReadSessionWorkRequest) (*ReadSessionWorkResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ReadSessionWork not implemented")
@@ -1730,6 +1750,24 @@ func _ControlPlaneService_SetFeatureIntention_Handler(srv interface{}, ctx conte
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ControlPlaneService_FinishFeature_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(FinishFeatureRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ControlPlaneServiceServer).FinishFeature(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ControlPlaneService_FinishFeature_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ControlPlaneServiceServer).FinishFeature(ctx, req.(*FinishFeatureRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _ControlPlaneService_ReadSessionWork_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ReadSessionWorkRequest)
 	if err := dec(in); err != nil {
@@ -2166,6 +2204,10 @@ var ControlPlaneService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SetFeatureIntention",
 			Handler:    _ControlPlaneService_SetFeatureIntention_Handler,
+		},
+		{
+			MethodName: "FinishFeature",
+			Handler:    _ControlPlaneService_FinishFeature_Handler,
 		},
 		{
 			MethodName: "ReadSessionWork",

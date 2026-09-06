@@ -1196,6 +1196,30 @@ func (p *Postgres) SetFeatureIntention(ctx context.Context, feature, intention s
 	return written, nil
 }
 
+// FinishFeature writes a feature's state, and that column alone.
+//
+// The word is written as it is given. This store judges none of the three, because the control plane
+// refuses a word outside them and a check in both places is two places to disagree.
+//
+// The join is the one every other feature write makes, so a feature of a deleted project is not found
+// rather than written to. Nothing here reads the steps: closing a feature keeps its path whole, and
+// what is still open under it is a warning the control plane composes.
+func (p *Postgres) FinishFeature(ctx context.Context, feature, state string) (*quaycrewv1.Feature, error) {
+	written, err := scanFeature(p.pool.QueryRow(ctx, `
+		update features f set state = $2, updated_at = now()
+		from projects p join workspaces w on w.id = p.workspace
+		where f.id = $1 and p.id = f.project
+		  and p.deleted_at is null and w.deleted_at is null
+		returning `+featureColumns, feature, state))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("finish feature: %w", err)
+	}
+	return written, nil
+}
+
 // sessionBy reads the single session matching a where clause.
 func (p *Postgres) sessionBy(ctx context.Context, where string, args ...any) (*quaycrewv1.Session, error) {
 	rows, err := p.pool.Query(ctx, `

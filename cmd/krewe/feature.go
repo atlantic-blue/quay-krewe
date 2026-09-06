@@ -22,7 +22,10 @@ import (
 
 const featureUsage = "usage: krewe feature [<address>]" +
 	"\n       krewe feature add [<address>] \"<title>\"" +
-	"\n       krewe feature intention [<address>] <feature> \"<text>\""
+	"\n       krewe feature intention [<address>] <feature> \"<text>\"" +
+	"\n       krewe feature done [<address>] <feature>" +
+	"\n       krewe feature stop [<address>] <feature> \"<reason>\"" +
+	"\n       krewe feature open [<address>] <feature>"
 
 func runFeature(ctx context.Context, client quaycrewv1.ControlPlaneServiceClient, args []string, out io.Writer) error {
 	if len(args) > 0 && args[0] == "add" {
@@ -30,6 +33,9 @@ func runFeature(ctx context.Context, client quaycrewv1.ControlPlaneServiceClient
 	}
 	if len(args) > 0 && args[0] == "intention" {
 		return runFeatureIntention(ctx, client, args[1:], out)
+	}
+	if len(args) > 0 && (args[0] == "done" || args[0] == "stop" || args[0] == "open") {
+		return runFeatureState(ctx, client, args[0], args[1:], out)
 	}
 	if len(args) > 1 {
 		return fmt.Errorf("%s", featureUsage)
@@ -199,4 +205,77 @@ func featureNumbered(features []*quaycrewv1.Feature, typed, project string) (*qu
 		held = append(held, strconv.FormatInt(int64(feature.GetNumber()), 10))
 	}
 	return nil, fmt.Errorf("%s has no feature %d: it has %s", project, number, strings.Join(held, ", "))
+}
+
+// runFeatureState says a feature finished, or stopped, or is open again.
+//
+// Three words on one function, because they differ in one argument and one line of output. Stop takes
+// a reason, which is printed back and never stored: a feature carries no result column, since what
+// came of the work is on its steps.
+//
+// The warnings the control plane sends are printed as they came, one per line. They name each step
+// still open under the feature, and they say the feature leaves the path document a session reads: an
+// operator who closes a feature and then finds a session idle would otherwise read the silence as a
+// fault.
+func runFeatureState(ctx context.Context, client quaycrewv1.ControlPlaneServiceClient,
+	word string, args []string, out io.Writer) error {
+	usage := fmt.Sprintf("usage: krewe feature %s [<address>] <feature>", word)
+	wants := 1
+	if word == "stop" {
+		usage = "usage: krewe feature stop [<address>] <feature> \"<reason>\""
+		wants = 2
+	}
+	if len(args) < wants || len(args) > wants+1 {
+		return fmt.Errorf("%s", usage)
+	}
+	typed, rest := "", args
+	if len(args) == wants+1 {
+		typed, rest = args[0], args[1:]
+	}
+	number, reason := rest[0], ""
+	if word == "stop" {
+		reason = rest[1]
+	}
+	located, err := designProject(ctx, client, typed)
+	if err != nil {
+		return err
+	}
+	features, err := featuresOf(ctx, client, located.ProjectID)
+	if err != nil {
+		return err
+	}
+	held, err := featureNumbered(features, number, located.Path.Project)
+	if err != nil {
+		return err
+	}
+	resp, err := client.FinishFeature(ctx, &quaycrewv1.FinishFeatureRequest{
+		Feature: held.GetId(), State: stateOfWord(word),
+	})
+	if err != nil {
+		return err
+	}
+	fmt.Fprint(out, saidOfTheFeature(word, resp.GetFeature().GetNumber(), located.Path.Project, reason))
+	sayWarnings(out, resp.GetWarnings())
+	return nil
+}
+
+// stateOfWord is the state word the typed word writes. Done and stopped are their own words, and open
+// is the way back from both.
+func stateOfWord(word string) string {
+	if word == "stop" {
+		return "stopped"
+	}
+	return word
+}
+
+// saidOfTheFeature is the line the operator reads back, one per word.
+func saidOfTheFeature(word string, number int32, project, reason string) string {
+	switch word {
+	case "stop":
+		return fmt.Sprintf("feature %d of %s is stopped: %s\n", number, project, reason)
+	case "open":
+		return fmt.Sprintf("feature %d of %s is open again\n", number, project)
+	default:
+		return fmt.Sprintf("feature %d of %s is done\n", number, project)
+	}
 }

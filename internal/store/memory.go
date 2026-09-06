@@ -960,6 +960,23 @@ func (m *Memory) SetFeatureIntention(_ context.Context, feature, intention strin
 	return copyFeature(held), nil
 }
 
+// FinishFeature writes a feature's state, and that column alone.
+//
+// The word is kept as it is given, for the reason Postgres keeps it: the control plane refuses a word
+// outside the three, and a second check here is a second place for the vocabulary to drift. No step
+// and no milestone is touched, so a closed feature keeps its whole path.
+func (m *Memory) FinishFeature(_ context.Context, feature, state string) (*quaycrewv1.Feature, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	held, err := m.featureLocked(feature)
+	if err != nil {
+		return nil, err
+	}
+	held.State = state
+	held.UpdatedAt = timestamppb.New(time.Now().UTC())
+	return copyFeature(held), nil
+}
+
 // featureLocked is one feature by its identifier, and ErrNotFound when no live project holds it. The
 // caller holds the lock.
 func (m *Memory) featureLocked(feature string) (*quaycrewv1.Feature, error) {
