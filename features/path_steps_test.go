@@ -626,15 +626,7 @@ func initializePathSteps(sc *godog.ScenarioContext) {
 	// Counted off the printed lines rather than asked of the system again, because what this proves
 	// is what the operator is looking at.
 	sc.Step(`^standard output lists (\d+) steps in number order$`, func(ctx context.Context, want int) error {
-		var numbers []string
-		for _, line := range strings.Split(toolFrom(ctx).stdout, "\n") {
-			fields := strings.Fields(line)
-			// The heading naming the feature the path belongs to is not a step of it.
-			if len(fields) == 0 || fields[0] == "STEP" || fields[0] == "feature" {
-				continue
-			}
-			numbers = append(numbers, fields[0])
-		}
+		numbers := stepLinesOf(toolFrom(ctx).stdout)
 		if len(numbers) != want {
 			return fmt.Errorf("standard output lists %d steps, want %d: %q",
 				len(numbers), want, toolFrom(ctx).stdout)
@@ -646,6 +638,78 @@ func initializePathSteps(sc *godog.ScenarioContext) {
 		}
 		return nil
 	})
+
+	// The count alone, for a listing grouped under milestones: the steps of one path read in number
+	// order inside a group and the groups are in number order, so the whole listing is not one run of
+	// ascending numbers.
+	sc.Step(`^standard output lists (\d+) step lines$`, func(ctx context.Context, want int) error {
+		if got := stepLinesOf(toolFrom(ctx).stdout); len(got) != want {
+			return fmt.Errorf("standard output lists %d step lines, want %d: %q",
+				len(got), want, toolFrom(ctx).stdout)
+		}
+		return nil
+	})
+
+	// Order asserted as an order and not as a set, for the reason the steps are: a check that both
+	// headings are somewhere on the screen passes against a listing drawn upside down.
+	sc.Step(`^the heading "([^"]*)" prints before the heading "([^"]*)"$`,
+		func(ctx context.Context, first, second string) error {
+			printed := toolFrom(ctx).stdout
+			above, below := strings.Index(printed, first), strings.Index(printed, second)
+			if above < 0 {
+				return fmt.Errorf("standard output carries no heading %q: %q", first, printed)
+			}
+			if below < 0 {
+				return fmt.Errorf("standard output carries no heading %q: %q", second, printed)
+			}
+			if above > below {
+				return fmt.Errorf("%q prints after %q: %q", first, second, printed)
+			}
+			return nil
+		})
+
+	// What a read is allowed to cost. A listing that took a step, or moved one, would leave a path
+	// somebody has to put back.
+	sc.Step(`^every step of the path is ready and held by nobody$`, func(ctx context.Context) error {
+		held, err := theFeature(ctx)
+		if err != nil {
+			return err
+		}
+		resp, err := worldFrom(ctx).client.ListSteps(ctx, &quaycrewv1.ListStepsRequest{Feature: held.GetId()})
+		if err != nil {
+			return err
+		}
+		for _, step := range resp.GetSteps() {
+			if step.GetState() != "ready" || step.GetSession() != "" {
+				return fmt.Errorf("step %d reads as %q held by %q, and reading the path moves nothing",
+					step.GetNumber(), step.GetState(), step.GetSession())
+			}
+		}
+		return nil
+	})
+}
+
+// stepLinesOf reads the step numbers off a printed listing.
+//
+// A step line is indented under the heading it sits below, and it opens with the step's number. That
+// is what tells it apart from the headings and from the counts, and it is one definition rather than
+// a filter in each assertion, so the two cannot disagree about what a step line is.
+func stepLinesOf(printed string) []string {
+	var numbers []string
+	for _, line := range strings.Split(printed, "\n") {
+		if !strings.HasPrefix(line, " ") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		if _, err := strconv.Atoi(fields[0]); err != nil {
+			continue
+		}
+		numbers = append(numbers, fields[0])
+	}
+	return numbers
 }
 
 // takeStep gives one step to a session and waits for that session's exec to land, because the take

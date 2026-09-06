@@ -615,6 +615,202 @@ Feature: A project holds a numbered path of steps
     And standard output carries "krewe path set"
     And the command succeeds
 
+  # The listing groups the steps under the milestones the feature is delivered in, so the operator
+  # reads where the feature reached without counting rows.
+  #
+  # The order is the control plane's, between milestones as well as inside one. Two surfaces draw this
+  # path, and an order the tool worked out for itself lets the two disagree in front of somebody.
+
+  Scenario: A path under two milestones prints a heading for each one
+    Given the system listens on an address the tool can dial
+    And a path file saying:
+      """
+      # 1. A project carries a design
+
+      ## 1. The store holds a project's brief
+      ## 2. The store holds a project's design
+      ## 3. The control plane serves the design
+
+      # 2. A design carries an approval
+
+      ## 4. The operator approves the design
+      ## 5. The command line reads it back
+      """
+    And the caller wrote the path from that file
+    When the caller reads the path
+    Then standard output carries "1. A project carries a design"
+    And standard output carries "2. A design carries an approval"
+    And standard output lists 5 step lines
+    And standard output carries "5 steps, 5 ready."
+    And the command succeeds
+
+  Scenario: The milestones print in number order
+    Given the system listens on an address the tool can dial
+    And a path file saying:
+      """
+      # 1. A project carries a design
+
+      ## 1. The store holds a project's brief
+
+      # 2. A design carries an approval
+
+      ## 2. The operator approves the design
+      """
+    And the caller wrote the path from that file
+    When the caller reads the path
+    Then the heading "1. A project carries a design" prints before the heading "2. A design carries an approval"
+    And the command succeeds
+
+  Scenario: Each milestone heading counts its own steps and how many are done
+    Given the system listens on an address the tool can dial
+    And a path file saying:
+      """
+      # 1. A project carries a design
+
+      ## 1. The store holds a project's brief
+      ## 2. The store holds a project's design
+      ## 3. The control plane serves the design
+
+      # 2. A design carries an approval
+
+      ## 4. The operator approves the design
+      ## 5. The command line reads it back
+      """
+    And the caller wrote the path from that file
+    When the caller reads the path
+    Then standard output carries "1. A project carries a design (3 steps, 0 done)"
+    And standard output carries "2. A design carries an approval (2 steps, 0 done)"
+    And the command succeeds
+
+  # A step nobody gave a milestone still prints. A step that fell off the listing is the worst thing
+  # this command can do, because what is left still reads as the whole path.
+  Scenario: A step in no milestone prints under a heading of its own
+    Given the system listens on an address the tool can dial
+    And a path file saying:
+      """
+      ## 1. The store holds a project's brief
+
+      # 1. A design carries an approval
+
+      ## 2. The operator approves the design
+      """
+    And the caller wrote the path from that file
+    When the caller reads the path
+    Then standard output carries "no milestone (1 steps, 0 done)"
+    And standard output lists 2 step lines
+    And standard output carries "The store holds a project's brief"
+    And the command succeeds
+
+  Scenario: The steps in no milestone print before the numbered milestones
+    Given the system listens on an address the tool can dial
+    And a path file saying:
+      """
+      ## 1. The store holds a project's brief
+
+      # 1. A design carries an approval
+
+      ## 2. The operator approves the design
+      """
+    And the caller wrote the path from that file
+    When the caller reads the path
+    Then the heading "no milestone" prints before the heading "1. A design carries an approval"
+    And the command succeeds
+
+  Scenario: The line under the list counts the feature and names the next step
+    Given the system listens on an address the tool can dial
+    And a path file saying:
+      """
+      ## 1. The store holds a project's brief
+      ## 2. The store holds a project's design
+      """
+    And the caller wrote the path from that file
+    When the caller reads the path of feature 1
+    Then standard output carries "2 steps, 2 ready."
+    And standard output carries "next: step 1"
+    And the command succeeds
+
+  # Every step is taken or waits for one that is not done, so there is nothing to start. The line says
+  # that rather than naming a step nobody may take.
+  Scenario: With every step taken or waiting the next line names no step
+    Given the system listens on an address the tool can dial
+    And the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And a path file saying:
+      """
+      ## 1. The store holds a project's brief
+      ## 2. The store holds a project's design
+      """
+    And the caller wrote the path from that file
+    And the operator takes step 1
+    When the caller reads the path of feature 1
+    Then standard output carries "2 steps, 1 taken, 1 ready."
+    And standard output carries "next: nothing, every step is taken or waiting"
+    And the command succeeds
+
+  # The record of finished work stays readable: a closed feature is left out of the listing of the
+  # project, and naming its number prints it.
+  Scenario: A closed feature is left out when no feature number is given
+    Given the system listens on an address the tool can dial
+    And the project's feature "authentication"
+    And the project's feature "payment"
+    And the project's feature "the old import"
+    And the operator sets the path of feature 1 to:
+      """
+      ## 1. Sign up
+      """
+    And the operator sets the path of feature 2 to:
+      """
+      ## 1. Checkout
+      """
+    And the operator sets the path of feature 3 to:
+      """
+      ## 1. Read the old file
+      """
+    And the operator closes feature 3
+    When the caller reads the path
+    Then standard output carries "feature 1: authentication"
+    And standard output carries "feature 2: payment"
+    And standard output does not carry "feature 3: the old import"
+    And standard output carries "the project holds 2 steps, 2 ready."
+    And the command succeeds
+
+  Scenario: Naming a closed feature's number prints its path
+    Given the system listens on an address the tool can dial
+    And the project's feature "authentication"
+    And the project's feature "the old import"
+    And the operator sets the path of feature 2 to:
+      """
+      ## 1. Read the old file
+      """
+    And the operator closes feature 2
+    When the caller reads the path of feature 2
+    Then standard output carries "feature 2: the old import"
+    And standard output carries "Read the old file"
+    And the command succeeds
+
+  Scenario: A feature number that names no feature is refused when the path is read
+    Given the system listens on an address the tool can dial
+    And the project's feature "authentication"
+    When the caller reads the path of feature 9
+    Then standard error says "has no feature 9"
+    And standard error says "it has 1"
+    And the command fails
+
+  # A listing is a read. It says what is there and it moves nothing, so the operator reads it as often
+  # as they want to.
+  Scenario: Reading the path records nothing
+    Given the system listens on an address the tool can dial
+    And a path file saying:
+      """
+      ## 1. The store holds a project's brief
+      ## 2. The store holds a project's design
+      """
+    And the caller wrote the path from that file
+    When the caller reads the path
+    And the caller reads the path
+    Then every step of the path is ready and held by nobody
+    And the command succeeds
+
   # A path belongs to a feature, so reading the project prints every open feature's path and the
   # heading above each one says which path is on the screen.
   Scenario: Two features print their paths under their own headings
