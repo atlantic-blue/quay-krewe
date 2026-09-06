@@ -32,6 +32,10 @@ type pathWorld struct {
 	// milestones are what the last read of the path answered with. They travel with the steps, so a
 	// scenario that asserts a grouping reads one answer rather than asking twice.
 	milestones []*quaycrewv1.Milestone
+	// recorded is the path as it stood before a scenario closed the feature, so a later read is
+	// compared against what was there rather than against what the scenario meant to write. A step
+	// somebody took has already moved, and this is what says closing the feature moved nothing more.
+	recorded []*quaycrewv1.Step
 }
 
 // theFeature is the feature a scenario means when it names none.
@@ -378,6 +382,47 @@ func initializePathSteps(sc *godog.ScenarioContext) {
 			}
 			return takeStep(ctx, held.GetId(), int32(number))
 		})
+
+	// Recorded from the store rather than from what the scenario wrote, because a step somebody took
+	// has already moved. What changes after this is what closing the feature did, and nothing else.
+	sc.Step(`^the path as it stands is written down$`, func(ctx context.Context) error {
+		held, err := theFeature(ctx)
+		if err != nil {
+			return err
+		}
+		if err := readPath(ctx, held.GetId()); err != nil {
+			return err
+		}
+		p := pathFrom(ctx)
+		p.recorded = p.steps
+		if len(p.recorded) == 0 {
+			return fmt.Errorf("the feature holds no step, so a later comparison would prove nothing")
+		}
+		return nil
+	})
+
+	// Field by field, because the claim is that closing a feature touched no step. A count that
+	// matched would pass against a path whose states all moved.
+	sc.Step(`^the path reads back as it was written down$`, func(ctx context.Context) error {
+		p := pathFrom(ctx)
+		if len(p.recorded) == 0 {
+			return fmt.Errorf("no path was written down, so there is nothing to compare against")
+		}
+		if len(p.steps) != len(p.recorded) {
+			return fmt.Errorf("the path reads back %d steps, want the %d it held", len(p.steps), len(p.recorded))
+		}
+		for at, step := range p.steps {
+			was := p.recorded[at]
+			if step.GetNumber() != was.GetNumber() || step.GetTitle() != was.GetTitle() ||
+				step.GetState() != was.GetState() || step.GetSession() != was.GetSession() ||
+				step.GetMilestone() != was.GetMilestone() || step.GetIntention() != was.GetIntention() {
+				return fmt.Errorf("step %d reads %q in state %q held by %q, want %q in state %q held by %q",
+					step.GetNumber(), step.GetTitle(), step.GetState(), step.GetSession(),
+					was.GetTitle(), was.GetState(), was.GetSession())
+			}
+		}
+		return nil
+	})
 
 	sc.Step(`^the operator takes a step of a feature that does not exist$`, func(ctx context.Context) error {
 		w := worldFrom(ctx)
@@ -977,6 +1022,48 @@ func initializeFeatureSteps(sc *godog.ScenarioContext) {
 			return setFeatureIntention(ctx, int32(number), aLineOf(length))
 		})
 
+	// Closing a feature, stopping it, and opening it again. The number is resolved against the project
+	// rather than against whatever listing a scenario last read, so a scenario that closed a feature
+	// and then read the listing means the same feature both times.
+	sc.Step(`^the operator closes feature (\d+)$`, func(ctx context.Context, number int) error {
+		return finishFeature(ctx, int32(number), "done")
+	})
+
+	sc.Step(`^the operator stops feature (\d+)$`, func(ctx context.Context, number int) error {
+		return finishFeature(ctx, int32(number), "stopped")
+	})
+
+	sc.Step(`^the operator opens feature (\d+) again$`, func(ctx context.Context, number int) error {
+		return finishFeature(ctx, int32(number), "open")
+	})
+
+	// The word goes through as it is typed, because what this proves is the refusal of a word nobody
+	// can write through the tool.
+	sc.Step(`^the operator sets feature (\d+)'s state to "([^"]*)"$`,
+		func(ctx context.Context, number int, state string) error {
+			return finishFeature(ctx, int32(number), state)
+		})
+
+	sc.Step(`^feature (\d+) reads as "([^"]*)"$`, func(ctx context.Context, number int, want string) error {
+		feature, err := featureNumbered(ctx, int32(number))
+		if err != nil {
+			return err
+		}
+		if got := feature.GetState(); got != want {
+			return fmt.Errorf("feature %d reads as %q, want %q", number, got, want)
+		}
+		return nil
+	})
+
+	// Reopening costs nothing and starts nothing, so a warning on it would be noise on the one call
+	// that takes nothing away.
+	sc.Step(`^the feature write warns nothing$`, func(ctx context.Context) error {
+		if warned := featuresFrom(ctx).warnings; len(warned) != 0 {
+			return fmt.Errorf("the write warned %q, and it takes nothing away", warned)
+		}
+		return nil
+	})
+
 	sc.Step(`^the feature write warns "([^"]*)"$`, func(ctx context.Context, want string) error {
 		f := featuresFrom(ctx)
 		for _, warning := range f.warnings {
@@ -1032,6 +1119,29 @@ func initializeFeatureSteps(sc *godog.ScenarioContext) {
 		return runTool(ctx, "feature", "intention", whereTheProjectIs(ctx))
 	})
 
+	sc.Step(`^the caller closes feature (\d+)$`, func(ctx context.Context, number int) error {
+		return runTool(ctx, "feature", "done", whereTheProjectIs(ctx), strconv.Itoa(number))
+	})
+
+	sc.Step(`^the caller stops feature (\d+) saying "([^"]*)"$`,
+		func(ctx context.Context, number int, reason string) error {
+			return runTool(ctx, "feature", "stop", whereTheProjectIs(ctx), strconv.Itoa(number), reason)
+		})
+
+	sc.Step(`^the caller opens feature (\d+) again$`, func(ctx context.Context, number int) error {
+		return runTool(ctx, "feature", "open", whereTheProjectIs(ctx), strconv.Itoa(number))
+	})
+
+	sc.Step(`^the caller closes a feature without saying which one$`, func(ctx context.Context) error {
+		return runTool(ctx, "feature", "done")
+	})
+
+	// The feature and nothing else, which is what a person standing in a project types. With two
+	// arguments the second is the reason, so the shape that says nothing more is this one.
+	sc.Step(`^the caller stops feature (\d+) and says nothing more$`, func(ctx context.Context, number int) error {
+		return runTool(ctx, "feature", "stop", strconv.Itoa(number))
+	})
+
 	// Counted off the printed lines rather than asked of the system again, because what this proves
 	// is what the operator is looking at.
 	sc.Step(`^standard output lists (\d+) features in number order$`, func(ctx context.Context, want int) error {
@@ -1078,6 +1188,27 @@ func readFeatures(ctx context.Context, project string) error {
 		return nil
 	}
 	f.features = resp.GetFeatures()
+	return nil
+}
+
+// finishFeature says a feature finished, stopped, or is open again, and keeps the warnings so a later
+// step reads the answer the caller got. The number is resolved against the project, for the reason
+// setFeatureIntention resolves it: the call takes the feature's identifier and the number is what a
+// person types.
+func finishFeature(ctx context.Context, number int32, state string) error {
+	w, f := worldFrom(ctx), featuresFrom(ctx)
+	held, err := featureOfProject(ctx, number)
+	if err != nil {
+		return err
+	}
+	resp, err := w.client.FinishFeature(ctx, &quaycrewv1.FinishFeatureRequest{
+		Feature: held.GetId(), State: state,
+	})
+	w.lastErr = err
+	if err != nil {
+		return nil
+	}
+	f.warnings = resp.GetWarnings()
 	return nil
 }
 

@@ -767,6 +767,22 @@ message SetFeatureIntentionResponse {
   repeated string warnings = 2;
 }
 
+// FinishFeatureRequest says a feature finished, or stopped, or is open again. The three words are the
+// whole vocabulary: the state says who holds the row and nothing else.
+message FinishFeatureRequest {
+  string feature = 1;
+  // state is one of open, done, stopped. A word outside the three is refused here rather than in the
+  // store, so one layer owns the vocabulary.
+  string state = 2;
+}
+message FinishFeatureResponse {
+  Feature feature = 1;
+  // warnings name each step of the feature that is not done or stopped, and say the feature leaves
+  // the path document a session reads. Closing warns and never refuses: the operator decides when a
+  // feature is finished.
+  repeated string warnings = 2;
+}
+
 // SessionWorkEntry is one thing in a session's work: a file or a directory, with the size of a file.
 message SessionWorkEntry {
   string name = 1;
@@ -1267,6 +1283,9 @@ service ControlPlaneService {
   rpc ListFeatures(ListFeaturesRequest) returns (ListFeaturesResponse);
   rpc AddFeature(AddFeatureRequest) returns (AddFeatureResponse);
   rpc SetFeatureIntention(SetFeatureIntentionRequest) returns (SetFeatureIntentionResponse);
+  // Saying a feature finished, stopped, or is open again. It warns about the steps still open under
+  // it and refuses nothing: the operator decides when a feature is finished.
+  rpc FinishFeature(FinishFeatureRequest) returns (FinishFeatureResponse);
   // Reads a file, or a listing, out of the work a session left behind, without attaching to it.
   rpc ReadSessionWork(ReadSessionWorkRequest) returns (ReadSessionWorkResponse);
   // Says where an address is on the machine, so a person can put a file in it by hand. It reads the
