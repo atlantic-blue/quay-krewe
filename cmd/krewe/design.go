@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"strings"
 
 	quaycrewv1 "github.com/atlantic-blue/quay-krewe/gen/quaycrew/v1"
+	"github.com/atlantic-blue/quay-krewe/internal/console"
 	"github.com/atlantic-blue/quay-krewe/internal/contextsize"
 	"github.com/atlantic-blue/quay-krewe/internal/sandbox"
 	"github.com/atlantic-blue/quay-krewe/internal/workspace"
@@ -22,6 +24,7 @@ const flagFile = "--file"
 const designUsage = "usage: krewe design [<address>]" +
 	"\n       krewe design brief [<address>] \"<text>\"" +
 	"\n       krewe design set [<address>] --file <path>" +
+	"\n       krewe design edit [<address>]" +
 	"\n       krewe design contracts [<address>] [--file <path>]" +
 	"\n       krewe design approve [<address>]"
 
@@ -31,6 +34,9 @@ func runDesign(ctx context.Context, client quaycrewv1.ControlPlaneServiceClient,
 	}
 	if len(args) > 0 && args[0] == "set" {
 		return runDesignSet(ctx, client, args[1:], out)
+	}
+	if len(args) > 0 && args[0] == "edit" {
+		return runDesignEdit(ctx, client, args[1:], out)
 	}
 	if len(args) > 0 && args[0] == "contracts" {
 		return runDesignContracts(ctx, client, args[1:], out)
@@ -148,6 +154,83 @@ func runDesignSet(ctx context.Context, client quaycrewv1.ControlPlaneServiceClie
 	fmt.Fprintln(out, "the approval is cleared: a design that changed is a design nobody has agreed to yet")
 	sayWarnings(out, resp.GetWarnings())
 	return nil
+}
+
+// runDesignEdit opens the design body in the operator's own editor and sends back what was saved.
+//
+// The body is fetched into a file, edited, then written with the same call krewe design set makes.
+// A design lives in the store, and a file nobody read back is a note left on one machine, so the
+// draft is removed once the store holds what it said.
+//
+// The write happens whether or not the text changed. Approval is the operator's word about a text,
+// and nothing here can tell an unchanged text from a rewritten one that reads the same.
+func runDesignEdit(ctx context.Context, client quaycrewv1.ControlPlaneServiceClient, args []string, out io.Writer) error {
+	if len(args) > 1 {
+		return fmt.Errorf("usage: krewe design edit [<address>]")
+	}
+	typed := ""
+	if len(args) == 1 {
+		typed = args[0]
+	}
+	located, err := designProject(ctx, client, typed)
+	if err != nil {
+		return err
+	}
+	resp, err := client.GetDesign(ctx, &quaycrewv1.GetDesignRequest{Project: located.ProjectID})
+	if err != nil {
+		return err
+	}
+	draft, err := draftOfDesign(resp.GetDesign().GetBody())
+	if err != nil {
+		return err
+	}
+	defer func() { _ = os.Remove(draft) }()
+
+	// The same choice krewe context edit makes: VISUAL, then EDITOR, then vi.
+	parts := strings.Fields(console.Editor())
+	command := exec.Command(parts[0], append(parts[1:], draft)...)
+	command.Stdin, command.Stdout, command.Stderr = os.Stdin, os.Stdout, os.Stderr
+	fmt.Fprintf(out, "editing %s\n", draft)
+	if err := command.Run(); err != nil {
+		return fmt.Errorf("the editor stopped with an error, so nothing was written and %s keeps "+
+			"the design it had: %w", located.Path.Project, err)
+	}
+
+	body, err := os.ReadFile(draft)
+	if err != nil {
+		return fmt.Errorf("reading back what you saved in %s: %w", draft, err)
+	}
+	written, err := client.SetDesign(ctx, &quaycrewv1.SetDesignRequest{
+		Project: located.ProjectID, Body: string(body), WrittenBy: os.Getenv(sandbox.SessionIDEnv),
+	})
+	if err != nil {
+		return fmt.Errorf("saving what you wrote: %w", err)
+	}
+	fmt.Fprintf(out, "%s has a design: %s\n",
+		located.Path.Project, contextsize.Characters(len(body)))
+	// Said on every edit, including one that saved the text it opened. A person who does not read
+	// this keeps building against a design krewe no longer treats as approved.
+	fmt.Fprintln(out, "the approval is cleared: a design that changed is a design nobody has agreed to yet")
+	sayWarnings(out, written.GetWarnings())
+	return nil
+}
+
+// draftOfDesign is the file the editor opens, holding the design as the store has it. It is a file
+// of its own rather than the design in a working directory, because a design is edited from
+// anywhere and the one in a session's directory is a copy krewe renders.
+func draftOfDesign(body string) (string, error) {
+	file, err := os.CreateTemp("", "krewe-design-*.md")
+	if err != nil {
+		return "", fmt.Errorf("make room for the design: %w", err)
+	}
+	if _, err := file.WriteString(body); err != nil {
+		_ = file.Close()
+		return "", fmt.Errorf("write the design to %s: %w", file.Name(), err)
+	}
+	if err := file.Close(); err != nil {
+		return "", fmt.Errorf("write the design to %s: %w", file.Name(), err)
+	}
+	return file.Name(), nil
 }
 
 // runDesignContracts reads the contracts a project builds against, and writes them from a file.

@@ -178,6 +178,102 @@ Feature: A project carries what it is for and what was designed
     Then standard error says "usage: krewe design set"
     And the command fails
 
+  # The design is a document, and a document is written in an editor. Krewe opens the operator's own
+  # editor on the body it holds, then sends back what was saved. The file it opens is a draft, and it
+  # is removed afterwards, because the design lives in the store.
+
+  Scenario: The editor opens the design as it stands
+    Given the system listens on an address the tool can dial
+    And the project's design is "# Bills\n"
+    And an editor that writes "# Bills, again\n"
+    When the caller edits the design
+    Then the editor was given "# Bills\n"
+    And the command succeeds
+
+  Scenario: Editing a design and saving writes the new text into the store
+    Given the system listens on an address the tool can dial
+    And the project's design is "# Bills\n"
+    And an editor that writes "# Bills, again\n"
+    When the caller edits the design
+    And the operator reads the project's design
+    Then the design body reads "# Bills, again\n"
+
+  # A draft left behind is a second copy of the design on one machine, and the next reader cannot
+  # tell which of the two is the one krewe holds.
+  Scenario: The file the editor opened is removed afterwards
+    Given the system listens on an address the tool can dial
+    And the project's design is "# Bills\n"
+    And an editor that writes "# Bills, again\n"
+    When the caller edits the design
+    Then the file the editor opened is gone
+
+  # The tool cannot tell a text nobody touched from a rewritten one that reads the same, so it does
+  # not try. It writes, and it says the approval went, because an operator who does not know that
+  # keeps building against a design krewe no longer treats as approved.
+  Scenario: Leaving the editor without changing anything still writes
+    Given the system listens on an address the tool can dial
+    And the project's design is "# Bills\n"
+    And an editor that changes nothing
+    When the caller edits the design
+    Then standard output carries "the approval is cleared"
+    And the command succeeds
+
+  Scenario: Editing an approved design takes the approval away
+    Given the system listens on an address the tool can dial
+    And the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And an editor that changes nothing
+    When the caller edits the design
+    And the operator reads the project's design
+    Then the design is not approved
+
+  # An editor that stops with an error is somebody quitting the edit. Writing the draft back anyway
+  # would take the approval away for an edit nobody made.
+  Scenario: An editor that stops with an error writes nothing
+    Given the system listens on an address the tool can dial
+    And the project's design is "# Bills\n"
+    And an editor that stops with an error
+    When the caller edits the design
+    Then standard error says "nothing was written"
+    And the command fails
+    And the operator reads the project's design
+    And the design body reads "# Bills\n"
+
+  # VISUAL, then EDITOR, then vi. It is the order git and crontab use, and vi is there because most
+  # machines have neither variable set and a command that refused would be dead on all of them.
+
+  Scenario: VISUAL is the editor when it is set
+    Given the system listens on an address the tool can dial
+    And VISUAL names an editor that writes "# from VISUAL\n"
+    And EDITOR names an editor that writes "# from EDITOR\n"
+    When the caller edits the design
+    And the operator reads the project's design
+    Then the design body reads "# from VISUAL\n"
+
+  Scenario: EDITOR is the editor when VISUAL is not set
+    Given the system listens on an address the tool can dial
+    And EDITOR names an editor that writes "# from EDITOR\n"
+    When the caller edits the design
+    And the operator reads the project's design
+    Then the design body reads "# from EDITOR\n"
+
+  Scenario: vi is the editor when neither is set
+    Given the system listens on an address the tool can dial
+    And neither VISUAL nor EDITOR is set
+    And the vi on the path writes "# from vi\n"
+    When the caller edits the design
+    And the operator reads the project's design
+    Then the design body reads "# from vi\n"
+
+  # The editor is doubled here as well, so a refusal that stopped working fails this scenario
+  # rather than opening the real vi and waiting for somebody to quit it.
+  Scenario: Editing with more than one address is refused
+    Given the system listens on an address the tool can dial
+    And an editor that changes nothing
+    When the caller edits the design of two projects
+    Then standard error says "usage: krewe design edit"
+    And the command fails
+
   # The session working in the project reads what the project is for, on every exec, out of its own
   # memory file. The design itself is a file beside it: the summary is read every time and the
   # document is opened by a model that decides it needs it.

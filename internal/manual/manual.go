@@ -145,6 +145,9 @@ commands:
                                           clears it
   design set [<address>] --file <path>    write the design document from a file. Any write clears the
                                           approval, because approval is a statement about one text
+  design edit [<address>]                 open the design document in $EDITOR, and write back what
+                                          you saved. Saving without changing a word still writes,
+                                          and still clears the approval
   design contracts [<address>]            the contracts a project builds against, printed whole so
     [--file <path>]                       it can be piped. With a file it writes them. The write
                                           leaves the approval alone: the contracts are read from the

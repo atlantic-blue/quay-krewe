@@ -276,6 +276,171 @@ func initializeDesignSteps(sc *godog.ScenarioContext) {
 	})
 
 	initializeContractsSteps(sc)
+	initializeDesignEditSteps(sc)
+}
+
+// The editor a scenario gives the tool: a script krewe runs in place of the operator's own editor.
+// It records the file it was opened on and what that file said, then saves whatever the scenario
+// told it to save. A real editor cannot be driven from a test, and the two things worth proving here
+// are what krewe put in front of the operator and what it did with what came back.
+type editorWorld struct {
+	dir string
+	// visual, editor and path are what the process said before the scenario. Every one of them is
+	// put back afterwards, because a scenario that left an editor set would hand it to every later
+	// one.
+	visual, editor, path string
+}
+
+type editorKey struct{}
+
+func editorFrom(ctx context.Context) *editorWorld {
+	e, _ := ctx.Value(editorKey{}).(*editorWorld)
+	return e
+}
+
+// recording is what every doubled editor does first: write down the file it was given, and a copy of
+// what that file held when it opened.
+const recording = "#!/bin/sh\necho \"$1\" > %s/opened\ncp \"$1\" %s/seen\n"
+
+// anEditor writes one doubled editor and hands back the path to run it by. saves is the text it
+// writes into the file it was opened on, and a scenario that wants an editor which changed nothing
+// asks for none.
+func anEditor(ctx context.Context, name, saves string, saved bool, exit int) (string, error) {
+	e := editorFrom(ctx)
+	if e.dir == "" {
+		dir, err := os.MkdirTemp("", "krewe-editor-")
+		if err != nil {
+			return "", err
+		}
+		e.dir = dir
+	}
+	script := fmt.Sprintf(recording, e.dir, e.dir)
+	if saved {
+		body := filepath.Join(e.dir, name+"-saves.md")
+		if err := os.WriteFile(body, []byte(saves), 0o600); err != nil {
+			return "", err
+		}
+		script += fmt.Sprintf("cp %s \"$1\"\n", body)
+	}
+	script += fmt.Sprintf("exit %d\n", exit)
+	at := filepath.Join(e.dir, name)
+	if err := os.WriteFile(at, []byte(script), 0o700); err != nil {
+		return "", err
+	}
+	return at, nil
+}
+
+func initializeDesignEditSteps(sc *godog.ScenarioContext) {
+	// Neither variable is set to begin with, so a scenario about which one krewe reads is answered by
+	// the scenario rather than by whoever ran the suite.
+	sc.Before(func(ctx context.Context, _ *godog.Scenario) (context.Context, error) {
+		e := &editorWorld{visual: os.Getenv("VISUAL"), editor: os.Getenv("EDITOR"), path: os.Getenv("PATH")}
+		if err := os.Setenv("VISUAL", ""); err != nil {
+			return ctx, err
+		}
+		return context.WithValue(ctx, editorKey{}, e), os.Setenv("EDITOR", "")
+	})
+
+	sc.After(func(ctx context.Context, _ *godog.Scenario, _ error) (context.Context, error) {
+		e := editorFrom(ctx)
+		if err := os.Setenv("VISUAL", e.visual); err != nil {
+			return ctx, err
+		}
+		if err := os.Setenv("EDITOR", e.editor); err != nil {
+			return ctx, err
+		}
+		return ctx, os.Setenv("PATH", e.path)
+	})
+
+	sc.Step(`^an editor that writes "([^"]*)"$`, func(ctx context.Context, saves string) error {
+		at, err := anEditor(ctx, "editor", unescape(saves), true, 0)
+		if err != nil {
+			return err
+		}
+		return os.Setenv("VISUAL", at)
+	})
+
+	sc.Step(`^an editor that changes nothing$`, func(ctx context.Context) error {
+		at, err := anEditor(ctx, "editor", "", false, 0)
+		if err != nil {
+			return err
+		}
+		return os.Setenv("VISUAL", at)
+	})
+
+	// Quitting an edit, which is a thing people do. The exit status is the whole signal: the file on
+	// disk still holds the design, so reading it back would take the approval away for an edit
+	// nobody made.
+	sc.Step(`^an editor that stops with an error$`, func(ctx context.Context) error {
+		at, err := anEditor(ctx, "editor", "", false, 1)
+		if err != nil {
+			return err
+		}
+		return os.Setenv("VISUAL", at)
+	})
+
+	sc.Step(`^(VISUAL|EDITOR) names an editor that writes "([^"]*)"$`,
+		func(ctx context.Context, variable, saves string) error {
+			at, err := anEditor(ctx, strings.ToLower(variable), unescape(saves), true, 0)
+			if err != nil {
+				return err
+			}
+			return os.Setenv(variable, at)
+		})
+
+	sc.Step(`^neither VISUAL nor EDITOR is set$`, func(_ context.Context) error {
+		if err := os.Setenv("VISUAL", ""); err != nil {
+			return err
+		}
+		return os.Setenv("EDITOR", "")
+	})
+
+	// The fallback is proved by putting a vi of our own in front of the machine's, because the real
+	// one opens a screen and waits for somebody to quit it.
+	sc.Step(`^the vi on the path writes "([^"]*)"$`, func(ctx context.Context, saves string) error {
+		at, err := anEditor(ctx, "vi", unescape(saves), true, 0)
+		if err != nil {
+			return err
+		}
+		return os.Setenv("PATH", filepath.Dir(at)+string(os.PathListSeparator)+editorFrom(ctx).path)
+	})
+
+	sc.Step(`^the caller edits the design$`, func(ctx context.Context) error {
+		return runTool(ctx, "design", "edit", whereTheProjectIs(ctx))
+	})
+
+	sc.Step(`^the caller edits the design of two projects$`, func(ctx context.Context) error {
+		return runTool(ctx, "design", "edit", whereTheProjectIs(ctx), whereTheProjectIs(ctx))
+	})
+
+	// What the operator was shown. An editor opened on an empty file loses the design the moment
+	// they save, and every other scenario here passes just the same.
+	sc.Step(`^the editor was given "([^"]*)"$`, func(ctx context.Context, want string) error {
+		seen, err := os.ReadFile(filepath.Join(editorFrom(ctx).dir, "seen"))
+		if err != nil {
+			return fmt.Errorf("no editor was opened on anything: %w", err)
+		}
+		if string(seen) != unescape(want) {
+			return fmt.Errorf("the editor was opened on %q, want %q", seen, unescape(want))
+		}
+		return nil
+	})
+
+	sc.Step(`^the file the editor opened is gone$`, func(ctx context.Context) error {
+		opened, err := os.ReadFile(filepath.Join(editorFrom(ctx).dir, "opened"))
+		if err != nil {
+			return fmt.Errorf("no editor was opened on anything: %w", err)
+		}
+		at := strings.TrimSpace(string(opened))
+		body, err := os.ReadFile(at)
+		if err == nil {
+			return fmt.Errorf("%s is still there, saying %q", at, body)
+		}
+		if !os.IsNotExist(err) {
+			return err
+		}
+		return nil
+	})
 }
 
 // The contracts a project builds against: a second body on the design row, written and read the way
