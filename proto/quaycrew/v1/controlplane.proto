@@ -578,6 +578,13 @@ message Design {
   // caller claimed, never what the system authenticated, and it grants nothing.
   string written_by = 6;
   google.protobuf.Timestamp updated_at = 7;
+  // contracts is a second body beside body: the contracts document, whole, in markdown. Writing it
+  // does not clear approved, because the approval is the operator's word about the design body and
+  // the contracts are read from that body.
+  //
+  // The field numbers follow the order the slices add them rather than the order the design lists
+  // them, so this is 18 and the numbers below it belong to the fields the later slices add.
+  string contracts = 18;
 }
 
 message GetDesignRequest {
@@ -607,6 +614,17 @@ message SetDesignRequest {
 message SetDesignResponse {
   Design design = 1;
   repeated string warnings = 2;
+}
+
+// SetContractsRequest records the contracts document, whole. It is a second body on the design row,
+// and the write leaves the approval alone: the operator's word is about the design body.
+message SetContractsRequest {
+  string project = 1;
+  string body = 2;
+  string written_by = 3;
+}
+message SetContractsResponse {
+  Design design = 1;
 }
 
 // ApproveDesignRequest records the operator's word on the design as it stands. A design with no body
@@ -1255,11 +1273,16 @@ service ControlPlaneService {
   rpc ListContexts(ListContextsRequest) returns (ListContextsResponse);
   rpc SetContext(SetContextRequest) returns (SetContextResponse);
 
-  // What a project is for and what was designed for it. The driver may call the first three: reading
+  // What a project is for and what was designed for it. The driver may call the first four: reading
   // what the project holds is the point, and a session that writes a design grants itself nothing.
   rpc GetDesign(GetDesignRequest) returns (GetDesignResponse);
   rpc SetBrief(SetBriefRequest) returns (SetBriefResponse);
   rpc SetDesign(SetDesignRequest) returns (SetDesignResponse);
+  // The contracts a project builds against, beside its design on the same row. The driver may call
+  // it for the reason it may write a design: a design session writes the contracts document, and
+  // writing one grants it nothing. Nothing parses the body, so a contract named in a step is never
+  // checked against it.
+  rpc SetContracts(SetContractsRequest) returns (SetContractsResponse);
   // The operator's word on a design, and the driver is refused it. A session that could approve its
   // own design would be agreeing with itself, which is the whole thing this gate exists to stop.
   rpc ApproveDesign(ApproveDesignRequest) returns (ApproveDesignResponse);

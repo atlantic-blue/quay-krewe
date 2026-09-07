@@ -145,6 +145,11 @@ commands:
                                           clears it
   design set [<address>] --file <path>    write the design document from a file. Any write clears the
                                           approval, because approval is a statement about one text
+  design contracts [<address>]            the contracts a project builds against, printed whole so
+    [--file <path>]                       it can be piped. With a file it writes them. The write
+                                          leaves the approval alone: the contracts are read from the
+                                          design, not a change to it. A session reads them at
+                                          .krewe/contracts.md
   design approve [<address>]              say the design as it stands is the one to build from. It
                                           is the operator's word: a session is refused this call
   feature [<address>]                     the narrowed parts of a project, in number order, with the

@@ -22,6 +22,7 @@ const flagFile = "--file"
 const designUsage = "usage: krewe design [<address>]" +
 	"\n       krewe design brief [<address>] \"<text>\"" +
 	"\n       krewe design set [<address>] --file <path>" +
+	"\n       krewe design contracts [<address>] [--file <path>]" +
 	"\n       krewe design approve [<address>]"
 
 func runDesign(ctx context.Context, client quaycrewv1.ControlPlaneServiceClient, args []string, out io.Writer) error {
@@ -30,6 +31,9 @@ func runDesign(ctx context.Context, client quaycrewv1.ControlPlaneServiceClient,
 	}
 	if len(args) > 0 && args[0] == "set" {
 		return runDesignSet(ctx, client, args[1:], out)
+	}
+	if len(args) > 0 && args[0] == "contracts" {
+		return runDesignContracts(ctx, client, args[1:], out)
 	}
 	if len(args) > 0 && args[0] == "approve" {
 		return runDesignApprove(ctx, client, args[1:], out)
@@ -143,6 +147,69 @@ func runDesignSet(ctx context.Context, client quaycrewv1.ControlPlaneServiceClie
 	// it twice learns the rule, which is that approval is a statement about one text.
 	fmt.Fprintln(out, "the approval is cleared: a design that changed is a design nobody has agreed to yet")
 	sayWarnings(out, resp.GetWarnings())
+	return nil
+}
+
+// runDesignContracts reads the contracts a project builds against, and writes them from a file.
+//
+// One word for both, the way krewe design itself reads and krewe design set writes, because the
+// document prints whole so it can be piped and a second word to read it would be a second thing to
+// remember.
+//
+// An empty file is written rather than refused, which is where this differs from krewe design set.
+// An empty contracts document is how a project says it carries none, and a session then gets no
+// .krewe/contracts.md at all.
+func runDesignContracts(ctx context.Context, client quaycrewv1.ControlPlaneServiceClient, args []string, out io.Writer) error {
+	usage := fmt.Sprintf("usage: krewe design contracts [<address>] [%s <path>]", flagFile)
+	rest, path, err := fileOutOf(args, usage)
+	if err != nil {
+		return err
+	}
+	if len(rest) > 1 {
+		return fmt.Errorf("%s", usage)
+	}
+	typed := ""
+	if len(rest) == 1 {
+		typed = rest[0]
+	}
+	located, err := designProject(ctx, client, typed)
+	if err != nil {
+		return err
+	}
+	if path == "" {
+		return sayContracts(ctx, client, located.ProjectID, typed, out)
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("reading the contracts from %s: %w", path, err)
+	}
+	if _, err := client.SetContracts(ctx, &quaycrewv1.SetContractsRequest{
+		Project: located.ProjectID, Body: string(body), WrittenBy: os.Getenv(sandbox.SessionIDEnv),
+	}); err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "%s has contracts: %s\n",
+		located.Path.Project, contextsize.Characters(len(body)))
+	// Said on every write. An operator who thinks this took the approval away goes and approves a
+	// design nobody rewrote, which is the one thing this command must not cause.
+	fmt.Fprintln(out, "the approval is untouched: the contracts are read from the design, not a change to it")
+	return nil
+}
+
+// sayContracts prints the contracts document whole, so it can be piped, and tells a project that
+// carries none how to write one.
+func sayContracts(ctx context.Context, client quaycrewv1.ControlPlaneServiceClient,
+	project, typed string, out io.Writer) error {
+	resp, err := client.GetDesign(ctx, &quaycrewv1.GetDesignRequest{Project: project})
+	if err != nil {
+		return err
+	}
+	if resp.GetDesign().GetContracts() == "" {
+		fmt.Fprintf(out, "this project has no contracts document yet\n\n")
+		fmt.Fprintf(out, "write one: krewe design contracts %s %s contracts.md\n", typed, flagFile)
+		return nil
+	}
+	fmt.Fprintf(out, "%s\n", strings.TrimRight(resp.GetDesign().GetContracts(), "\n"))
 	return nil
 }
 

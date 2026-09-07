@@ -52,6 +52,7 @@ const (
 	ControlPlaneService_GetDesign_FullMethodName                = "/quaycrew.v1.ControlPlaneService/GetDesign"
 	ControlPlaneService_SetBrief_FullMethodName                 = "/quaycrew.v1.ControlPlaneService/SetBrief"
 	ControlPlaneService_SetDesign_FullMethodName                = "/quaycrew.v1.ControlPlaneService/SetDesign"
+	ControlPlaneService_SetContracts_FullMethodName             = "/quaycrew.v1.ControlPlaneService/SetContracts"
 	ControlPlaneService_ApproveDesign_FullMethodName            = "/quaycrew.v1.ControlPlaneService/ApproveDesign"
 	ControlPlaneService_SetPath_FullMethodName                  = "/quaycrew.v1.ControlPlaneService/SetPath"
 	ControlPlaneService_ListSteps_FullMethodName                = "/quaycrew.v1.ControlPlaneService/ListSteps"
@@ -117,11 +118,16 @@ type ControlPlaneServiceClient interface {
 	SetSessionLabel(ctx context.Context, in *SetSessionLabelRequest, opts ...grpc.CallOption) (*SetSessionLabelResponse, error)
 	ListContexts(ctx context.Context, in *ListContextsRequest, opts ...grpc.CallOption) (*ListContextsResponse, error)
 	SetContext(ctx context.Context, in *SetContextRequest, opts ...grpc.CallOption) (*SetContextResponse, error)
-	// What a project is for and what was designed for it. The driver may call the first three: reading
+	// What a project is for and what was designed for it. The driver may call the first four: reading
 	// what the project holds is the point, and a session that writes a design grants itself nothing.
 	GetDesign(ctx context.Context, in *GetDesignRequest, opts ...grpc.CallOption) (*GetDesignResponse, error)
 	SetBrief(ctx context.Context, in *SetBriefRequest, opts ...grpc.CallOption) (*SetBriefResponse, error)
 	SetDesign(ctx context.Context, in *SetDesignRequest, opts ...grpc.CallOption) (*SetDesignResponse, error)
+	// The contracts a project builds against, beside its design on the same row. The driver may call
+	// it for the reason it may write a design: a design session writes the contracts document, and
+	// writing one grants it nothing. Nothing parses the body, so a contract named in a step is never
+	// checked against it.
+	SetContracts(ctx context.Context, in *SetContractsRequest, opts ...grpc.CallOption) (*SetContractsResponse, error)
 	// The operator's word on a design, and the driver is refused it. A session that could approve its
 	// own design would be agreeing with itself, which is the whole thing this gate exists to stop.
 	ApproveDesign(ctx context.Context, in *ApproveDesignRequest, opts ...grpc.CallOption) (*ApproveDesignResponse, error)
@@ -509,6 +515,16 @@ func (c *controlPlaneServiceClient) SetDesign(ctx context.Context, in *SetDesign
 	return out, nil
 }
 
+func (c *controlPlaneServiceClient) SetContracts(ctx context.Context, in *SetContractsRequest, opts ...grpc.CallOption) (*SetContractsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SetContractsResponse)
+	err := c.cc.Invoke(ctx, ControlPlaneService_SetContracts_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *controlPlaneServiceClient) ApproveDesign(ctx context.Context, in *ApproveDesignRequest, opts ...grpc.CallOption) (*ApproveDesignResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ApproveDesignResponse)
@@ -779,11 +795,16 @@ type ControlPlaneServiceServer interface {
 	SetSessionLabel(context.Context, *SetSessionLabelRequest) (*SetSessionLabelResponse, error)
 	ListContexts(context.Context, *ListContextsRequest) (*ListContextsResponse, error)
 	SetContext(context.Context, *SetContextRequest) (*SetContextResponse, error)
-	// What a project is for and what was designed for it. The driver may call the first three: reading
+	// What a project is for and what was designed for it. The driver may call the first four: reading
 	// what the project holds is the point, and a session that writes a design grants itself nothing.
 	GetDesign(context.Context, *GetDesignRequest) (*GetDesignResponse, error)
 	SetBrief(context.Context, *SetBriefRequest) (*SetBriefResponse, error)
 	SetDesign(context.Context, *SetDesignRequest) (*SetDesignResponse, error)
+	// The contracts a project builds against, beside its design on the same row. The driver may call
+	// it for the reason it may write a design: a design session writes the contracts document, and
+	// writing one grants it nothing. Nothing parses the body, so a contract named in a step is never
+	// checked against it.
+	SetContracts(context.Context, *SetContractsRequest) (*SetContractsResponse, error)
 	// The operator's word on a design, and the driver is refused it. A session that could approve its
 	// own design would be agreeing with itself, which is the whole thing this gate exists to stop.
 	ApproveDesign(context.Context, *ApproveDesignRequest) (*ApproveDesignResponse, error)
@@ -939,6 +960,9 @@ func (UnimplementedControlPlaneServiceServer) SetBrief(context.Context, *SetBrie
 }
 func (UnimplementedControlPlaneServiceServer) SetDesign(context.Context, *SetDesignRequest) (*SetDesignResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SetDesign not implemented")
+}
+func (UnimplementedControlPlaneServiceServer) SetContracts(context.Context, *SetContractsRequest) (*SetContractsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetContracts not implemented")
 }
 func (UnimplementedControlPlaneServiceServer) ApproveDesign(context.Context, *ApproveDesignRequest) (*ApproveDesignResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ApproveDesign not implemented")
@@ -1624,6 +1648,24 @@ func _ControlPlaneService_SetDesign_Handler(srv interface{}, ctx context.Context
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ControlPlaneService_SetContracts_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetContractsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ControlPlaneServiceServer).SetContracts(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ControlPlaneService_SetContracts_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ControlPlaneServiceServer).SetContracts(ctx, req.(*SetContractsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _ControlPlaneService_ApproveDesign_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ApproveDesignRequest)
 	if err := dec(in); err != nil {
@@ -2176,6 +2218,10 @@ var ControlPlaneService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SetDesign",
 			Handler:    _ControlPlaneService_SetDesign_Handler,
+		},
+		{
+			MethodName: "SetContracts",
+			Handler:    _ControlPlaneService_SetContracts_Handler,
 		},
 		{
 			MethodName: "ApproveDesign",

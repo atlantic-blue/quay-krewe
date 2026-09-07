@@ -591,6 +591,11 @@ func (s *Server) renderContext(ctx context.Context, session *quaycrewv1.Session)
 			// sends the session to it. Written first for that reason: a line naming a file the render
 			// then decided not to write sends the model to open nothing.
 			hasPath := s.renderPath(ctx, session.GetProject(), dirs[at])
+			// The contracts document, beside the design and written on every render for the same
+			// reason. Nothing in the summary names it: the pointer to it is in the take text, because
+			// this section is read on every exec of every session in the project and is capped, and a
+			// fourth pointer here would cut the brief further.
+			s.renderContracts(ctx, session.GetProject(), dirs[at])
 			if summary := s.renderDesign(ctx, session, dirs[at], hasPath); summary != "" {
 				sections = append(sections, sandbox.Section{Scope: sandbox.DesignScope, Body: summary})
 			}

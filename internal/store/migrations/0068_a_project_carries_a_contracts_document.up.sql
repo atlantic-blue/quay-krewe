@@ -1,0 +1,12 @@
+-- The contracts a project builds against, whole, in markdown.
+--
+-- It is a second body beside the design on the same row. A session opens it as a file in its working
+-- directory rather than reading it in a memory file, because the memory file is read on every exec of
+-- every session in the project and a contracts document is long.
+--
+-- Writing it does not touch `approved`. The approval is the operator's word about the design body,
+-- and the contracts document is read from that body.
+--
+-- The empty string is a value rather than an absence: it is how a project says it carries no
+-- contracts document, and a project that says that gets no file written for it.
+alter table project_designs add column if not exists contracts text not null default '';

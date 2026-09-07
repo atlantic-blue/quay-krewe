@@ -18,6 +18,11 @@ type designWorld struct {
 	design   *quaycrewv1.Design
 	warnings []string
 	file     string
+	// contractsFile is the file a contracts document was written from, and contracts is what that
+	// file said. The body is kept because a scenario about piping compares what came out of the tool
+	// against what went in, and a scenario that wrote 140,000 characters cannot say them again.
+	contractsFile string
+	contracts     string
 }
 
 type designKey struct{}
@@ -269,6 +274,95 @@ func initializeDesignSteps(sc *godog.ScenarioContext) {
 	sc.Step(`^the caller wrote the design from that file$`, func(ctx context.Context) error {
 		return runTool(ctx, "design", "set", whereTheProjectIs(ctx), "--file", designFrom(ctx).file)
 	})
+
+	initializeContractsSteps(sc)
+}
+
+// The contracts a project builds against: a second body on the design row, written and read the way
+// the design body is, and never clearing the approval.
+func initializeContractsSteps(sc *godog.ScenarioContext) {
+	sc.Step(`^the project's contracts are "([^"]*)"$`, func(ctx context.Context, body string) error {
+		return setContracts(ctx, unescape(body), "")
+	})
+
+	sc.Step(`^the operator sets the project's contracts to "([^"]*)"$`,
+		func(ctx context.Context, body string) error {
+			return setContracts(ctx, unescape(body), "")
+		})
+
+	sc.Step(`^the operator sets the project's contracts to (\d+) characters$`,
+		func(ctx context.Context, length int) error {
+			return setContracts(ctx, strings.Repeat("c", length), "")
+		})
+
+	sc.Step(`^the contracts read "([^"]*)"$`, func(ctx context.Context, want string) error {
+		d := designFrom(ctx)
+		if d.design == nil {
+			return fmt.Errorf("no design has been read, so there are no contracts to check")
+		}
+		if got := d.design.GetContracts(); got != unescape(want) {
+			return fmt.Errorf("the contracts read %q, want %q", got, unescape(want))
+		}
+		return nil
+	})
+
+	// Compared by length against what was sent, because the scenario that matters here sends 140,000
+	// characters and the failure it guards against is a body that comes back short.
+	sc.Step(`^the contracts are kept whole$`, func(ctx context.Context) error {
+		d := designFrom(ctx)
+		if d.design == nil {
+			return fmt.Errorf("no design has been read, so there are no contracts to check")
+		}
+		if got := d.design.GetContracts(); got != d.contracts {
+			return fmt.Errorf("the contracts were written at %d characters and read back at %d",
+				utf8.RuneCountInString(d.contracts), utf8.RuneCountInString(got))
+		}
+		return nil
+	})
+
+	sc.Step(`^a contracts file saying "([^"]*)"$`, func(ctx context.Context, body string) error {
+		d := designFrom(ctx)
+		dir, err := os.MkdirTemp("", "krewe-contracts-")
+		if err != nil {
+			return err
+		}
+		d.contractsFile, d.contracts = filepath.Join(dir, "contracts.md"), unescape(body)
+		return os.WriteFile(d.contractsFile, []byte(d.contracts), 0o600)
+	})
+
+	sc.Step(`^the caller writes the contracts from that file$`, func(ctx context.Context) error {
+		return runTool(ctx, "design", "contracts", whereTheProjectIs(ctx), "--file", designFrom(ctx).contractsFile)
+	})
+
+	sc.Step(`^the caller reads the project's contracts$`, func(ctx context.Context) error {
+		return runTool(ctx, "design", "contracts", whereTheProjectIs(ctx))
+	})
+
+	// Exactly the document, rather than carrying it, because the point of the read is that it can be
+	// piped: a heading or a label in front of the body becomes part of the file the next command
+	// writes.
+	sc.Step(`^standard output is the contracts document and one newline$`, func(ctx context.Context) error {
+		want := strings.TrimRight(designFrom(ctx).contracts, "\n") + "\n"
+		if got := toolFrom(ctx).stdout; got != want {
+			return fmt.Errorf("standard output is %q, want exactly %q", got, want)
+		}
+		return nil
+	})
+}
+
+// setContracts writes the contracts document and keeps what came back, so a later step reads the
+// answer the caller got rather than asking again.
+func setContracts(ctx context.Context, body, writtenBy string) error {
+	w, d := worldFrom(ctx), designFrom(ctx)
+	resp, err := w.client.SetContracts(ctx, &quaycrewv1.SetContractsRequest{
+		Project: w.projectID, Body: body, WrittenBy: writtenBy,
+	})
+	w.lastErr = err
+	if err != nil {
+		return nil
+	}
+	d.design, d.contracts = resp.GetDesign(), body
+	return nil
 }
 
 // setBrief writes the brief and keeps what came back, so a later step reads the same answer the
@@ -309,6 +403,16 @@ func designFileAt(ctx context.Context) (string, error) {
 		return "", err
 	}
 	return filepath.Join(dir, ".krewe", "design.md"), nil
+}
+
+// contractsFileAt is where the contracts document sits in a session's working directory, as this
+// process sees it on the host.
+func contractsFileAt(ctx context.Context) (string, error) {
+	dir, err := sessionWorkingDir(ctx)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, ".krewe", "contracts.md"), nil
 }
 
 // designSectionOf is what sits under the design mark in the session's memory file, and false when
@@ -360,6 +464,51 @@ func initializeDesignRenderSteps(sc *godog.ScenarioContext) {
 			return err
 		}
 		return nil
+	})
+
+	sc.Step(`^the session's contracts file reads "([^"]*)"$`, func(ctx context.Context, want string) error {
+		at, err := contractsFileAt(ctx)
+		if err != nil {
+			return err
+		}
+		body, err := os.ReadFile(at)
+		if err != nil {
+			return fmt.Errorf("the session has no contracts document at %s: %w", at, err)
+		}
+		if string(body) != unescape(want) {
+			return fmt.Errorf("the contracts file reads %q, want %q", body, unescape(want))
+		}
+		return nil
+	})
+
+	sc.Step(`^the session has no contracts file$`, func(ctx context.Context) error {
+		at, err := contractsFileAt(ctx)
+		if err != nil {
+			return err
+		}
+		body, err := os.ReadFile(at)
+		if err == nil {
+			return fmt.Errorf("the session has a contracts document at %s saying %q, and the store holds none",
+				at, body)
+		}
+		if !os.IsNotExist(err) {
+			return err
+		}
+		return nil
+	})
+
+	// The write is made to fail the way a filesystem fails one: the file the render writes is a
+	// directory, so the write is refused whoever runs the suite. A mode the test takes away is not
+	// enough, because root writes through it and the scenario then proves nothing.
+	sc.Step(`^the contracts document cannot be written$`, func(ctx context.Context) error {
+		at, err := contractsFileAt(ctx)
+		if err != nil {
+			return err
+		}
+		if err := os.Remove(at); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return os.Mkdir(at, 0o755)
 	})
 
 	sc.Step(`^the session's memory file does not carry "([^"]*)"$`, func(ctx context.Context, unwanted string) error {

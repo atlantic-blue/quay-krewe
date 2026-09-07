@@ -649,6 +649,19 @@ func (m *Memory) SetProjectDesign(_ context.Context, project, body, writtenBy st
 	})
 }
 
+// SetProjectContracts records the contracts document whole and who wrote it, leaving the brief and
+// the design body alone.
+//
+// The approval stays where it is, and this is the one line that has to agree with Postgres: a
+// contracts write that cleared it here would ask the operator to approve a design they never
+// changed.
+func (m *Memory) SetProjectContracts(_ context.Context, project, body, writtenBy string) (*quaycrewv1.Design, error) {
+	return m.writeDesign(project, func(design *quaycrewv1.Design) {
+		design.Contracts = body
+		design.WrittenBy = writtenBy
+	})
+}
+
 // ApproveProjectDesign records the operator's word on the design as it stands, and refuses a design
 // with no body. A project with no design row has no body either, so it is refused the same way.
 func (m *Memory) ApproveProjectDesign(_ context.Context, project string) (*quaycrewv1.Design, error) {

@@ -688,17 +688,17 @@ func (p *Postgres) SetContext(ctx context.Context, scope ContextScope, owner, bo
 // designColumns is what every design read selects, in the order scanDesign reads them. The two are
 // written next to each other because a column added to one and not the other reads as a zero rather
 // than as a failure.
-const designColumns = `project, brief, body, approved, approved_at, written_by, updated_at`
+const designColumns = `project, brief, body, approved, approved_at, written_by, updated_at, contracts`
 
 // scanDesign reads one design row.
 func scanDesign(row pgx.Row) (*quaycrewv1.Design, error) {
 	var (
-		project, brief, body, writtenBy string
-		approved                        bool
-		approvedAt                      *time.Time
-		updatedAt                       time.Time
+		project, brief, body, writtenBy, contracts string
+		approved                                   bool
+		approvedAt                                 *time.Time
+		updatedAt                                  time.Time
 	)
-	if err := row.Scan(&project, &brief, &body, &approved, &approvedAt, &writtenBy, &updatedAt); err != nil {
+	if err := row.Scan(&project, &brief, &body, &approved, &approvedAt, &writtenBy, &updatedAt, &contracts); err != nil {
 		return nil, err
 	}
 	design := &quaycrewv1.Design{
@@ -708,6 +708,7 @@ func scanDesign(row pgx.Row) (*quaycrewv1.Design, error) {
 		Approved:  approved,
 		WrittenBy: writtenBy,
 		UpdatedAt: timestamppb.New(updatedAt),
+		Contracts: contracts,
 	}
 	if approvedAt != nil {
 		design.ApprovedAt = timestamppb.New(*approvedAt)
@@ -786,6 +787,31 @@ func (p *Postgres) SetProjectDesign(ctx context.Context, project, body, writtenB
 		returning `+designColumns, project, body, writtenBy))
 	if err != nil {
 		return nil, fmt.Errorf("set design: %w", err)
+	}
+	return design, nil
+}
+
+// SetProjectContracts records the contracts document whole, and who wrote it. It leaves the design
+// body and the brief alone.
+//
+// The approval is not in this statement, and that is the point of the method. SetProjectDesign
+// clears it because approval is a statement about one text; the contracts document is a different
+// text on the same row, read out of the design the operator already approved, so a contract written
+// down is not a design that changed.
+//
+// An empty body is written like any other. It is how a project says it carries no contracts
+// document, and the render takes the file away when it reads one.
+func (p *Postgres) SetProjectContracts(ctx context.Context, project, body, writtenBy string) (*quaycrewv1.Design, error) {
+	if err := p.projectExists(ctx, project); err != nil {
+		return nil, err
+	}
+	design, err := scanDesign(p.pool.QueryRow(ctx, `
+		insert into project_designs (project, contracts, written_by) values ($1, $2, $3)
+		on conflict (project) do update set
+			contracts = excluded.contracts, written_by = excluded.written_by, updated_at = now()
+		returning `+designColumns, project, body, writtenBy))
+	if err != nil {
+		return nil, fmt.Errorf("set contracts: %w", err)
 	}
 	return design, nil
 }
