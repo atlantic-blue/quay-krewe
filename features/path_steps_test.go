@@ -281,6 +281,33 @@ func initializePathSteps(sc *godog.ScenarioContext) {
 		return nil
 	})
 
+	// Line breaks and all, for the reason the touches are asserted with them: the take text reads the
+	// contracts one identifier per line, and a field joined into one line would name one contract
+	// nobody wrote.
+	sc.Step(`^step (\d+) builds the contracts "([^"]*)"$`,
+		func(ctx context.Context, number int, want string) error {
+			step, err := stepNumbered(ctx, int32(number))
+			if err != nil {
+				return err
+			}
+			if got := step.GetContracts(); got != unescape(want) {
+				return fmt.Errorf("step %d builds %q, want %q", number, got, unescape(want))
+			}
+			return nil
+		})
+
+	sc.Step(`^step (\d+) says the scope of each contract is "([^"]*)"$`,
+		func(ctx context.Context, number int, want string) error {
+			step, err := stepNumbered(ctx, int32(number))
+			if err != nil {
+				return err
+			}
+			if got := step.GetContractScope(); got != unescape(want) {
+				return fmt.Errorf("step %d scopes its contracts as %q, want %q", number, got, unescape(want))
+			}
+			return nil
+		})
+
 	sc.Step(`^step (\d+) waits for step (\d+)$`, func(ctx context.Context, number, want int) error {
 		step, err := stepNumbered(ctx, int32(number))
 		if err != nil {

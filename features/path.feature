@@ -296,8 +296,152 @@ Feature: A project holds a numbered path of steps
 
       The scenario that proves it
       a project carries a brief
+
+      The contracts it builds
+      TABLE-1
+
+      The scope of each contract
+      TABLE-1: the columns migration 0062 creates. The approval column comes later.
       """
     Then the path write warns about nothing
+
+  # The contracts a step builds, and which part of each one is this step's. Every step brief this
+  # project wrote by hand carried that scoping, copied out of the graph by somebody reading it. The
+  # document carries it now, so nobody types it and a session cannot be handed the wrong part of a
+  # contract.
+
+  Scenario: A step names the contracts it builds and the scope of each
+    When the operator sets the path to:
+      """
+      ## 1. The store holds a project's brief
+
+      The contracts it builds
+      TABLE-1
+      STORE-2
+
+      The scope of each contract
+      TABLE-1: the columns migration 0062 creates. The approval column comes later.
+      STORE-2: the whole method.
+      """
+    And the operator reads the path
+    Then step 1 builds the contracts "TABLE-1\nSTORE-2"
+    And step 1 says the scope of each contract is "TABLE-1: the columns migration 0062 creates. The approval column comes later.\nSTORE-2: the whole method."
+
+  # This is the defect the refusal exists for. A scope line about a contract the step does not build
+  # reads as an answer about that contract, and the take text then hands the session the scope of
+  # somebody else's work.
+  Scenario: A scope line naming a contract the step does not build is refused, naming the line
+    When the operator sets the path to:
+      """
+      ## 1. The store holds a project's brief
+
+      The contracts it builds
+      TABLE-1
+
+      The scope of each contract
+      TABLE-1: the columns migration 0062 creates.
+      STORE-2: the whole method.
+      """
+    Then the control plane refuses it as invalid
+    And the refusal names line 8
+    And the refusal says "STORE-2"
+    And the project has no path
+
+  # Without the stop there is no telling the identifier from the sentence, so the refusal says the
+  # form rather than the mistake.
+  Scenario: A scope line that does not stop after the identifier is refused, and the refusal names the form
+    When the operator sets the path to:
+      """
+      ## 1. The store holds a project's brief
+
+      The contracts it builds
+      TABLE-1
+
+      The scope of each contract
+      TABLE-1 the columns migration 0062 creates.
+      """
+    Then the control plane refuses it as invalid
+    And the refusal names line 7
+    And the refusal says "the form is <identifier>: <sentence>"
+
+  # Both lines, because the person fixing it has to see the one they forgot as well as the one they
+  # are looking at. One contract has one scope line, and two of them are two answers.
+  Scenario: Two scope lines naming the same contract are refused, naming both lines
+    When the operator sets the path to:
+      """
+      ## 1. The store holds a project's brief
+
+      The contracts it builds
+      TABLE-1
+
+      The scope of each contract
+      TABLE-1: the columns migration 0062 creates.
+      TABLE-1: the approval column comes later.
+      """
+    Then the control plane refuses it as invalid
+    And the refusal names lines 7 and 8
+
+  # A warning and not a refusal. A contract identifier is a string the operator wrote, and krewe
+  # never reads the contracts document, so it cannot tell a missing contract from a wrong one.
+  Scenario: A step with an empty contracts block warns and is kept
+    When the operator sets the path to:
+      """
+      ## 1. The store holds a project's brief
+
+      The contracts it builds
+      """
+    Then the path write warns "step 1 names no contract"
+    And the operator reads the path
+    And the path holds 1 steps
+    And step 1 builds the contracts ""
+
+  Scenario: A contract with no scope line under it warns, and the warning names the contract
+    When the operator sets the path to:
+      """
+      ## 1. The store holds a project's brief
+
+      The contracts it builds
+      TABLE-1
+      STORE-2
+
+      The scope of each contract
+      TABLE-1: the columns migration 0062 creates.
+      """
+    Then the path write warns "step 1 builds STORE-2 and says nothing about its scope"
+    And the operator reads the path
+    And step 1 builds the contracts "TABLE-1\nSTORE-2"
+
+  # A document written before these two labels existed is every document this project wrote until
+  # now. It reads back with no contracts and no scope, and every other block whole.
+  Scenario: A step naming no contract reads back with every other block whole
+    When the operator sets the path to:
+      """
+      ## 1. The store holds a project's brief
+
+      What changes and why
+      The design has nowhere to live, so a project cannot carry one.
+
+      What this touches
+      internal/store/store.go
+
+      What proves it
+      The operator sets a brief and reads it back.
+
+      The scenario that proves it
+      a project carries a brief
+
+      After
+      0
+      """
+    And the operator reads the path
+    Then step 1 builds the contracts ""
+    And step 1 says the scope of each contract is ""
+    And step 1 says its intention is "The design has nowhere to live, so a project cannot carry one."
+    And step 1 touches "internal/store/store.go"
+    And step 1 says its proof is "The operator sets a brief and reads it back."
+    And step 1 names the scenario "a project carries a brief"
+    And step 1 waits for step 0
+    And step 1 is ready
 
   # The milestones. A feature is delivered in milestones, and one document carries the whole path of
   # one feature, so the milestone headings sit in the same document as the steps. One hash names a
@@ -1152,6 +1296,51 @@ Feature: A project holds a numbered path of steps
     And the step text does not carry "What proves it"
     And the step text does not carry "The scenario that proves it"
     And the step text does not carry "What this touches"
+
+  # The scoping the operator wrote by hand until now. The session is given the contracts it builds,
+  # what part of each one is this step's, and the file that says what those contracts are.
+  Scenario: Taking a step dispatches a session whose text names both contracts and both scopes
+    Given the project's design is "# Bills\n"
+    And the project's contracts are "# The contracts\nTABLE-1: table project_designs\n"
+    And the operator approved the project's design
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+
+      The contracts it builds
+      TABLE-1
+      STORE-2
+
+      The scope of each contract
+      TABLE-1: the columns migration 0062 creates. The approval column comes later.
+      STORE-2: the whole method.
+      """
+    When the operator takes step 1
+    Then the step text carries "The contracts this step builds"
+    And the step text carries "TABLE-1\nSTORE-2"
+    And the step text carries "The scope of each contract"
+    And the step text carries "TABLE-1: the columns migration 0062 creates. The approval column comes later."
+    And the step text carries "STORE-2: the whole method."
+    And the step text carries "The contracts are in .krewe/contracts.md"
+    And the session was asked exactly what the take composed
+
+  # A label with nothing under it is text the model reads for nothing, and a pointer to a file that
+  # is not there sends it to open nothing.
+  Scenario: A step with no contracts produces take text with no contracts label in it
+    Given the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+
+      What changes and why
+      The design has nowhere to live, so a project cannot carry one.
+      """
+    When the operator takes step 1
+    Then the step text carries "What changes and why"
+    And the step text does not carry "The contracts this step builds"
+    And the step text does not carry "The scope of each contract"
+    And the step text does not carry ".krewe/contracts.md"
 
   # One step is one session's. Two takes that both passed would put two sessions on one change.
   Scenario: Taking a step somebody already holds is refused, naming the session

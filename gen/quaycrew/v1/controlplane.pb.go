@@ -4259,7 +4259,17 @@ type Step struct {
 	//
 	// The number is 24 rather than 14 because the fields between them belong to the restatement and to
 	// the proof state, which are written in the same revision as this one and reach the wire later.
-	Milestone     int32 `protobuf:"varint,24,opt,name=milestone,proto3" json:"milestone,omitempty"`
+	Milestone int32 `protobuf:"varint,24,opt,name=milestone,proto3" json:"milestone,omitempty"`
+	// contracts is the contracts this step builds, one identifier per line. It is empty for a step
+	// that names none, and krewe then hands that step no contract.
+	Contracts string `protobuf:"bytes,25,opt,name=contracts,proto3" json:"contracts,omitempty"`
+	// contract_scope is one line per contract, reading `<identifier>: <sentence>`. The sentence says
+	// which part of that contract is this step's, and which part waits for a later step.
+	//
+	// It names no identifier that contracts does not name, because the path write refuses a document
+	// that breaks that. Nothing checks that an identifier names a contract that exists: krewe never
+	// reads the project's contracts document, and the session opens it for itself.
+	ContractScope string `protobuf:"bytes,26,opt,name=contract_scope,json=contractScope,proto3" json:"contract_scope,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -4390,6 +4400,20 @@ func (x *Step) GetMilestone() int32 {
 		return x.Milestone
 	}
 	return 0
+}
+
+func (x *Step) GetContracts() string {
+	if x != nil {
+		return x.Contracts
+	}
+	return ""
+}
+
+func (x *Step) GetContractScope() string {
+	if x != nil {
+		return x.ContractScope
+	}
+	return ""
 }
 
 // Milestone is one group of a feature's steps. A feature is delivered in milestones, and a milestone
@@ -8473,7 +8497,7 @@ const file_quaycrew_v1_controlplane_proto_rawDesc = "" +
 	"\x14ApproveDesignRequest\x12\x18\n" +
 	"\aproject\x18\x01 \x01(\tR\aproject\"D\n" +
 	"\x15ApproveDesignResponse\x12+\n" +
-	"\x06design\x18\x01 \x01(\v2\x13.quaycrew.v1.DesignR\x06design\"\xb3\x03\n" +
+	"\x06design\x18\x01 \x01(\v2\x13.quaycrew.v1.DesignR\x06design\"\xf8\x03\n" +
 	"\x04Step\x12\x18\n" +
 	"\afeature\x18\x01 \x01(\tR\afeature\x12\x16\n" +
 	"\x06number\x18\x02 \x01(\x05R\x06number\x12\x14\n" +
@@ -8490,7 +8514,9 @@ const file_quaycrew_v1_controlplane_proto_rawDesc = "" +
 	"\vfinished_at\x18\f \x01(\v2\x1a.google.protobuf.TimestampR\n" +
 	"finishedAt\x12%\n" +
 	"\x0eproof_scenario\x18\r \x01(\tR\rproofScenario\x12\x1c\n" +
-	"\tmilestone\x18\x18 \x01(\x05R\tmilestone\"q\n" +
+	"\tmilestone\x18\x18 \x01(\x05R\tmilestone\x12\x1c\n" +
+	"\tcontracts\x18\x19 \x01(\tR\tcontracts\x12%\n" +
+	"\x0econtract_scope\x18\x1a \x01(\tR\rcontractScope\"q\n" +
 	"\tMilestone\x12\x18\n" +
 	"\afeature\x18\x01 \x01(\tR\afeature\x12\x16\n" +
 	"\x06number\x18\x02 \x01(\x05R\x06number\x12\x14\n" +

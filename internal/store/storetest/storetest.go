@@ -2521,6 +2521,49 @@ func runPathConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 		}
 	})
 
+	// The two columns travel as the caller wrote them, line breaks and all, because the take text
+	// reads the contracts line by line and the scope one line per contract. A step that names none
+	// reads back empty rather than absent, which is how it says the session finds its own.
+	t.Run("a step carries the contracts it builds and the scope of each", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		feature := newFeature(t, s, newProject(t, s, "acme", "house-bills"), "the bills")
+
+		written, err := s.SetPath(ctx, feature.GetId(), nil, []store.Step{
+			{
+				Number: 1, Title: "the first",
+				Contracts: "TABLE-1\nSTORE-2",
+				ContractScope: "TABLE-1: the columns migration 0062 creates. The approval column comes later.\n" +
+					"STORE-2: the whole method.",
+			},
+			{Number: 2, Title: "the second", After: 1},
+		})
+		if err != nil {
+			t.Fatalf("SetPath: %v", err)
+		}
+		if got := written[0].GetContracts(); got != "TABLE-1\nSTORE-2" {
+			t.Errorf("step 1 builds %q, want the two identifiers on their own lines", got)
+		}
+		read, err := s.ListSteps(ctx, feature.GetId())
+		if err != nil {
+			t.Fatalf("ListSteps: %v", err)
+		}
+		if got := read[0].GetContracts(); got != "TABLE-1\nSTORE-2" {
+			t.Errorf("step 1 reads back building %q, want the two identifiers on their own lines", got)
+		}
+		want := "TABLE-1: the columns migration 0062 creates. The approval column comes later.\n" +
+			"STORE-2: the whole method."
+		if got := read[0].GetContractScope(); got != want {
+			t.Errorf("step 1 reads back scoping %q, want %q", got, want)
+		}
+		if got := read[1].GetContracts(); got != "" {
+			t.Errorf("step 2 builds %q, and the document named it no contract", got)
+		}
+		if got := read[1].GetContractScope(); got != "" {
+			t.Errorf("step 2 scopes %q, and the document named it no contract", got)
+		}
+	})
+
 	// The milestones are replaced whole beside the steps. A milestone the new document does not carry
 	// is dropped, and it loses nothing, because a milestone holds no state of its own.
 	t.Run("writing a path again replaces the milestones that were there", func(t *testing.T) {

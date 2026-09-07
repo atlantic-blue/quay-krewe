@@ -846,7 +846,8 @@ func (p *Postgres) ApproveProjectDesign(ctx context.Context, project string) (*q
 // a deleted project's path, and an unqualified name would be one the join could make ambiguous
 // later.
 const stepColumns = `s.feature, s.number, s.title, s.intention, s.touches, s.proof, ` +
-	`s.proof_scenario, s.after, s.milestone, s.state, s.session, s.result, s.taken_at, s.finished_at`
+	`s.proof_scenario, s.after, s.milestone, s.contracts, s.contract_scope, ` +
+	`s.state, s.session, s.result, s.taken_at, s.finished_at`
 
 // stepJoins is the join every path read goes through: a step to its feature, that feature to its
 // project, and that project to its workspace.
@@ -863,11 +864,13 @@ func scanStep(row pgx.Row) (*quaycrewv1.Step, error) {
 	var (
 		feature, title, intention, touches, proof string
 		scenario, state, session, result          string
+		contracts, contractScope                  string
 		number, after, milestone                  int32
 		takenAt, finishedAt                       *time.Time
 	)
 	if err := row.Scan(&feature, &number, &title, &intention, &touches, &proof,
-		&scenario, &after, &milestone, &state, &session, &result, &takenAt, &finishedAt); err != nil {
+		&scenario, &after, &milestone, &contracts, &contractScope,
+		&state, &session, &result, &takenAt, &finishedAt); err != nil {
 		return nil, err
 	}
 	step := &quaycrewv1.Step{
@@ -880,6 +883,8 @@ func scanStep(row pgx.Row) (*quaycrewv1.Step, error) {
 		ProofScenario: scenario,
 		After:         after,
 		Milestone:     milestone,
+		Contracts:     contracts,
+		ContractScope: contractScope,
 		State:         state,
 		Session:       session,
 		Result:        result,
@@ -934,10 +939,12 @@ func (p *Postgres) SetPath(ctx context.Context, feature string, milestones []Mil
 	for _, step := range steps {
 		if _, err := transaction.Exec(ctx, `
 			insert into feature_steps
-				(feature, number, title, intention, touches, proof, proof_scenario, after, milestone)
-			values ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+				(feature, number, title, intention, touches, proof, proof_scenario, after, milestone,
+				 contracts, contract_scope)
+			values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
 			feature, step.Number, step.Title, step.Intention, step.Touches, step.Proof,
-			step.ProofScenario, step.After, step.Milestone); err != nil {
+			step.ProofScenario, step.After, step.Milestone,
+			step.Contracts, step.ContractScope); err != nil {
 			return nil, fmt.Errorf("write step %d: %w", step.Number, err)
 		}
 	}
