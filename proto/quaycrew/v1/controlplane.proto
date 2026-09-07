@@ -675,6 +675,16 @@ message Step {
   // The number is 24 rather than 14 because the fields between them belong to the restatement and to
   // the proof state, which are written in the same revision as this one and reach the wire later.
   int32 milestone = 24;
+  // contracts is the contracts this step builds, one identifier per line. It is empty for a step
+  // that names none, and krewe then hands that step no contract.
+  string contracts = 25;
+  // contract_scope is one line per contract, reading `<identifier>: <sentence>`. The sentence says
+  // which part of that contract is this step's, and which part waits for a later step.
+  //
+  // It names no identifier that contracts does not name, because the path write refuses a document
+  // that breaks that. Nothing checks that an identifier names a contract that exists: krewe never
+  // reads the project's contracts document, and the session opens it for itself.
+  string contract_scope = 26;
 }
 
 // Milestone is one group of a feature's steps. A feature is delivered in milestones, and a milestone

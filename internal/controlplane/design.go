@@ -399,13 +399,15 @@ func (s *Server) renderDesignTo(ctx context.Context, project string) {
 // console send the same words and cannot drift on the grammar, which is the same reason the control
 // plane composes the text a session is dispatched with.
 
-// The five labels a step block carries. Each one sits alone on its line, and a block runs from its
+// The seven labels a step block carries. Each one sits alone on its line, and a block runs from its
 // label to the next label, to the next step heading, or to the end of the document.
 const (
 	labelIntention = "What changes and why"
 	labelTouches   = "What this touches"
 	labelProof     = "What proves it"
 	labelScenario  = "The scenario that proves it"
+	labelContracts = "The contracts it builds"
+	labelScope     = "The scope of each contract"
 	labelAfter     = "After"
 )
 
@@ -444,6 +446,21 @@ type declaredStep struct {
 	afterLine int
 	// scenarioExtraLine is the second line of a scenario block, which holds one line and no more.
 	scenarioExtraLine int
+	// scope is the scope block line by line, with the line each one sits on, because every refusal
+	// about a scope line names that line for somebody to go and fix.
+	scope []declaredScope
+}
+
+// declaredScope is one line of a step's scope block: what it says about which contract, and where it
+// is.
+type declaredScope struct {
+	// identifier is what the line names before the colon, trimmed. It is empty for a line that names
+	// nothing, which the contracts block then does not name either.
+	identifier string
+	line       int
+	// stopped is whether the line carries a colon after the identifier at all. A line that does not
+	// is refused, because without the stop there is no telling the identifier from the sentence.
+	stopped bool
 }
 
 // declaredMilestone is one milestone as the document declares it, with the line a refusal has to
@@ -471,6 +488,11 @@ func parsePath(document string) ([]store.Milestone, []store.Step, []string, erro
 		return nil, nil, nil, err
 	}
 	if err := refuseBadHeadings(declared); err != nil {
+		return nil, nil, nil, err
+	}
+	// After the headings and before the sort, so the lines a refusal names are read in the order the
+	// document writes them rather than in the order the numbers happen to run.
+	if err := refuseBadScope(declared); err != nil {
 		return nil, nil, nil, err
 	}
 	sort.SliceStable(grouped, func(i, j int) bool {
@@ -526,6 +548,8 @@ func readPathDocument(document string) ([]*declaredMilestone, []*declaredStep) {
 		current.step.Touches = joinBlock(blocks[labelTouches])
 		current.step.Proof = joinBlock(blocks[labelProof])
 		current.step.ProofScenario = joinBlock(blocks[labelScenario])
+		current.step.Contracts = joinBlock(blocks[labelContracts])
+		current.step.ContractScope = joinBlock(blocks[labelScope])
 		current.afterText = joinBlock(blocks[labelAfter])
 		declared = append(declared, current)
 	}
@@ -594,10 +618,25 @@ func readPathDocument(document string) ([]*declaredMilestone, []*declaredStep) {
 			saidSomething(blocks[labelScenario]) {
 			current.scenarioExtraLine = number
 		}
+		// A scope line is kept with the line it sits on, because every refusal about one names that
+		// line. A blank line inside the block says nothing about a contract, so it is not one.
+		if label == labelScope && strings.TrimSpace(line) != "" {
+			current.scope = append(current.scope, scopeLineOn(line, number))
+		}
 		blocks[label] = append(blocks[label], line)
 	}
 	finish()
 	return grouped, declared
+}
+
+// scopeLineOn reads one line of a scope block: the identifier it names, and whether it stopped after
+// that identifier at all.
+//
+// The stop is a colon, and it is what tells the identifier from the sentence. A line without one
+// names no contract, so it is refused rather than read as an identifier the whole line long.
+func scopeLineOn(line string, number int) declaredScope {
+	identifier, _, stopped := strings.Cut(strings.TrimSpace(line), ":")
+	return declaredScope{identifier: strings.TrimSpace(identifier), line: number, stopped: stopped}
 }
 
 // milestoneAbove is the number a step read now belongs to, and zero when no milestone heading has
@@ -620,7 +659,7 @@ func saidSomething(lines []string) bool {
 	return false
 }
 
-// labelOn says whether a line is one of the five labels, alone on its line.
+// labelOn says whether a line is one of the seven labels, alone on its line.
 func labelOn(line string) (string, bool) {
 	switch strings.TrimSpace(line) {
 	case labelIntention:
@@ -631,6 +670,10 @@ func labelOn(line string) (string, bool) {
 		return labelProof, true
 	case labelScenario:
 		return labelScenario, true
+	case labelContracts:
+		return labelContracts, true
+	case labelScope:
+		return labelScope, true
 	case labelAfter:
 		return labelAfter, true
 	}
@@ -700,6 +743,68 @@ func refuseBadHeadings(declared []*declaredStep) error {
 		seen[one.step.Number] = one.headingLine
 	}
 	return nil
+}
+
+// refuseBadScope holds the rules about the scope block: the form of each line, and which contracts
+// those lines are allowed to name.
+//
+// A scope line that names a contract the step does not build is the defect this refusal exists for.
+// It reads as an answer about that contract, and the take text then hands the session a scope for
+// work that belongs to another step.
+//
+// Nothing here asks whether an identifier names a contract that exists. Krewe never reads the
+// project's contracts document, and the session opens it for itself.
+func refuseBadScope(declared []*declaredStep) error {
+	for _, one := range declared {
+		named := contractsNamed(one.step)
+		seen := make(map[string]int, len(one.scope))
+		for _, scope := range one.scope {
+			if !scope.stopped {
+				return status.Errorf(codes.InvalidArgument,
+					"line %d: step %d gives a scope that does not stop after the identifier, "+
+						"and the form is <identifier>: <sentence>",
+					scope.line, one.step.Number)
+			}
+			if !named[scope.identifier] {
+				return status.Errorf(codes.InvalidArgument,
+					"line %d: step %d gives the scope of %s, and %q does not name it",
+					scope.line, one.step.Number, scope.identifier, labelContracts)
+			}
+			if before, already := seen[scope.identifier]; already {
+				return status.Errorf(codes.InvalidArgument,
+					"line %d: the scope of %s is already given on line %d, and one contract has one scope line",
+					scope.line, scope.identifier, before)
+			}
+			seen[scope.identifier] = scope.line
+		}
+	}
+	return nil
+}
+
+// contractsNamed is the identifiers a step's contracts block names, one per line. A blank line names
+// nothing, so it is left out.
+func contractsNamed(step store.Step) map[string]bool {
+	named := make(map[string]bool)
+	for _, line := range strings.Split(step.Contracts, "\n") {
+		if identifier := strings.TrimSpace(line); identifier != "" {
+			named[identifier] = true
+		}
+	}
+	return named
+}
+
+// scopedContracts is the identifiers a step's scope block gives a line to, which is what the warning
+// about a contract nobody scoped is counted from.
+func scopedContracts(step store.Step) map[string]bool {
+	scoped := make(map[string]bool)
+	for _, line := range strings.Split(step.ContractScope, "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		identifier, _, _ := strings.Cut(strings.TrimSpace(line), ":")
+		scoped[strings.TrimSpace(identifier)] = true
+	}
+	return scoped
 }
 
 // resolveAfter reads what each step waits for, and gives a step that says nothing the number below
@@ -785,6 +890,36 @@ func pathWarnings(milestones []store.Milestone, steps []store.Step) []string {
 			warnings = append(warnings, fmt.Sprintf(
 				"step %d names no scenario, so krewe step check will refuse this step.", step.Number))
 		}
+		warnings = append(warnings, whatTheStepSaysAboutContracts(step)...)
+	}
+	return warnings
+}
+
+// whatTheStepSaysAboutContracts is what a path write says about the contracts a step builds. Neither
+// of these refuses the document: a contract is a string the operator wrote, and the session reads
+// the contracts document itself.
+//
+// A step naming no contract is worth saying out loud because the take then hands that session
+// nothing, and finding its own contract is the work this column exists to save.
+func whatTheStepSaysAboutContracts(step store.Step) []string {
+	named := contractsNamed(step)
+	if len(named) == 0 {
+		return []string{fmt.Sprintf(
+			"step %d names no contract, so krewe hands it none and the session has to find its own.",
+			step.Number)}
+	}
+	// In the order the document names them, so two warnings about one step read down the block the
+	// person is looking at. A map is read in no order at all.
+	scoped := scopedContracts(step)
+	var warnings []string
+	for _, line := range strings.Split(step.Contracts, "\n") {
+		identifier := strings.TrimSpace(line)
+		if identifier == "" || scoped[identifier] {
+			continue
+		}
+		warnings = append(warnings, fmt.Sprintf(
+			"step %d builds %s and says nothing about its scope. It is kept as it is.",
+			step.Number, identifier))
 	}
 	return warnings
 }
@@ -1099,7 +1234,10 @@ func (s *Server) TakeStep(ctx context.Context, req *quaycrewv1.TakeStepRequest) 
 		return nil, storeError(err, "step")
 	}
 
-	text := takeText(taken, len(steps), s.projectName(ctx, feature.GetProject()))
+	// The design was read above for the approval, and it carries the contracts document too, so the
+	// text says to read that file only when the project has one.
+	text := takeText(taken, len(steps), s.projectName(ctx, feature.GetProject()),
+		design.GetContracts() != "")
 	dispatched, err := s.Dispatch(ctx, &quaycrewv1.DispatchRequest{
 		Project: feature.GetProject(), Handle: handle, Text: text, Detach: true,
 	})
@@ -1150,7 +1288,7 @@ func whoHoldsIt(step *quaycrewv1.Step) string {
 // A block the step left empty is left out with its label, because a label with nothing under it is
 // text the model reads for nothing. The count is of the steps in the path and never of the highest
 // number, so a path running 1, 2, 5 reads "of 3".
-func takeText(step *quaycrewv1.Step, inThePath int, project string) string {
+func takeText(step *quaycrewv1.Step, inThePath int, project string, hasContracts bool) string {
 	blocks := []string{
 		fmt.Sprintf("Step %d of %d on the path for %s.", step.GetNumber(), inThePath, project),
 		step.GetTitle(),
@@ -1164,11 +1302,37 @@ func takeText(step *quaycrewv1.Step, inThePath int, project string) string {
 	if proof := proofBlock(step); proof != "" {
 		blocks = append(blocks, proof)
 	}
+	// The scoping every step brief of this project carried by hand, copied out of the graph. The
+	// system carries it now, so nobody types it and a step cannot be given the wrong part of a
+	// contract.
+	if step.GetContracts() != "" {
+		blocks = append(blocks, takeContracts+"\n"+step.GetContracts())
+	}
+	if step.GetContractScope() != "" {
+		blocks = append(blocks, labelScope+"\n"+step.GetContractScope())
+	}
 	blocks = append(blocks,
-		"The design is in "+designDir+"/"+designFile+". The whole path is in "+
-			designDir+"/"+pathFile+". Read both.",
+		whereToRead(hasContracts),
 		"Build this step only. Do not take work from another step.")
 	return strings.Join(blocks, "\n\n") + "\n"
+}
+
+// takeContracts is what the contracts block is called in the take text. The document calls it "The
+// contracts it builds", because there the step is one of many on a page. The session is given one
+// step, so the text says which step these contracts belong to.
+const takeContracts = "The contracts this step builds"
+
+// whereToRead names the files the session opens before it starts.
+//
+// The contracts document is named only when the project has one. A pointer to a file that is not
+// there sends the model to open nothing, which is what renderContracts avoids by writing no file.
+func whereToRead(hasContracts bool) string {
+	design := "The design is in " + designDir + "/" + designFile + ". "
+	path := "The whole path is in " + designDir + "/" + pathFile + ". "
+	if !hasContracts {
+		return design + path + "Read both."
+	}
+	return design + "The contracts are in " + designDir + "/" + contractsFile + ". " + path + "Read all three."
 }
 
 // proofBlock is what proves the step and the scenario that proves it, which are one block: the

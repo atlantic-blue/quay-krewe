@@ -752,6 +752,8 @@ func (m *Memory) SetPath(_ context.Context, feature string, milestones []Milesto
 			ProofScenario: step.ProofScenario,
 			After:         step.After,
 			Milestone:     step.Milestone,
+			Contracts:     step.Contracts,
+			ContractScope: step.ContractScope,
 			State:         StepReady,
 		})
 	}

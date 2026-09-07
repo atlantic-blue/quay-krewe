@@ -86,6 +86,13 @@ type Step struct {
 	// none. It is a caller's to set because it comes off the document that declares the path, beside
 	// the number and the title.
 	Milestone int32
+	// Contracts is the contracts this step builds, one identifier per line, and ContractScope is what
+	// part of each one is this step's, one line per contract reading `<identifier>: <sentence>`.
+	//
+	// The store keeps both as the caller wrote them. Whether an identifier names a contract that
+	// exists is a question about a document krewe never reads, so nothing here asks it.
+	Contracts     string
+	ContractScope string
 }
 
 // Milestone is what a caller may set about one milestone of a feature's path.
