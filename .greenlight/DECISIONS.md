@@ -372,3 +372,87 @@ definitions. Three decisions followed. Each one is accepted.
 - Status: accepted.
 - The path and the step get none. Taking a step and approving a restatement are one line each on the
   command line tool. A slash command there adds a layer and no answer.
+
+## Measured on 2026-09-07, the riskiest assumption
+
+S-5 of the path, and the gate of milestone 2. It records one measurement. It changes no code.
+
+**What was measured.**
+- Status: settled as the record of one run.
+- The project is `atlantic-blue/weft`, a new repository holding a small template engine in
+  TypeScript. The task comes from the template engine entry of build your own x.
+- The project carried a brief and an approved design of 3,926 characters, with a field level data
+  model, one feature, and a path of five steps.
+- Step one of that path: text passes through, and a name is substituted.
+- Step one was dispatched twice, on 7 September 2026. The two dispatches are A and B below.
+
+**Dispatch A, the line of text.**
+- The command:
+
+```
+krewe exec --dispatch atlantic-blue/weft "Start weft, a template engine in TypeScript. Make plain text pass through unchanged and {{ name }} render the value from the data object, with tests. Open a pull request when it is green, and do not merge it."
+```
+
+- Session `3cd83993`.
+- It opened pull request 1 on `atlantic-blue/weft`. Nine files, one commit, signature verified. The
+  pipeline job named test passed in ten seconds.
+- 120 lines across src and test. 12 tests.
+- It mutated three load bearing lines. It watched each one go red.
+- It made a missing name throw. The path gives that behaviour to step 2. It said so in its reply.
+
+**Dispatch B, the composed step.**
+- The command:
+
+```
+krewe step take atlantic-blue/weft 1.1
+```
+
+- Session `a929e249`.
+- No pull request. It built in `/home/agent/workspace`, which is not a git repository, so it
+  committed nothing.
+- 169 lines across src and test. 16 tests.
+- Typecheck exit 0. vitest reported 16 passed in 151 milliseconds.
+- A smoke run through node printed `Hello, Ada!`. It threw the unclosed tag error.
+- It mutated seven load bearing lines. It watched all seven go red.
+- It rendered the word `undefined` for a missing name. It said step 2 owns that behaviour. It stayed
+  inside its step.
+
+**The confound. The two prompts asked for different deliveries.**
+- Status: settled as an observation about the run.
+- The line of text told A to open a pull request.
+- The composed step names no repository. The CLAUDE.md a session is given names the design, the path
+  and the step number. It never names the repository.
+- So B had nowhere to put its work.
+- The difference in delivery is a fact about the two prompts. It is not only a fact about what each
+  session did with them.
+
+**Whether the assumption holds. This measurement did not test it.**
+- Status: settled as a record. The assumption stays open.
+- The assumption is about work the operator accepts.
+- The comparison as run was judged on output, and it was confounded on delivery.
+- So the measurement did not answer the question it was written to answer.
+- One step and one comparison is thin evidence.
+
+**The operator accepted A.**
+- Status: settled.
+- The operator's words:
+
+```
+b is ahead but a has structure so A has done more real work, i would keep A as we are shipping testable ans structured code
+```
+
+**The next move, in the operator's words.**
+- Status: settled.
+
+```
+the problem is the ideation and discovery phases, once we know krewe understand and has confidence on what is building with features milestones and slices we can relax the approval, you previous message said more about the work done rather than the understanding if it which is why i valued more the structure than the progress
+```
+
+**Which slices deliver that.**
+- Status: settled as a fact about the path.
+- S-16 is the session restating the step before it builds anything.
+- S-17 is the operator reading the restatement.
+- S-18 is the operator approving the restatement, and the build starting.
+- S-25 to S-28 are the trust record and the ladder that relaxes the approval once agreement is
+  earned.
+- None of these slices is built.
