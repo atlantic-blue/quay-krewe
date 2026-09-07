@@ -918,8 +918,23 @@ func (p *Postgres) SetPath(ctx context.Context, feature string, milestones []Mil
 	}
 	defer func() { _ = transaction.Rollback(ctx) }()
 
+	// The rows are read and locked inside the transaction, so a take that lands while the document is
+	// being written waits for it and is then seen by the refusal below. Read outside the transaction,
+	// that take would be deleted by the write that follows.
+	held, err := stepsForUpdate(ctx, transaction, feature)
+	if err != nil {
+		return nil, err
+	}
+	if lost := protectedSteps(held, steps); len(lost) > 0 {
+		return nil, &ProtectedStepsError{Steps: lost}
+	}
+
+	// The steps the document does not carry go, and the ones it carries are written over the rows
+	// that are there. A delete of the whole path would take the state, the session and the stamps of
+	// a protected step with it, and put it back reading ready.
 	if _, err := transaction.Exec(ctx,
-		`delete from feature_steps where feature = $1`, feature); err != nil {
+		`delete from feature_steps where feature = $1 and number <> all($2::int[])`,
+		feature, numbersOfSteps(steps)); err != nil {
 		return nil, fmt.Errorf("clear the path: %w", err)
 	}
 	// The milestones are replaced whole beside the steps. A milestone this document does not carry is
@@ -936,12 +951,25 @@ func (p *Postgres) SetPath(ctx context.Context, feature string, milestones []Mil
 			return nil, fmt.Errorf("write milestone %d: %w", milestone.Number, err)
 		}
 	}
+	// The update names the columns the document owns and no others, so the state, the session, the
+	// result and the stamps stay as the system wrote them.
 	for _, step := range steps {
 		if _, err := transaction.Exec(ctx, `
 			insert into feature_steps
 				(feature, number, title, intention, touches, proof, proof_scenario, after, milestone,
 				 contracts, contract_scope)
-			values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+			values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+			on conflict (feature, number) do update set
+				title = excluded.title,
+				intention = excluded.intention,
+				touches = excluded.touches,
+				proof = excluded.proof,
+				proof_scenario = excluded.proof_scenario,
+				after = excluded.after,
+				milestone = excluded.milestone,
+				contracts = excluded.contracts,
+				contract_scope = excluded.contract_scope,
+				updated_at = now()`,
 			feature, step.Number, step.Title, step.Intention, step.Touches, step.Proof,
 			step.ProofScenario, step.After, step.Milestone,
 			step.Contracts, step.ContractScope); err != nil {
@@ -952,6 +980,62 @@ func (p *Postgres) SetPath(ctx context.Context, feature string, milestones []Mil
 		return nil, fmt.Errorf("commit the path: %w", err)
 	}
 	return p.ListSteps(ctx, feature)
+}
+
+// stepsForUpdate is a feature's path as it stands, read inside a transaction and locked against a
+// take landing while the document is written. Only the step rows are locked: the feature, the
+// project and the workspace are joined to hide a deleted project and nothing here writes them.
+func stepsForUpdate(ctx context.Context, transaction pgx.Tx, feature string) ([]*quaycrewv1.Step, error) {
+	rows, err := transaction.Query(ctx, `
+		select `+stepColumns+` from feature_steps s
+		`+stepJoins+`
+		where s.feature = $1 and p.deleted_at is null and w.deleted_at is null
+		order by s.number
+		for update of s`, feature)
+	if err != nil {
+		return nil, fmt.Errorf("read the path: %w", err)
+	}
+	defer rows.Close()
+
+	held := make([]*quaycrewv1.Step, 0)
+	for rows.Next() {
+		step, err := scanStep(rows)
+		if err != nil {
+			return nil, fmt.Errorf("read step: %w", err)
+		}
+		held = append(held, step)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read the path: %w", err)
+	}
+	return held, nil
+}
+
+// numbersOfSteps is what the document carries, which is what the delete keeps.
+func numbersOfSteps(steps []Step) []int32 {
+	numbers := make([]int32, 0, len(steps))
+	for _, step := range steps {
+		numbers = append(numbers, step.Number)
+	}
+	return numbers
+}
+
+// ForceStepState writes a step's state word straight onto the row, and is the Postgres half of the
+// seam the memory store's own ForceStepState documents.
+func (p *Postgres) ForceStepState(ctx context.Context, feature string, number int32, state string) error {
+	if err := p.featureExists(ctx, feature); err != nil {
+		return err
+	}
+	tag, err := p.pool.Exec(ctx,
+		`update feature_steps set state = $3, updated_at = now() where feature = $1 and number = $2`,
+		feature, number, state)
+	if err != nil {
+		return fmt.Errorf("force the step state: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // featureExists says whether a feature is one a caller can reach, which is the check every step call

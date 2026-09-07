@@ -375,6 +375,43 @@ func initializePathSteps(sc *godog.ScenarioContext) {
 		return nil
 	})
 
+	// Nothing finishes a step and nothing stops one yet, so the state is written straight onto the
+	// record. The path write protects three states, and a scenario that could only reach taken would
+	// prove a third of the rule.
+	sc.Step(`^step (\d+) is recorded as (done|stopped)$`,
+		func(ctx context.Context, number int, state string) error {
+			held, err := theFeature(ctx)
+			if err != nil {
+				return err
+			}
+			forcer, carries := worldFrom(ctx).store.(stepStateForcer)
+			if !carries {
+				return fmt.Errorf("this store cannot put a step in state %q", state)
+			}
+			return forcer.ForceStepState(ctx, held.GetId(), int32(number), state)
+		})
+
+	// Read from the control plane rather than from what the last write answered, because what a
+	// refused write left behind is the question every one of these scenarios asks.
+	sc.Step(`^step (\d+) is still (ready|taken|done|stopped)$`,
+		func(ctx context.Context, number int, want string) error {
+			held, err := theFeature(ctx)
+			if err != nil {
+				return err
+			}
+			if err := readPath(ctx, held.GetId()); err != nil {
+				return err
+			}
+			step, err := stepNumbered(ctx, int32(number))
+			if err != nil {
+				return err
+			}
+			if got := step.GetState(); got != want {
+				return fmt.Errorf("step %d reads as %q, want %q", number, got, want)
+			}
+			return nil
+		})
+
 	sc.Step(`^step (\d+) is ready$`, func(ctx context.Context, number int) error {
 		step, err := stepNumbered(ctx, int32(number))
 		if err != nil {
@@ -775,6 +812,12 @@ func setPath(ctx context.Context, document string) error {
 		return err
 	}
 	return setPathOf(ctx, held.GetId(), document)
+}
+
+// stepStateForcer is the seam the two stores carry for the two states no call reaches yet. Both
+// implement it, so a scenario that cannot find it says so rather than passing quietly.
+type stepStateForcer interface {
+	ForceStepState(ctx context.Context, feature string, number int32, state string) error
 }
 
 // setPathOf writes the document to one feature and keeps what came back, so a later step reads the

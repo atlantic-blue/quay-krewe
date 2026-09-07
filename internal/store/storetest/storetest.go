@@ -2673,6 +2673,250 @@ func runPathConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 		}
 	})
 
+	// A path is a record as well as a plan. Somebody took step 2, so a document without it would put
+	// the number back in the pile and leave nothing saying the work happened.
+	t.Run("a path that drops a step somebody took is refused, naming it", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		feature := newFeature(t, s, newProject(t, s, "acme", "house-bills"), "the bills")
+		writePath(t, s, feature.GetId(),
+			store.Step{Number: 1, Title: "the first"},
+			store.Step{Number: 2, Title: "the second", After: 1},
+			store.Step{Number: 3, Title: "the third", After: 2})
+		if _, err := s.TakeStep(ctx, feature.GetId(), 2, "session-one"); err != nil {
+			t.Fatalf("TakeStep: %v", err)
+		}
+
+		_, err := s.SetPath(ctx, feature.GetId(), nil, []store.Step{
+			{Number: 1, Title: "the first"},
+			{Number: 3, Title: "the third", After: 1},
+		})
+		if !errors.Is(err, store.ErrPathHoldsTakenSteps) {
+			t.Fatalf("dropping a taken step answered %v, want ErrPathHoldsTakenSteps", err)
+		}
+		if !strings.Contains(err.Error(), "step 2") {
+			t.Fatalf("the refusal is %q, and it has to name step 2", err)
+		}
+
+		// Nothing moved. The whole write is one transaction, so a refusal is not a partial rewrite.
+		read, err := s.ListSteps(ctx, feature.GetId())
+		if err != nil {
+			t.Fatalf("ListSteps: %v", err)
+		}
+		if got := numbersOf(read); !slices.Equal(got, []int32{1, 2, 3}) {
+			t.Fatalf("the path holds steps %v after the refusal, want 1, 2 and 3", got)
+		}
+		if read[1].GetState() != store.StepTaken || read[1].GetSession() != "session-one" {
+			t.Fatalf("step 2 reads %q held by %q after the refusal, want taken by session-one",
+				read[1].GetState(), read[1].GetSession())
+		}
+	})
+
+	// The number surviving is not the record surviving. A step 2 that reads as something else is a
+	// step nobody did, and the session that took it built the title that was there.
+	t.Run("a path that renames a step somebody took is refused, naming it", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		feature := newFeature(t, s, newProject(t, s, "acme", "house-bills"), "the bills")
+		writePath(t, s, feature.GetId(),
+			store.Step{Number: 1, Title: "the first"},
+			store.Step{Number: 2, Title: "the second", After: 1})
+		if _, err := s.TakeStep(ctx, feature.GetId(), 2, "session-one"); err != nil {
+			t.Fatalf("TakeStep: %v", err)
+		}
+
+		_, err := s.SetPath(ctx, feature.GetId(), nil, []store.Step{
+			{Number: 1, Title: "the first"},
+			{Number: 2, Title: "something else entirely", After: 1},
+		})
+		if !errors.Is(err, store.ErrPathHoldsTakenSteps) {
+			t.Fatalf("renaming a taken step answered %v, want ErrPathHoldsTakenSteps", err)
+		}
+		if !strings.Contains(err.Error(), "step 2") {
+			t.Fatalf("the refusal is %q, and it has to name step 2", err)
+		}
+		read, err := s.GetStep(ctx, feature.GetId(), 2)
+		if err != nil {
+			t.Fatalf("GetStep: %v", err)
+		}
+		if read.GetTitle() != "the second" {
+			t.Fatalf("step 2 is titled %q after the refusal, want the title it was taken under", read.GetTitle())
+		}
+	})
+
+	// Three states are protected, not one. A finished step dropped from a rewrite loses the record of
+	// work that actually happened, which is the whole reason for the rule.
+	for _, state := range []string{store.StepDone, store.StepStopped} {
+		t.Run("a path that drops a "+state+" step is refused, naming it", func(t *testing.T) {
+			s := newDataset(t)(t)
+			ctx := context.Background()
+			feature := newFeature(t, s, newProject(t, s, "acme", "house-bills"), "the bills")
+			writePath(t, s, feature.GetId(),
+				store.Step{Number: 1, Title: "the first"},
+				store.Step{Number: 2, Title: "the second", After: 1})
+			forceStepState(t, s, feature.GetId(), 2, state)
+
+			_, err := s.SetPath(ctx, feature.GetId(), nil, []store.Step{{Number: 1, Title: "the first"}})
+			if !errors.Is(err, store.ErrPathHoldsTakenSteps) {
+				t.Fatalf("dropping a %s step answered %v, want ErrPathHoldsTakenSteps", state, err)
+			}
+			if !strings.Contains(err.Error(), "step 2") || !strings.Contains(err.Error(), state) {
+				t.Fatalf("the refusal is %q, and it has to name step 2 and the state %q", err, state)
+			}
+			read, err := s.ListSteps(ctx, feature.GetId())
+			if err != nil {
+				t.Fatalf("ListSteps: %v", err)
+			}
+			if got := numbersOf(read); !slices.Equal(got, []int32{1, 2}) {
+				t.Fatalf("the path holds steps %v after the refusal, want 1 and 2", got)
+			}
+		})
+	}
+
+	// Every protected step, not the first of them. A refusal naming one of two sends the operator
+	// back to write the document a second time.
+	t.Run("the refusal names every protected step the document would lose", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		feature := newFeature(t, s, newProject(t, s, "acme", "house-bills"), "the bills")
+		writePath(t, s, feature.GetId(),
+			store.Step{Number: 1, Title: "the first"},
+			store.Step{Number: 2, Title: "the second", After: 1},
+			store.Step{Number: 3, Title: "the third", After: 2})
+		if _, err := s.TakeStep(ctx, feature.GetId(), 3, "session-one"); err != nil {
+			t.Fatalf("TakeStep: %v", err)
+		}
+		forceStepState(t, s, feature.GetId(), 1, store.StepDone)
+
+		_, err := s.SetPath(ctx, feature.GetId(), nil, []store.Step{{Number: 2, Title: "the second"}})
+		if !errors.Is(err, store.ErrPathHoldsTakenSteps) {
+			t.Fatalf("dropping two protected steps answered %v, want ErrPathHoldsTakenSteps", err)
+		}
+		for _, want := range []string{"step 1", "step 3"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Fatalf("the refusal is %q, and it has to name %s", err, want)
+			}
+		}
+	})
+
+	// A refused write is one transaction, and the transaction covers the feature it names. Another
+	// feature of the same project is untouched in every case, this one included.
+	t.Run("a refused path leaves another feature of the same project whole", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		project := newProject(t, s, "acme", "house-bills")
+		first := newFeature(t, s, project, "authentication")
+		second := newFeature(t, s, project, "payment")
+		writePath(t, s, first.GetId(),
+			store.Step{Number: 1, Title: "sign up"},
+			store.Step{Number: 2, Title: "sign in", After: 1})
+		writePath(t, s, second.GetId(), store.Step{Number: 1, Title: "checkout"})
+		if _, err := s.TakeStep(ctx, first.GetId(), 2, "session-one"); err != nil {
+			t.Fatalf("TakeStep: %v", err)
+		}
+
+		if _, err := s.SetPath(ctx, first.GetId(), nil, []store.Step{
+			{Number: 1, Title: "sign up"},
+		}); !errors.Is(err, store.ErrPathHoldsTakenSteps) {
+			t.Fatalf("dropping a taken step answered %v, want ErrPathHoldsTakenSteps", err)
+		}
+
+		read, err := s.ListSteps(ctx, second.GetId())
+		if err != nil {
+			t.Fatalf("ListSteps for payment: %v", err)
+		}
+		if len(read) != 1 || read[0].GetTitle() != "checkout" {
+			t.Fatalf("payment holds %d steps after the refusal, and the first is %q", len(read), read[0].GetTitle())
+		}
+	})
+
+	// The rule protects the record and never the path. A ready step is replaced whole, or a document
+	// could not be corrected once anything under it moved.
+	t.Run("a path that drops a ready step goes", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		feature := newFeature(t, s, newProject(t, s, "acme", "house-bills"), "the bills")
+		writePath(t, s, feature.GetId(),
+			store.Step{Number: 1, Title: "the first"},
+			store.Step{Number: 2, Title: "the second", After: 1},
+			store.Step{Number: 3, Title: "the third", After: 2})
+
+		written, err := s.SetPath(ctx, feature.GetId(), nil, []store.Step{
+			{Number: 1, Title: "the first"},
+			{Number: 3, Title: "the third", After: 1},
+		})
+		if err != nil {
+			t.Fatalf("dropping a ready step: %v", err)
+		}
+		if got := numbersOf(written); !slices.Equal(got, []int32{1, 3}) {
+			t.Fatalf("the rewritten path holds steps %v, want 1 and 3", got)
+		}
+	})
+
+	// The correction the rule has to leave possible: the step before this one stopped, so it waits
+	// for something else now.
+	t.Run("changing after on a ready step moves it past a stopped step", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		feature := newFeature(t, s, newProject(t, s, "acme", "house-bills"), "the bills")
+		writePath(t, s, feature.GetId(),
+			store.Step{Number: 1, Title: "the first"},
+			store.Step{Number: 2, Title: "the second", After: 1},
+			store.Step{Number: 3, Title: "the third", After: 2})
+		forceStepState(t, s, feature.GetId(), 2, store.StepStopped)
+
+		written, err := s.SetPath(ctx, feature.GetId(), nil, []store.Step{
+			{Number: 1, Title: "the first"},
+			{Number: 2, Title: "the second", After: 1},
+			{Number: 3, Title: "the third", After: 1},
+		})
+		if err != nil {
+			t.Fatalf("moving a ready step past a stopped one: %v", err)
+		}
+		if written[2].GetAfter() != 1 {
+			t.Fatalf("step 3 waits for step %d, want 1", written[2].GetAfter())
+		}
+		if written[1].GetState() != store.StepStopped {
+			t.Fatalf("step 2 reads %q, want it left stopped", written[1].GetState())
+		}
+	})
+
+	// The other half of the protection. A step the document keeps takes the document's words and
+	// keeps the record: a rewrite that put a taken step back to ready would lose it just as surely as
+	// dropping the step.
+	t.Run("a step somebody took keeps its record and takes the document's words", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		feature := newFeature(t, s, newProject(t, s, "acme", "house-bills"), "the bills")
+		writePath(t, s, feature.GetId(),
+			store.Step{Number: 1, Title: "the first"},
+			store.Step{Number: 2, Title: "the second", Intention: "as written", After: 1})
+		taken, err := s.TakeStep(ctx, feature.GetId(), 2, "session-one")
+		if err != nil {
+			t.Fatalf("TakeStep: %v", err)
+		}
+
+		written, err := s.SetPath(ctx, feature.GetId(), nil, []store.Step{
+			{Number: 1, Title: "the first"},
+			{Number: 2, Title: "the second", Intention: "as rewritten", After: 1, Touches: "one.go"},
+		})
+		if err != nil {
+			t.Fatalf("rewriting a path around a taken step: %v", err)
+		}
+		if written[1].GetState() != store.StepTaken || written[1].GetSession() != "session-one" {
+			t.Fatalf("step 2 reads %q held by %q, want taken by session-one",
+				written[1].GetState(), written[1].GetSession())
+		}
+		if !written[1].GetTakenAt().AsTime().Equal(taken.GetTakenAt().AsTime()) {
+			t.Fatalf("step 2 was taken at %v, and the rewrite moved it to %v",
+				taken.GetTakenAt().AsTime(), written[1].GetTakenAt().AsTime())
+		}
+		if written[1].GetIntention() != "as rewritten" || written[1].GetTouches() != "one.go" {
+			t.Fatalf("step 2 says its intention is %q and it touches %q, want the document's words",
+				written[1].GetIntention(), written[1].GetTouches())
+		}
+	})
+
 	// The whole reason the key moved down to the feature. Keyed by the project, the second write
 	// wiped the first, so a project could only ever be building one thing.
 	t.Run("setting one feature's path leaves another feature's path whole", func(t *testing.T) {
@@ -2797,6 +3041,33 @@ func numbersOf(steps []*quaycrewv1.Step) []int32 {
 		numbers = append(numbers, step.GetNumber())
 	}
 	return numbers
+}
+
+// writePath writes a path and fails the test if the write is refused, so a scenario about the write
+// under test does not carry the setup's error handling.
+func writePath(t *testing.T, s store.Store, feature string, steps ...store.Step) {
+	t.Helper()
+	if _, err := s.SetPath(context.Background(), feature, nil, steps); err != nil {
+		t.Fatalf("SetPath: %v", err)
+	}
+}
+
+// stepStateForcer is the seam both stores carry for the two states no call reaches yet. It is
+// asserted rather than skipped: a store without it would silently drop every done and stopped case
+// here, and a suite that runs nothing reads exactly like one that passes.
+type stepStateForcer interface {
+	ForceStepState(ctx context.Context, feature string, number int32, state string) error
+}
+
+func forceStepState(t *testing.T, s store.Store, feature string, number int32, state string) {
+	t.Helper()
+	forcer, carries := s.(stepStateForcer)
+	if !carries {
+		t.Fatalf("%T cannot put a step in state %q, so the protection is proved for taken alone", s, state)
+	}
+	if err := forcer.ForceStepState(context.Background(), feature, number, state); err != nil {
+		t.Fatalf("ForceStepState: %v", err)
+	}
 }
 
 // newFeature gives a project one narrowed part of itself, which is what a path hangs off.
