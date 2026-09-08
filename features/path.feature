@@ -21,6 +21,11 @@ Feature: A project holds a numbered path of steps
   under it belongs to it, so a reader sees what a run of steps adds up to. Step numbers stay unique
   across the whole feature and do not start again under each milestone.
 
+  A step that is taken, done or stopped is protected. A document that drops one of those numbers, or
+  holds it under another title, is refused and writes nothing. The refusal names every protected step
+  it found. A path is a record as well as a plan, and a rewrite that dropped a step somebody worked on
+  would take that record away. A ready step is replaced whole, so a path can still be corrected.
+
   There is no way to empty a path. A document with no step heading is refused, so a wrong file path
   cannot take somebody's path away.
 
@@ -675,6 +680,194 @@ Feature: A project holds a numbered path of steps
     Then the path holds 2 steps
     And the path reads 1, 2 in that order
     And step 1 is titled "Sign up"
+
+  # A path is a plan and it is a record. Somebody took step 2, so a document without it puts that
+  # number back in the pile and leaves nothing saying the work happened.
+  Scenario: A path that drops a step somebody took is refused, naming the step
+    Given the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+      ## 2. The store holds a project's design
+      ## 3. The command line reads it back
+      """
+    And the operator took step 2
+    When the operator sets the path to:
+      """
+      ## 1. The store holds a project's brief
+      ## 3. The command line reads it back
+      """
+    Then the control plane refuses it as the wrong state
+    And the refusal suggests "step 2 is taken"
+    And the refusal suggests "keep those numbers in the document"
+
+  # Three states are protected, not one. A step that is done holds the record of work that finished,
+  # and a document that drops it takes that record away.
+  #
+  # Nothing finishes a step and nothing stops one yet, so these two scenarios write the state onto
+  # the record directly. The call that finishes a step writes the same word.
+  Scenario: A path that drops a step somebody finished is refused, naming the step
+    Given the project's path is:
+      """
+      ## 1. The store holds a project's brief
+      ## 2. The store holds a project's design
+      """
+    And step 2 is recorded as done
+    When the operator sets the path to:
+      """
+      ## 1. The store holds a project's brief
+      """
+    Then the control plane refuses it as the wrong state
+    And the refusal suggests "step 2 is done"
+
+  Scenario: A path that drops a step somebody stopped is refused, naming the step
+    Given the project's path is:
+      """
+      ## 1. The store holds a project's brief
+      ## 2. The store holds a project's design
+      """
+    And step 2 is recorded as stopped
+    When the operator sets the path to:
+      """
+      ## 1. The store holds a project's brief
+      """
+    Then the control plane refuses it as the wrong state
+    And the refusal suggests "step 2 is stopped"
+
+  # The number surviving is not the record surviving. A step 2 that reads as something else is a step
+  # nobody did, and the session that took it built the title that was there.
+  Scenario: A path that renames a step somebody took is refused, naming the step
+    Given the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+      ## 2. The store holds a project's design
+      """
+    And the operator took step 2
+    When the operator sets the path to:
+      """
+      ## 1. The store holds a project's brief
+      ## 2. Something else entirely
+      """
+    Then the control plane refuses it as the wrong state
+    And the refusal suggests "step 2 is taken"
+
+  # A refusal naming one of two sends the operator back to write the document a second time.
+  Scenario: The refusal names every protected step the document would lose
+    Given the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+      ## 2. The store holds a project's design
+      ## 3. The command line reads it back
+      """
+    And the operator took step 3
+    And step 1 is recorded as done
+    When the operator sets the path to:
+      """
+      ## 2. The store holds a project's design
+
+      After
+      """
+    Then the control plane refuses it as the wrong state
+    And the refusal suggests "step 1 is done"
+    And the refusal suggests "step 3 is taken"
+
+  # The rule protects the record and never the path. A ready step is replaced whole, or a document
+  # could not be corrected once anything under it moved.
+  Scenario: A path that drops a ready step goes
+    Given the project's path is:
+      """
+      ## 1. The store holds a project's brief
+      ## 2. The store holds a project's design
+      ## 3. The command line reads it back
+      """
+    When the operator sets the path to:
+      """
+      ## 1. The store holds a project's brief
+      ## 3. The command line reads it back
+      """
+    And the operator reads the path
+    Then the path holds 2 steps
+    And the path reads 1, 3 in that order
+
+  # The correction the rule has to leave possible. The step before this one stopped, so it waits for
+  # something else now.
+  Scenario: Changing After on a ready step moves it past a stopped step
+    Given the project's path is:
+      """
+      ## 1. The store holds a project's brief
+      ## 2. The store holds a project's design
+      ## 3. The command line reads it back
+      """
+    And step 2 is recorded as stopped
+    When the operator sets the path to:
+      """
+      ## 1. The store holds a project's brief
+      ## 2. The store holds a project's design
+      ## 3. The command line reads it back
+
+      After
+      1
+      """
+    And the operator reads the path
+    Then step 3 waits for step 1
+    And step 2 is still stopped
+
+  # The whole write is one transaction, so a refusal is not a partial rewrite. Step 3 is in the
+  # document and step 1 is not, and neither of them moves.
+  Scenario: A refused write leaves the whole path exactly as it was
+    Given the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+      ## 2. The store holds a project's design
+      ## 3. The command line reads it back
+      """
+    And the operator took step 2
+    When the operator sets the path to:
+      """
+      ## 3. The command line reads it back, rewritten
+
+      After
+      """
+    Then the control plane refuses it as the wrong state
+    And the operator reads the path
+    And the path holds 3 steps
+    And the path reads 1, 2, 3 in that order
+    And step 1 is titled "The store holds a project's brief"
+    And step 3 is titled "The command line reads it back"
+    And step 2 is still taken
+
+  # A write names one feature, and a refused write names it too. The other feature of the project
+  # never enters the transaction.
+  Scenario: A refused write leaves the path of another feature of the same project whole
+    Given the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And the project's feature "authentication"
+    And the project's feature "payment"
+    And the operator sets the path of feature 1 to:
+      """
+      ## 1. Sign up
+      ## 2. Sign in
+      """
+    And the operator sets the path of feature 2 to:
+      """
+      ## 1. Checkout
+      """
+    And the operator took step 2 of feature 1
+    When the operator sets the path of feature 1 to:
+      """
+      ## 1. Sign up
+      """
+    Then the control plane refuses it as the wrong state
+    And the operator reads the path of feature 2
+    And the path holds 1 steps
+    And step 1 is titled "Checkout"
 
   # Step 3 of one feature and step 3 of another are two steps. Keyed by the project they were one,
   # and a project could not run two features at once without them colliding.

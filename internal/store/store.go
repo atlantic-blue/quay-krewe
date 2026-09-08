@@ -15,7 +15,10 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
+	"slices"
 	"sort"
+	"strings"
 	"time"
 
 	quaycrewv1 "github.com/atlantic-blue/quay-krewe/gen/quaycrew/v1"
@@ -68,6 +71,93 @@ var ErrSessionHoldsAnExec = errors.New("store: the session holds an exec that is
 // the state followed by a write would let two callers both take one step, and each would be told a
 // session holds it that is not the session it started.
 var ErrStepNotReady = errors.New("store: the step is not ready to be taken")
+
+// ErrPathHoldsTakenSteps is returned when a path write drops or renames a step that is taken, done
+// or stopped. A ProtectedStepsError carries the numbers and answers errors.Is for this.
+//
+// The read of the states and the write are one transaction, for the reason ErrNothingToApprove is
+// one statement: a take that landed between a read and a write would be deleted by the write, and
+// the record of the work would go with it.
+var ErrPathHoldsTakenSteps = errors.New("store: the path drops or renames a step somebody took")
+
+// StepDone is the state a step moves to when the work in it is finished, and StepStopped the state
+// it moves to when somebody abandons it. They are here for the reason StepReady is: a path write
+// reads the word to decide whether the step is protected, so both stores must read the same word.
+const (
+	StepDone    = "done"
+	StepStopped = "stopped"
+)
+
+// protectedStepStates are the three states that hold a record of work. A step in one of them was
+// taken by somebody, so a document that drops or renames it takes that record away.
+//
+// Ready is not one of them. Every ready step is replaced whole, or a path could never be corrected.
+func protectedStepStates() []string { return []string{StepTaken, StepDone, StepStopped} }
+
+// ProtectedStep is one step a path write would have lost, and the state that protects it.
+type ProtectedStep struct {
+	Number int32
+	State  string
+}
+
+// ProtectedStepsError names every protected step one path write would have dropped or renamed. It
+// carries all of them rather than the first, because a document that lost two steps sends the
+// operator back twice when the refusal names one.
+type ProtectedStepsError struct {
+	// Steps are the protected steps, in number order.
+	Steps []ProtectedStep
+}
+
+func (e *ProtectedStepsError) Error() string {
+	said := make([]string, 0, len(e.Steps))
+	for _, step := range e.Steps {
+		said = append(said, fmt.Sprintf("step %d is %s", step.Number, step.State))
+	}
+	return ErrPathHoldsTakenSteps.Error() + ": " + strings.Join(said, ", ")
+}
+
+// Is makes errors.Is(err, ErrPathHoldsTakenSteps) answer, so a caller that only wants to know which
+// rule refused the write does not have to unwrap the numbers.
+func (e *ProtectedStepsError) Is(target error) bool { return target == ErrPathHoldsTakenSteps }
+
+// protectedSteps names the steps of the path as it stands that the incoming document would drop or
+// rename, in number order.
+//
+// A step is dropped when the document holds no step of that number, and renamed when it holds that
+// number under a different title. Both take the record away: the number then names work nobody did,
+// and a session reading the path is told to build something else under it.
+func protectedSteps(held []*quaycrewv1.Step, incoming []Step) []ProtectedStep {
+	titles := make(map[int32]string, len(incoming))
+	for _, step := range incoming {
+		titles[step.Number] = step.Title
+	}
+	lost := make([]ProtectedStep, 0)
+	for _, step := range held {
+		if !slices.Contains(protectedStepStates(), step.GetState()) {
+			continue
+		}
+		if title, kept := titles[step.GetNumber()]; kept && title == step.GetTitle() {
+			continue
+		}
+		lost = append(lost, ProtectedStep{Number: step.GetNumber(), State: step.GetState()})
+	}
+	sort.Slice(lost, func(i, j int) bool { return lost[i].Number < lost[j].Number })
+	return lost
+}
+
+// keepTheRecord carries what the system owns from the step as it stands onto the step the document
+// declares: the state, the session that took it, the result and the stamps.
+//
+// The document is what a caller may set, and none of these are on it. A write that took them from
+// the document would let somebody declare work that never happened, and one that left them behind
+// would lose the work that did.
+func keepTheRecord(writing, held *quaycrewv1.Step) {
+	writing.State = held.GetState()
+	writing.Session = held.GetSession()
+	writing.Result = held.GetResult()
+	writing.TakenAt = held.GetTakenAt()
+	writing.FinishedAt = held.GetFinishedAt()
+}
 
 // Step is what a caller may set about one step of a path.
 //
@@ -358,6 +448,12 @@ type Store interface {
 	//
 	// The milestones and the steps are written in one transaction, from the one document that
 	// declares both. Writing them apart would let a step name a milestone the same write dropped.
+	//
+	// A step that is taken, done or stopped is protected: a document that drops it, or holds its
+	// number under another title, is refused as ErrPathHoldsTakenSteps and writes nothing. A
+	// protected step the document keeps takes its title, intention, touches, proof, scenario,
+	// milestone and contracts from the document, and keeps the state, the session, the result and
+	// the stamps the system wrote on it.
 	SetPath(ctx context.Context, feature string, milestones []Milestone, steps []Step) ([]*quaycrewv1.Step, error)
 	// ListSteps returns a feature's path in number order, or every feature's when the identifier is
 	// empty, ordered by feature and then by number. A feature with no path is an empty slice and not

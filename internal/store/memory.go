@@ -715,7 +715,12 @@ func copyDesign(design *quaycrewv1.Design) *quaycrewv1.Design {
 // never written. Keyed by the project, this call wiped every path of it.
 //
 // The state word is written here rather than left absent, because Postgres writes it from the
-// column's own default and the two stores have to answer the same thing about a fresh step.
+// column's own default and the two stores have to answer the same thing about a fresh step. A step
+// that already carries a state keeps it, along with the rest of the record the system wrote on it.
+//
+// The refusal is read under the same lock as the write, because Postgres reads the states inside the
+// transaction that replaces them and the two stores have to answer the same thing to a caller
+// rewriting a path while somebody takes a step of it.
 func (m *Memory) SetPath(_ context.Context, feature string, milestones []Milestone, steps []Step) (
 	[]*quaycrewv1.Step, error) {
 	m.mu.Lock()
@@ -740,9 +745,14 @@ func (m *Memory) SetPath(_ context.Context, feature string, milestones []Milesto
 	}
 	sort.SliceStable(grouped, func(i, j int) bool { return grouped[i].GetNumber() < grouped[j].GetNumber() })
 
+	held := m.steps[feature]
+	if lost := protectedSteps(held, steps); len(lost) > 0 {
+		return nil, &ProtectedStepsError{Steps: lost}
+	}
+
 	written := make([]*quaycrewv1.Step, 0, len(steps))
 	for _, step := range steps {
-		written = append(written, &quaycrewv1.Step{
+		writing := &quaycrewv1.Step{
 			Feature:       feature,
 			Number:        step.Number,
 			Title:         step.Title,
@@ -755,7 +765,11 @@ func (m *Memory) SetPath(_ context.Context, feature string, milestones []Milesto
 			Contracts:     step.Contracts,
 			ContractScope: step.ContractScope,
 			State:         StepReady,
-		})
+		}
+		if was, err := m.stepLocked(feature, step.Number); err == nil {
+			keepTheRecord(writing, was)
+		}
+		written = append(written, writing)
 	}
 	sort.SliceStable(written, func(i, j int) bool { return written[i].GetNumber() < written[j].GetNumber() })
 	// Both maps are written under the one lock, because Postgres writes both in one transaction and
@@ -853,6 +867,29 @@ func (m *Memory) TakeStep(_ context.Context, feature string, number int32, sessi
 	held.Session = session
 	held.TakenAt = timestamppb.New(time.Now().UTC())
 	return proto.Clone(held).(*quaycrewv1.Step), nil
+}
+
+// ForceStepState writes a step's state word straight onto the row.
+//
+// Nothing finishes a step and nothing stops one yet, so done and stopped are states the column
+// carries and no call reaches. A path write protects a step in either of them, and a test that
+// cannot stand one up proves the protection for taken alone. This is what stands one up, and the
+// calls that finish and stop a step replace it.
+//
+// It is on the two stores rather than on Store, because it is not a capability the control plane
+// has: a state is moved by the call that does the work, never by asking for the word.
+func (m *Memory) ForceStepState(_ context.Context, feature string, number int32, state string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, err := m.featureLocked(feature); err != nil {
+		return err
+	}
+	held, err := m.stepLocked(feature, number)
+	if err != nil {
+		return err
+	}
+	held.State = state
+	return nil
 }
 
 // stepLocked is one step of a feature's path, or ErrNotFound. The caller holds the lock.

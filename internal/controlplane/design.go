@@ -960,6 +960,10 @@ func (s *Server) SetPath(ctx context.Context, req *quaycrewv1.SetPathRequest) (*
 		return nil, err
 	}
 	written, err := s.store.SetPath(ctx, req.GetFeature(), milestones, steps)
+	var protected *store.ProtectedStepsError
+	if errors.As(err, &protected) {
+		return nil, status.Error(codes.FailedPrecondition, keepTheSteps(protected.Steps))
+	}
 	if err != nil {
 		return nil, storeError(err, "feature")
 	}
@@ -1259,6 +1263,21 @@ func stepNumbered(steps []*quaycrewv1.Step, number int32) *quaycrewv1.Step {
 		}
 	}
 	return nil
+}
+
+// keepTheSteps is the refusal for a document that would drop or rename a step somebody worked on.
+//
+// It names every protected step and the state each one is in, because the operator's next move is to
+// put those numbers back under the titles they have, and a refusal naming one of two sends them back
+// to write the document twice.
+func keepTheSteps(steps []store.ProtectedStep) string {
+	said := make([]string, 0, len(steps))
+	for _, step := range steps {
+		said = append(said, fmt.Sprintf("step %d is %s", step.Number, step.State))
+	}
+	return strings.Join(said, ", ") +
+		". this document drops or renames them, and that takes away the record of the work. " +
+		"keep those numbers in the document, with the titles they have."
 }
 
 // noSuchStep says how many steps the path has, because a number that is one past the end and a
