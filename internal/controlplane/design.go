@@ -1109,9 +1109,10 @@ const (
 	noMilestone        = "no milestone"
 )
 
-// stepBlock is one step: its heading, where it sits, and the blocks the operator wrote under it, in
-// the words they set. A block they left empty is left out rather than written as a bare label,
-// because a label with nothing under it costs a read and answers nothing.
+// stepBlock is one step: its heading, where it sits, what came of it once somebody closed it, and the
+// blocks the operator wrote under it, in the words they set. A block they left empty is left out
+// rather than written as a bare label, because a label with nothing under it costs a read and
+// answers nothing.
 //
 // The milestone line says what the heading above it says. A session opens this file at its own step
 // and reads down, not from the top, so a block that named no milestone would leave the reader
@@ -1121,6 +1122,12 @@ func stepBlock(step *quaycrewv1.Step, milestone string) string {
 		fmt.Sprintf("### %d. %s", step.GetNumber(), step.GetTitle()),
 		"milestone: " + milestone,
 		"state: " + step.GetState(),
+	}
+	// What came of a finished step, under its state. This is what makes a session start from what is
+	// true: a session on step 4 reads what steps 1 to 3 produced. Nothing can see inside a container,
+	// so this line is what somebody wrote and there is nothing else to write.
+	if step.GetResult() != "" {
+		lines = append(lines, "result: "+step.GetResult())
 	}
 	for _, block := range []struct {
 		label string
@@ -1253,6 +1260,56 @@ func (s *Server) TakeStep(ctx context.Context, req *quaycrewv1.TakeStepRequest) 
 		return nil, storeError(err, "session")
 	}
 	return &quaycrewv1.TakeStepResponse{Step: taken, Session: started, Text: text}, nil
+}
+
+// closedByOperator is who spoke the word on this call. Krewe closes a step through its own check, and
+// that call writes the other word.
+const closedByOperator = "operator"
+
+// stepFinishStates are the two ways a step ends, in the order the refusal names them.
+func stepFinishStates() []string { return []string{stepDone, stepStopped} }
+
+// FinishStep records what came of one step: the word that closes it, and what somebody wrote.
+//
+// The result is required, and that is the whole point of the call. Nothing can see inside a
+// container, so what somebody wrote is all the next session gets: a step marked done with no result
+// tells it nothing. An unknown word is refused rather than stored, the way an unknown permission mode
+// already is, so one layer owns the two words a step ends with.
+//
+// Nothing dispatches, stops or reclaims a session as a consequence. The step and the session that
+// took it are separate records, and the row still says who took it after the write.
+func (s *Server) FinishStep(ctx context.Context, req *quaycrewv1.FinishStepRequest) (*quaycrewv1.FinishStepResponse, error) {
+	if req.GetFeature() == "" {
+		return nil, status.Error(codes.InvalidArgument, "which feature: a step belongs to one, so say its number")
+	}
+	if req.GetNumber() < 1 {
+		return nil, status.Error(codes.InvalidArgument, "a step number counts from one")
+	}
+	if !slices.Contains(stepFinishStates(), req.GetState()) {
+		return nil, status.Errorf(codes.InvalidArgument,
+			"%q is not a way to finish a step: use %s or %s", req.GetState(), stepDone, stepStopped)
+	}
+	if req.GetResult() == "" {
+		return nil, status.Error(codes.InvalidArgument,
+			"say what came of it, because nothing can see inside the container")
+	}
+
+	// The whole path, so a number nobody wrote is refused with how many steps there are rather than
+	// with a bare not found. It is the read the take already does, for the same reason.
+	steps, err := s.store.ListSteps(ctx, req.GetFeature())
+	if err != nil {
+		return nil, storeError(err, "feature")
+	}
+	if stepNumbered(steps, req.GetNumber()) == nil {
+		return nil, noSuchStep(req.GetNumber(), len(steps))
+	}
+	written, err := s.store.FinishStep(ctx, req.GetFeature(), req.GetNumber(), store.Finish{
+		State: req.GetState(), Result: req.GetResult(), ClosedBy: closedByOperator,
+	})
+	if err != nil {
+		return nil, storeError(err, "step")
+	}
+	return &quaycrewv1.FinishStepResponse{Step: written}, nil
 }
 
 // stepNumbered is the step of that number, and nil when the path holds none.

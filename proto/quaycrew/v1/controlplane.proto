@@ -669,6 +669,12 @@ message Step {
   // proof_scenario is the exact name of the scenario that proves it, as the feature file writes it.
   // This is what krewe runs.
   string proof_scenario = 13;
+  // closed_by is who spoke the word that finished the step: operator, or krewe. It is empty while the
+  // step is ready or taken.
+  //
+  // The number is 22 rather than 14 because the fields between them belong to the restatement and to
+  // the proof result, which reach the wire later.
+  string closed_by = 22;
   // milestone is which milestone of the feature this step belongs to. Zero means the step belongs to
   // no milestone, and zero is never a milestone row.
   //
@@ -745,6 +751,22 @@ message TakeStepResponse {
   Session session = 2;
   string text = 3;
   repeated string warnings = 4;
+}
+
+// FinishStepRequest records what came of one step of a feature's path.
+//
+// state is done or stopped, and nothing else. result is what came of the step, or why it stopped, and
+// it is required: nothing can see inside a container, so what somebody wrote is all the next session
+// has.
+message FinishStepRequest {
+  string feature = 1;
+  int32 number = 2;
+  string state = 3;
+  string result = 4;
+}
+// FinishStepResponse is the step after the write.
+message FinishStepResponse {
+  Step step = 1;
 }
 
 // Feature is one narrowed part of a project. A project delivers several at the same time, each with
@@ -1309,6 +1331,10 @@ service ControlPlaneService {
   // The refusal an unapproved design earns is the gate, and it is on the operator's own command as
   // much as on this one.
   rpc TakeStep(TakeStepRequest) returns (TakeStepResponse);
+
+  // Recording what came of a step: done, or stopped, and what somebody wrote about it. It touches no
+  // session, because the step and the session that took it are separate records.
+  rpc FinishStep(FinishStepRequest) returns (FinishStepResponse);
 
   // The narrowed parts of a project. The driver may call all three: a design session reads what
   // features exist and names the ones it is about to write paths for, and naming one grants it

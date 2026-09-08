@@ -15,11 +15,16 @@ import (
 // The tool composes none of the text a session is given. It sends the feature and the number, and
 // prints what came back, so the console and the command line ask for the same words.
 
-const stepUsage = "usage: krewe step take [<address>] <feature>.<number>"
+const stepUsage = "usage: krewe step take [<address>] <feature>.<number>" +
+	"\n       krewe step done [<address>] <feature>.<number> \"<result>\"" +
+	"\n       krewe step stop [<address>] <feature>.<number> \"<reason>\""
 
 func runStep(ctx context.Context, client quaycrewv1.ControlPlaneServiceClient, args []string, out io.Writer) error {
 	if len(args) > 0 && args[0] == "take" {
 		return runStepTake(ctx, client, args[1:], out)
+	}
+	if len(args) > 0 && (args[0] == "done" || args[0] == "stop") {
+		return runStepFinish(ctx, client, args[0], args[1:], out)
 	}
 	return fmt.Errorf("%s", stepUsage)
 }
@@ -65,6 +70,68 @@ func runStepTake(ctx context.Context, client quaycrewv1.ControlPlaneServiceClien
 	fmt.Fprintf(out, "it was asked to:\n\n%s\n", strings.TrimRight(resp.GetText(), "\n"))
 	sayWarnings(out, resp.GetWarnings())
 	return nil
+}
+
+// runStepFinish records what came of a step: done, or stopped, and what somebody wrote about it.
+//
+// The two words take the same arguments in the same order, so the two are one thing to learn. With
+// two arguments they are the step and the result, and with three the first is the address, which is
+// the shape krewe step take already has.
+//
+// The result is required, and the control plane refuses an empty one: nothing can see inside a
+// container, so what somebody wrote is all the next session reads.
+//
+// A stop runs no check and refuses no unchecked step. It is how a step nobody will finish ends.
+func runStepFinish(ctx context.Context, client quaycrewv1.ControlPlaneServiceClient,
+	word string, args []string, out io.Writer) error {
+	usage := fmt.Sprintf("usage: krewe step %s [<address>] <feature>.<number> %q", word, whatItAsksFor(word))
+	if len(args) < 2 || len(args) > 3 {
+		return fmt.Errorf("%s", usage)
+	}
+	typed, said, text := "", args[0], args[1]
+	if len(args) == 3 {
+		typed, said, text = args[0], args[1], args[2]
+	}
+	located, err := designProject(ctx, client, typed)
+	if err != nil {
+		return err
+	}
+	features, err := featuresOf(ctx, client, located.ProjectID)
+	if err != nil {
+		return err
+	}
+	held, number, err := stepAddressed(said, features, located.Path.Project)
+	if err != nil {
+		return err
+	}
+	resp, err := client.FinishStep(ctx, &quaycrewv1.FinishStepRequest{
+		Feature: held.GetId(), Number: number, State: stateOfStepWord(word), Result: text,
+	})
+	if err != nil {
+		return fmt.Errorf("%w\n\nnothing was written", err)
+	}
+	step := resp.GetStep()
+	fmt.Fprintf(out, "step %d.%d of %s is %s: %s\n",
+		held.GetNumber(), step.GetNumber(), located.Path.Project, step.GetState(), step.GetResult())
+	return nil
+}
+
+// stateOfStepWord is the state word the typed word writes. Done is its own word, and stop writes
+// stopped, the way krewe feature stop does.
+func stateOfStepWord(word string) string {
+	if word == "stop" {
+		return "stopped"
+	}
+	return word
+}
+
+// whatItAsksFor is what the last argument of each word is called in its usage line: a step that
+// finished produced something, and a step that stopped has a reason.
+func whatItAsksFor(word string) string {
+	if word == "stop" {
+		return "<reason>"
+	}
+	return "<result>"
 }
 
 // stepAddressed reads a step token, `<feature>.<number>`, into the feature it names and the number

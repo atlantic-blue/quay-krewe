@@ -847,7 +847,7 @@ func (p *Postgres) ApproveProjectDesign(ctx context.Context, project string) (*q
 // later.
 const stepColumns = `s.feature, s.number, s.title, s.intention, s.touches, s.proof, ` +
 	`s.proof_scenario, s.after, s.milestone, s.contracts, s.contract_scope, ` +
-	`s.state, s.session, s.result, s.taken_at, s.finished_at`
+	`s.state, s.session, s.result, s.closed_by, s.taken_at, s.finished_at`
 
 // stepJoins is the join every path read goes through: a step to its feature, that feature to its
 // project, and that project to its workspace.
@@ -864,13 +864,13 @@ func scanStep(row pgx.Row) (*quaycrewv1.Step, error) {
 	var (
 		feature, title, intention, touches, proof string
 		scenario, state, session, result          string
-		contracts, contractScope                  string
+		contracts, contractScope, closedBy        string
 		number, after, milestone                  int32
 		takenAt, finishedAt                       *time.Time
 	)
 	if err := row.Scan(&feature, &number, &title, &intention, &touches, &proof,
 		&scenario, &after, &milestone, &contracts, &contractScope,
-		&state, &session, &result, &takenAt, &finishedAt); err != nil {
+		&state, &session, &result, &closedBy, &takenAt, &finishedAt); err != nil {
 		return nil, err
 	}
 	step := &quaycrewv1.Step{
@@ -888,6 +888,7 @@ func scanStep(row pgx.Row) (*quaycrewv1.Step, error) {
 		State:         state,
 		Session:       session,
 		Result:        result,
+		ClosedBy:      closedBy,
 	}
 	if takenAt != nil {
 		step.TakenAt = timestamppb.New(*takenAt)
@@ -1018,24 +1019,6 @@ func numbersOfSteps(steps []Step) []int32 {
 		numbers = append(numbers, step.Number)
 	}
 	return numbers
-}
-
-// ForceStepState writes a step's state word straight onto the row, and is the Postgres half of the
-// seam the memory store's own ForceStepState documents.
-func (p *Postgres) ForceStepState(ctx context.Context, feature string, number int32, state string) error {
-	if err := p.featureExists(ctx, feature); err != nil {
-		return err
-	}
-	tag, err := p.pool.Exec(ctx,
-		`update feature_steps set state = $3, updated_at = now() where feature = $1 and number = $2`,
-		feature, number, state)
-	if err != nil {
-		return fmt.Errorf("force the step state: %w", err)
-	}
-	if tag.RowsAffected() == 0 {
-		return ErrNotFound
-	}
-	return nil
 }
 
 // featureExists says whether a feature is one a caller can reach, which is the check every step call
@@ -1174,6 +1157,34 @@ func (p *Postgres) TakeStep(ctx context.Context, feature string, number int32, s
 	}
 	if err != nil {
 		return nil, fmt.Errorf("take step: %w", err)
+	}
+	return step, nil
+}
+
+// FinishStep records what came of a step: the word that closes it, what somebody wrote, who spoke
+// the word, and the stamp.
+//
+// The state and the stamp move in one statement, so a step can never read as done with no time on it.
+// The word is kept as it is given, for the reason FinishFeature keeps a feature's: the control plane
+// refuses a word outside the two, and a second check here is a second place for the vocabulary to
+// drift.
+//
+// The session and the take stamp are left where they are, so the row still says who took the step. No
+// session is read, stopped or reclaimed: the step and the session are separate records.
+func (p *Postgres) FinishStep(ctx context.Context, feature string, number int32, finish Finish) (*quaycrewv1.Step, error) {
+	if err := p.featureExists(ctx, feature); err != nil {
+		return nil, err
+	}
+	step, err := scanStep(p.pool.QueryRow(ctx, `
+		update feature_steps s
+		set state = $3, result = $4, closed_by = $5, finished_at = now(), updated_at = now()
+		where s.feature = $1 and s.number = $2
+		returning `+stepColumns, feature, number, finish.State, finish.Result, finish.ClosedBy))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("finish step: %w", err)
 	}
 	return step, nil
 }

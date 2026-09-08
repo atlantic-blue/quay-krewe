@@ -2754,7 +2754,7 @@ func runPathConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 			writePath(t, s, feature.GetId(),
 				store.Step{Number: 1, Title: "the first"},
 				store.Step{Number: 2, Title: "the second", After: 1})
-			forceStepState(t, s, feature.GetId(), 2, state)
+			finishStep(t, s, feature.GetId(), 2, state)
 
 			_, err := s.SetPath(ctx, feature.GetId(), nil, []store.Step{{Number: 1, Title: "the first"}})
 			if !errors.Is(err, store.ErrPathHoldsTakenSteps) {
@@ -2786,7 +2786,7 @@ func runPathConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 		if _, err := s.TakeStep(ctx, feature.GetId(), 3, "session-one"); err != nil {
 			t.Fatalf("TakeStep: %v", err)
 		}
-		forceStepState(t, s, feature.GetId(), 1, store.StepDone)
+		finishStep(t, s, feature.GetId(), 1, store.StepDone)
 
 		_, err := s.SetPath(ctx, feature.GetId(), nil, []store.Step{{Number: 2, Title: "the second"}})
 		if !errors.Is(err, store.ErrPathHoldsTakenSteps) {
@@ -2863,7 +2863,7 @@ func runPathConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 			store.Step{Number: 1, Title: "the first"},
 			store.Step{Number: 2, Title: "the second", After: 1},
 			store.Step{Number: 3, Title: "the third", After: 2})
-		forceStepState(t, s, feature.GetId(), 2, store.StepStopped)
+		finishStep(t, s, feature.GetId(), 2, store.StepStopped)
 
 		written, err := s.SetPath(ctx, feature.GetId(), nil, []store.Step{
 			{Number: 1, Title: "the first"},
@@ -3052,21 +3052,14 @@ func writePath(t *testing.T, s store.Store, feature string, steps ...store.Step)
 	}
 }
 
-// stepStateForcer is the seam both stores carry for the two states no call reaches yet. It is
-// asserted rather than skipped: a store without it would silently drop every done and stopped case
-// here, and a suite that runs nothing reads exactly like one that passes.
-type stepStateForcer interface {
-	ForceStepState(ctx context.Context, feature string, number int32, state string) error
-}
-
-func forceStepState(t *testing.T, s store.Store, feature string, number int32, state string) {
+// finishStep closes a step the way the system closes one, so a test that needs a done or a stopped
+// step stands one up through the call rather than through a seam of its own.
+func finishStep(t *testing.T, s store.Store, feature string, number int32, state string) {
 	t.Helper()
-	forcer, carries := s.(stepStateForcer)
-	if !carries {
-		t.Fatalf("%T cannot put a step in state %q, so the protection is proved for taken alone", s, state)
-	}
-	if err := forcer.ForceStepState(context.Background(), feature, number, state); err != nil {
-		t.Fatalf("ForceStepState: %v", err)
+	if _, err := s.FinishStep(context.Background(), feature, number, store.Finish{
+		State: state, Result: "what came of it", ClosedBy: "operator",
+	}); err != nil {
+		t.Fatalf("FinishStep: %v", err)
 	}
 }
 
@@ -3260,6 +3253,173 @@ func runTakeConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 		}
 		if read.GetSession() != "" {
 			t.Fatalf("payment's step 3 names session %q, and nobody took it", read.GetSession())
+		}
+	})
+
+	// Finishing a step. The result is the point of the write: nothing can see inside a container, so
+	// what somebody wrote is what the next session reads.
+	t.Run("finishing a step writes the word, the result, the closer and the stamp", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		feature := newFeature(t, s, newProject(t, s, "acme", "house-bills"), "the bills")
+		writePath(t, s, feature.GetId(), store.Step{Number: 1, Title: "the first"})
+
+		written, err := s.FinishStep(ctx, feature.GetId(), 1, store.Finish{
+			State: store.StepDone, Result: "shipped as pull request 712", ClosedBy: "operator",
+		})
+		if err != nil {
+			t.Fatalf("FinishStep: %v", err)
+		}
+		if written.GetState() != store.StepDone {
+			t.Errorf("the finished step reads as %q, want %q", written.GetState(), store.StepDone)
+		}
+		if written.GetResult() != "shipped as pull request 712" {
+			t.Errorf("the finished step says its result is %q", written.GetResult())
+		}
+		if written.GetClosedBy() != "operator" {
+			t.Errorf("the finished step says %q closed it, want operator", written.GetClosedBy())
+		}
+		if written.GetFinishedAt() == nil {
+			t.Error("the finished step carries no moment, so nothing records when it finished")
+		}
+		// Read again, because a write that answered well and stored nothing reads the same to its
+		// caller and to nobody else.
+		read, err := s.GetStep(ctx, feature.GetId(), 1)
+		if err != nil {
+			t.Fatalf("GetStep after the finish: %v", err)
+		}
+		if read.GetState() != store.StepDone || read.GetResult() != "shipped as pull request 712" {
+			t.Fatalf("the step reads back as %q with the result %q", read.GetState(), read.GetResult())
+		}
+		if read.GetClosedBy() != "operator" || read.GetFinishedAt() == nil {
+			t.Fatalf("the step reads back closed by %q at %v", read.GetClosedBy(), read.GetFinishedAt())
+		}
+	})
+
+	// The record of who took the step survives the word that closes it. The step and the session are
+	// separate records, and a finish that cleared the session would take the record away.
+	t.Run("finishing a step leaves the session and the take stamp where they were", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		feature := newFeature(t, s, newProject(t, s, "acme", "house-bills"), "the bills")
+		writePath(t, s, feature.GetId(), store.Step{Number: 1, Title: "the first"})
+
+		taken, err := s.TakeStep(ctx, feature.GetId(), 1, "session-one")
+		if err != nil {
+			t.Fatalf("TakeStep: %v", err)
+		}
+		if _, err := s.FinishStep(ctx, feature.GetId(), 1, store.Finish{
+			State: store.StepDone, Result: "it reads back whole", ClosedBy: "operator",
+		}); err != nil {
+			t.Fatalf("FinishStep: %v", err)
+		}
+		read, err := s.GetStep(ctx, feature.GetId(), 1)
+		if err != nil {
+			t.Fatalf("GetStep after the finish: %v", err)
+		}
+		if read.GetSession() != "session-one" {
+			t.Errorf("the finished step names session %q, want the session that took it", read.GetSession())
+		}
+		if !read.GetTakenAt().AsTime().Equal(taken.GetTakenAt().AsTime()) {
+			t.Errorf("the take stamp moved from %v to %v", taken.GetTakenAt(), read.GetTakenAt())
+		}
+	})
+
+	// A stop is how a step nobody will finish ends, and the reason is kept in the same column the
+	// result is. There is nothing else to read it out of.
+	t.Run("stopping a step keeps why it stopped", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		feature := newFeature(t, s, newProject(t, s, "acme", "house-bills"), "the bills")
+		writePath(t, s, feature.GetId(), store.Step{Number: 1, Title: "the first"})
+
+		written, err := s.FinishStep(ctx, feature.GetId(), 1, store.Finish{
+			State: store.StepStopped, Result: "the customer withdrew it", ClosedBy: "operator",
+		})
+		if err != nil {
+			t.Fatalf("FinishStep: %v", err)
+		}
+		if written.GetState() != store.StepStopped || written.GetResult() != "the customer withdrew it" {
+			t.Fatalf("the stopped step reads as %q because %q",
+				written.GetState(), written.GetResult())
+		}
+	})
+
+	// Step 3 of one feature and step 3 of another are two steps, on the write that closes one as much
+	// as on the write that takes it.
+	t.Run("finishing a step of one feature leaves the same number in another ready", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		project := newProject(t, s, "acme", "house-bills")
+		first := newFeature(t, s, project, "authentication")
+		second := newFeature(t, s, project, "payment")
+		for _, feature := range []string{first.GetId(), second.GetId()} {
+			writePath(t, s, feature, store.Step{Number: 3, Title: "the third"})
+		}
+
+		if _, err := s.FinishStep(ctx, first.GetId(), 3, store.Finish{
+			State: store.StepDone, Result: "shipped", ClosedBy: "operator",
+		}); err != nil {
+			t.Fatalf("FinishStep: %v", err)
+		}
+		read, err := s.GetStep(ctx, second.GetId(), 3)
+		if err != nil {
+			t.Fatalf("GetStep on payment's step 3: %v", err)
+		}
+		if read.GetState() != store.StepReady {
+			t.Fatalf("payment's step 3 reads as %q after authentication's was finished, want ready",
+				read.GetState())
+		}
+		if read.GetResult() != "" || read.GetFinishedAt() != nil {
+			t.Fatalf("payment's step 3 says %q, finished at %v, and nobody closed it",
+				read.GetResult(), read.GetFinishedAt())
+		}
+	})
+
+	t.Run("finishing a step nothing holds is not found", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		feature := newFeature(t, s, newProject(t, s, "acme", "house-bills"), "the bills")
+		writePath(t, s, feature.GetId(), store.Step{Number: 1, Title: "the first"})
+
+		finish := store.Finish{State: store.StepDone, Result: "shipped", ClosedBy: "operator"}
+		if _, err := s.FinishStep(ctx, feature.GetId(), 7, finish); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("FinishStep on a step nobody wrote answered %v, want ErrNotFound", err)
+		}
+		if _, err := s.FinishStep(ctx, "no-such-feature", 1, finish); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("FinishStep on a missing feature answered %v, want ErrNotFound", err)
+		}
+	})
+
+	// A finished step keeps what it was given when the document is written again. The title and the
+	// blocks come from the document; the state, the result, the closer and the stamps are the
+	// system's, and a rewrite that lost them would lose the record of the work.
+	t.Run("a path written again keeps the result and the closer of a finished step", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		feature := newFeature(t, s, newProject(t, s, "acme", "house-bills"), "the bills")
+		writePath(t, s, feature.GetId(), store.Step{Number: 1, Title: "the first"})
+
+		if _, err := s.FinishStep(ctx, feature.GetId(), 1, store.Finish{
+			State: store.StepDone, Result: "shipped as pull request 712", ClosedBy: "operator",
+		}); err != nil {
+			t.Fatalf("FinishStep: %v", err)
+		}
+		writePath(t, s, feature.GetId(),
+			store.Step{Number: 1, Title: "the first", Intention: "It says more now."})
+
+		read, err := s.GetStep(ctx, feature.GetId(), 1)
+		if err != nil {
+			t.Fatalf("GetStep after the rewrite: %v", err)
+		}
+		if read.GetIntention() != "It says more now." {
+			t.Errorf("the step's intention reads %q, and the document rewrote it", read.GetIntention())
+		}
+		if read.GetState() != store.StepDone || read.GetResult() != "shipped as pull request 712" {
+			t.Errorf("the rewritten step reads as %q with the result %q", read.GetState(), read.GetResult())
+		}
+		if read.GetClosedBy() != "operator" || read.GetFinishedAt() == nil {
+			t.Errorf("the rewritten step reads closed by %q at %v", read.GetClosedBy(), read.GetFinishedAt())
 		}
 	})
 

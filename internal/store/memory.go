@@ -869,27 +869,29 @@ func (m *Memory) TakeStep(_ context.Context, feature string, number int32, sessi
 	return proto.Clone(held).(*quaycrewv1.Step), nil
 }
 
-// ForceStepState writes a step's state word straight onto the row.
+// FinishStep records what came of a step: the word that closes it, what somebody wrote, who spoke
+// the word, and the stamp.
 //
-// Nothing finishes a step and nothing stops one yet, so done and stopped are states the column
-// carries and no call reaches. A path write protects a step in either of them, and a test that
-// cannot stand one up proves the protection for taken alone. This is what stands one up, and the
-// calls that finish and stop a step replace it.
+// The word is kept as it is given, for the reason Postgres keeps it: the control plane refuses a word
+// outside the two, and a second check here is a second place for the vocabulary to drift.
 //
-// It is on the two stores rather than on Store, because it is not a capability the control plane
-// has: a state is moved by the call that does the work, never by asking for the word.
-func (m *Memory) ForceStepState(_ context.Context, feature string, number int32, state string) error {
+// The session and the take stamp are left where they are, so the row still says who took the step. No
+// session is read, stopped or reclaimed: the step and the session are separate records.
+func (m *Memory) FinishStep(_ context.Context, feature string, number int32, finish Finish) (*quaycrewv1.Step, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, err := m.featureLocked(feature); err != nil {
-		return err
+		return nil, err
 	}
 	held, err := m.stepLocked(feature, number)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	held.State = state
-	return nil
+	held.State = finish.State
+	held.Result = finish.Result
+	held.ClosedBy = finish.ClosedBy
+	held.FinishedAt = timestamppb.New(time.Now().UTC())
+	return proto.Clone(held).(*quaycrewv1.Step), nil
 }
 
 // stepLocked is one step of a feature's path, or ErrNotFound. The caller holds the lock.

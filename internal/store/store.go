@@ -146,7 +146,7 @@ func protectedSteps(held []*quaycrewv1.Step, incoming []Step) []ProtectedStep {
 }
 
 // keepTheRecord carries what the system owns from the step as it stands onto the step the document
-// declares: the state, the session that took it, the result and the stamps.
+// declares: the state, the session that took it, the result, who closed it and the stamps.
 //
 // The document is what a caller may set, and none of these are on it. A write that took them from
 // the document would let somebody declare work that never happened, and one that left them behind
@@ -155,6 +155,7 @@ func keepTheRecord(writing, held *quaycrewv1.Step) {
 	writing.State = held.GetState()
 	writing.Session = held.GetSession()
 	writing.Result = held.GetResult()
+	writing.ClosedBy = held.GetClosedBy()
 	writing.TakenAt = held.GetTakenAt()
 	writing.FinishedAt = held.GetFinishedAt()
 }
@@ -183,6 +184,19 @@ type Step struct {
 	// exists is a question about a document krewe never reads, so nothing here asks it.
 	Contracts     string
 	ContractScope string
+}
+
+// Finish is what closes a step: the word, what came of it, and who spoke the word.
+//
+// The result is required at the control plane rather than here, for the reason the state word is:
+// the store keeps what it is given, and one place refuses.
+type Finish struct {
+	// State is done or stopped.
+	State string
+	// Result is what the step produced, or why it stopped.
+	Result string
+	// ClosedBy is operator or krewe.
+	ClosedBy string
 }
 
 // Milestone is what a caller may set about one milestone of a feature's path.
@@ -475,6 +489,16 @@ type Store interface {
 	// Several steps may be taken at once, in one feature or across the features of one project:
 	// nothing here refuses a second take on a different step.
 	TakeStep(ctx context.Context, feature string, number int32, session string) (*quaycrewv1.Step, error)
+	// FinishStep records what came of a step: the word that closes it, what somebody wrote, who spoke
+	// the word, and the stamp. A feature that does not exist and a path that holds no step of that
+	// number are both ErrNotFound.
+	//
+	// The store writes the state it is given. Whether done and stopped are the only two words is the
+	// control plane's question, the way a permission mode already is.
+	//
+	// The session and the take stamp are untouched, so the record still says who took the step. The
+	// step and the session are separate records, and nothing here reads or writes a session.
+	FinishStep(ctx context.Context, feature string, number int32, finish Finish) (*quaycrewv1.Step, error)
 
 	// ListFeatures returns a project's features in number order, or every project's when the
 	// identifier is empty, ordered by project and then by number. A project with no feature is an
