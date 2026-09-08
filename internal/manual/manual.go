@@ -189,6 +189,13 @@ commands:
                                           refused while the design carries no approval, and while
                                           somebody already holds the step, and a refusal starts
                                           nothing
+  step done [<address>]                   record what came of a step, and close it. The result is
+    <feature>.<number> "<result>"         required: nothing can see inside a container, so what you
+                                          write is what the next session reads. It touches no
+                                          session, so the step still says who took it
+  step stop [<address>]                   stop a step nobody will finish, and say why. It takes the
+    <feature>.<number> "<reason>"         same arguments as step done, in the same order. A stopped
+                                          step is not ready, and taking it again starts it clean
   attach <session>                         open a session's conversation, with its history
   secret set [<workspace>] <key>          set a workspace secret from standard input, so the value
                                           never reaches your shell history: pipe it in, or redirect

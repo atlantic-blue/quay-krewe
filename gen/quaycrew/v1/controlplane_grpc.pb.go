@@ -57,6 +57,7 @@ const (
 	ControlPlaneService_SetPath_FullMethodName                  = "/quaycrew.v1.ControlPlaneService/SetPath"
 	ControlPlaneService_ListSteps_FullMethodName                = "/quaycrew.v1.ControlPlaneService/ListSteps"
 	ControlPlaneService_TakeStep_FullMethodName                 = "/quaycrew.v1.ControlPlaneService/TakeStep"
+	ControlPlaneService_FinishStep_FullMethodName               = "/quaycrew.v1.ControlPlaneService/FinishStep"
 	ControlPlaneService_ListFeatures_FullMethodName             = "/quaycrew.v1.ControlPlaneService/ListFeatures"
 	ControlPlaneService_AddFeature_FullMethodName               = "/quaycrew.v1.ControlPlaneService/AddFeature"
 	ControlPlaneService_SetFeatureIntention_FullMethodName      = "/quaycrew.v1.ControlPlaneService/SetFeatureIntention"
@@ -143,6 +144,9 @@ type ControlPlaneServiceClient interface {
 	// The refusal an unapproved design earns is the gate, and it is on the operator's own command as
 	// much as on this one.
 	TakeStep(ctx context.Context, in *TakeStepRequest, opts ...grpc.CallOption) (*TakeStepResponse, error)
+	// Recording what came of a step: done, or stopped, and what somebody wrote about it. It touches no
+	// session, because the step and the session that took it are separate records.
+	FinishStep(ctx context.Context, in *FinishStepRequest, opts ...grpc.CallOption) (*FinishStepResponse, error)
 	// The narrowed parts of a project. The driver may call all three: a design session reads what
 	// features exist and names the ones it is about to write paths for, and naming one grants it
 	// nothing that dispatching would not.
@@ -565,6 +569,16 @@ func (c *controlPlaneServiceClient) TakeStep(ctx context.Context, in *TakeStepRe
 	return out, nil
 }
 
+func (c *controlPlaneServiceClient) FinishStep(ctx context.Context, in *FinishStepRequest, opts ...grpc.CallOption) (*FinishStepResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FinishStepResponse)
+	err := c.cc.Invoke(ctx, ControlPlaneService_FinishStep_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *controlPlaneServiceClient) ListFeatures(ctx context.Context, in *ListFeaturesRequest, opts ...grpc.CallOption) (*ListFeaturesResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ListFeaturesResponse)
@@ -820,6 +834,9 @@ type ControlPlaneServiceServer interface {
 	// The refusal an unapproved design earns is the gate, and it is on the operator's own command as
 	// much as on this one.
 	TakeStep(context.Context, *TakeStepRequest) (*TakeStepResponse, error)
+	// Recording what came of a step: done, or stopped, and what somebody wrote about it. It touches no
+	// session, because the step and the session that took it are separate records.
+	FinishStep(context.Context, *FinishStepRequest) (*FinishStepResponse, error)
 	// The narrowed parts of a project. The driver may call all three: a design session reads what
 	// features exist and names the ones it is about to write paths for, and naming one grants it
 	// nothing that dispatching would not.
@@ -975,6 +992,9 @@ func (UnimplementedControlPlaneServiceServer) ListSteps(context.Context, *ListSt
 }
 func (UnimplementedControlPlaneServiceServer) TakeStep(context.Context, *TakeStepRequest) (*TakeStepResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method TakeStep not implemented")
+}
+func (UnimplementedControlPlaneServiceServer) FinishStep(context.Context, *FinishStepRequest) (*FinishStepResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method FinishStep not implemented")
 }
 func (UnimplementedControlPlaneServiceServer) ListFeatures(context.Context, *ListFeaturesRequest) (*ListFeaturesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListFeatures not implemented")
@@ -1738,6 +1758,24 @@ func _ControlPlaneService_TakeStep_Handler(srv interface{}, ctx context.Context,
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ControlPlaneService_FinishStep_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(FinishStepRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ControlPlaneServiceServer).FinishStep(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ControlPlaneService_FinishStep_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ControlPlaneServiceServer).FinishStep(ctx, req.(*FinishStepRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _ControlPlaneService_ListFeatures_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ListFeaturesRequest)
 	if err := dec(in); err != nil {
@@ -2238,6 +2276,10 @@ var ControlPlaneService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "TakeStep",
 			Handler:    _ControlPlaneService_TakeStep_Handler,
+		},
+		{
+			MethodName: "FinishStep",
+			Handler:    _ControlPlaneService_FinishStep_Handler,
 		},
 		{
 			MethodName: "ListFeatures",

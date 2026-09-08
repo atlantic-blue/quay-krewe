@@ -26,6 +26,11 @@ Feature: A project holds a numbered path of steps
   it found. A path is a record as well as a plan, and a rewrite that dropped a step somebody worked on
   would take that record away. A ready step is replaced whole, so a path can still be corrected.
 
+  A step ends when somebody says what came of it. Done and stopped are the two words, and any other
+  word is refused. The result is required, because nothing can see inside a container: what somebody
+  wrote is what the next session reads. Finishing a step touches no session, so the step still says
+  who took it, and a stopped step is not ready.
+
   There is no way to empty a path. A document with no step heading is refused, so a wrong file path
   cannot take somebody's path away.
 
@@ -1778,6 +1783,190 @@ Feature: A project holds a numbered path of steps
     Given the system listens on an address the tool can dial
     When the caller takes a step without saying which one
     Then standard error says "usage: krewe step take"
+    And the command fails
+
+  # A step ends when somebody says what came of it. Nothing can see inside a container, so the result
+  # is what a person wrote, and it is required: a step marked done with no result tells the next
+  # session nothing.
+  #
+  # Done and stopped are the two words. A stop is how a step nobody will finish ends, and it carries
+  # its reason in the same place a result goes, because there is nowhere else to read it.
+  #
+  # The word touches no session. The step and the session that took it are separate records, so the
+  # row still says who took the work after the work is closed.
+
+  Scenario: A step marked done says what came of it, and who closed it
+    Given the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+      ## 2. The store holds a project's design
+      """
+    And the operator took step 1
+    When the operator finishes step 1 with "shipped as pull request 712, the brief reads back whole"
+    Then step 1 is still done
+    And the operator reads the path
+    And step 1 says its result is "shipped as pull request 712, the brief reads back whole"
+    And step 1 says "operator" closed it
+
+  # The record of who did the work survives the word that closes it. A finish that cleared the
+  # session would leave a step saying work happened and nothing saying who did it.
+  Scenario: Finishing a step leaves the session and the take stamp where they were
+    Given the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+      """
+    And the operator took step 1
+    When the operator finishes step 1 with "shipped as pull request 712"
+    Then step 1 still names the session that took it
+    And the session that took it is untouched
+    And 1 session was started
+    And the model was asked 1 thing in all
+
+  # Two words, and nothing else. An unknown word is refused rather than stored, the way an unknown
+  # permission mode is, so one layer owns the vocabulary a step ends with.
+  Scenario: Finishing a step with a word that is not done or stopped is refused
+    Given the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+      """
+    And the operator took step 1
+    When the operator finishes step 1 with the word "finished" and "shipped as pull request 712"
+    Then the control plane refuses it as invalid
+    And the refusal suggests "done"
+    And the refusal suggests "stopped"
+    And step 1 is still taken
+
+  # The refusal this slice exists for. A step marked done with no result reads as work that happened
+  # and says nothing about it, and the next session starts from that.
+  Scenario: Finishing a step with no result is refused, and says why
+    Given the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+      """
+    And the operator took step 1
+    When the operator finishes step 1 with no result
+    Then the control plane refuses it as invalid
+    And the refusal suggests "nothing can see inside the container"
+    And step 1 is still taken
+
+  Scenario: A stopped step reads back stopped, carrying the reason
+    Given the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+      """
+    And the operator took step 1
+    When the operator stops step 1 with "the customer withdrew it"
+    Then step 1 is still stopped
+    And the operator reads the path
+    And step 1 says its result is "the customer withdrew it"
+    And step 1 says "operator" closed it
+
+  # A stop runs no check and it refuses no unchecked step. Nothing ran against this step at all, and
+  # stopping it is how a step nobody will finish ends.
+  Scenario: Stopping a step nobody checked is not refused, and runs nothing
+    Given the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+      """
+    And the operator took step 1
+    When the operator stops step 1 with "the design moved on"
+    Then step 1 is still stopped
+    And the model was asked 1 thing in all
+
+  Scenario: Finishing a step the path does not hold is refused, saying how many it has
+    Given the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+      ## 2. The store holds a project's design
+      """
+    When the operator finishes a step the path does not hold
+    Then the control plane refuses it as not found
+    And the refusal suggests "it has 2 steps"
+
+  # Step 1 of one feature and step 1 of another are two steps, on the write that closes one as much
+  # as on the write that takes it.
+  Scenario: Finishing a step of one feature leaves the same number in another untouched
+    Given the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And the project's feature "authentication"
+    And the project's feature "payment"
+    And the operator sets the path of feature 1 to:
+      """
+      ## 1. Sign up
+      """
+    And the operator sets the path of feature 2 to:
+      """
+      ## 1. Checkout
+      """
+    When the operator finishes step 1 of feature 1 with "shipped as pull request 712"
+    And the operator reads the path of feature 2
+    Then step 1 is ready
+    And step 1 says nothing came of it
+
+  # What the whole call is for. A session on step 2 reads what step 1 produced, out of the path
+  # document in its own working directory, because nothing else can tell it.
+  Scenario: A session dispatched after a step is done reads what that step produced
+    Given the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+      ## 2. The store holds a project's design
+      """
+    And the operator finishes step 1 with "shipped as pull request 712, the brief reads back whole"
+    When the operator dispatches "hello" to the project
+    Then the session's path file carries "state: done"
+    And the session's path file carries "result: shipped as pull request 712, the brief reads back whole"
+    And the session's path file carries "### 2. The store holds a project's design\nmilestone: no milestone\nstate: ready"
+
+  # These scenarios run the command line tool as a caller runs it: its own process, its own standard
+  # output, its own exit status.
+
+  Scenario: The caller marks a step done and the path reads it back
+    Given the system listens on an address the tool can dial
+    And the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+      """
+    When the caller marks step "1.1" done with "shipped as pull request 712"
+    Then standard output carries "step 1.1 of house-bills is done: shipped as pull request 712"
+    And the caller reads the path
+    And standard output carries "done"
+
+  # The two words take the same arguments in the same order, so the two are one thing to learn.
+  Scenario: The caller stops a step and the reason reads back
+    Given the system listens on an address the tool can dial
+    And the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+      """
+    When the caller stops step "1.1" with "the customer withdrew it"
+    Then standard output carries "step 1.1 of house-bills is stopped: the customer withdrew it"
+    And the operator reads the path
+    And step 1 says its result is "the customer withdrew it"
+
+  Scenario: Marking a step done without saying what came of it is refused
+    Given the system listens on an address the tool can dial
+    When the caller marks step "1.1" done without saying what came of it
+    Then standard error says "usage: krewe step done"
     And the command fails
 
   # A project delivers several features at the same time. A website runs an authentication feature

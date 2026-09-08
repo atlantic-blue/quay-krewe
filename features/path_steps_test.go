@@ -375,22 +375,13 @@ func initializePathSteps(sc *godog.ScenarioContext) {
 		return nil
 	})
 
-	// Nothing finishes a step and nothing stops one yet, so the state is written straight onto the
-	// record. The path write protects three states, and a scenario that could only reach taken would
-	// prove a third of the rule.
+	// The setup for the scenarios about the path write, which protects three states. It closes the
+	// step through the call that closes one, so the record a rewrite has to keep is the record the
+	// system writes.
 	sc.Step(`^step (\d+) is recorded as (done|stopped)$`,
 		func(ctx context.Context, number int, state string) error {
-			held, err := theFeature(ctx)
-			if err != nil {
-				return err
-			}
-			forcer, carries := worldFrom(ctx).store.(stepStateForcer)
-			if !carries {
-				return fmt.Errorf("this store cannot put a step in state %q", state)
-			}
-			return forcer.ForceStepState(ctx, held.GetId(), int32(number), state)
+			return finishStep(ctx, int32(number), state, "what came of it")
 		})
-
 	// Read from the control plane rather than from what the last write answered, because what a
 	// refused write left behind is the question every one of these scenarios asks.
 	sc.Step(`^step (\d+) is still (ready|taken|done|stopped)$`,
@@ -591,6 +582,166 @@ func initializePathSteps(sc *godog.ScenarioContext) {
 		}
 		return nil
 	})
+
+	// Finishing a step. The result is the point of the write: nothing can see inside a container, so
+	// what somebody wrote is what the next session reads.
+
+	sc.Step(`^the operator finishes step (\d+) with "([^"]*)"$`,
+		func(ctx context.Context, number int, result string) error {
+			return finishStep(ctx, int32(number), "done", result)
+		})
+
+	sc.Step(`^the operator stops step (\d+) with "([^"]*)"$`,
+		func(ctx context.Context, number int, reason string) error {
+			return finishStep(ctx, int32(number), "stopped", reason)
+		})
+
+	// The word as a person typed it, so the refusal is about the word and not about a state the
+	// system already knows.
+	sc.Step(`^the operator finishes step (\d+) with the word "([^"]*)" and "([^"]*)"$`,
+		func(ctx context.Context, number int, word, result string) error {
+			return finishStep(ctx, int32(number), word, result)
+		})
+
+	sc.Step(`^the operator finishes step (\d+) with no result$`,
+		func(ctx context.Context, number int) error {
+			return finishStep(ctx, int32(number), "done", "")
+		})
+
+	sc.Step(`^the operator finishes step (\d+) of feature (\d+) with "([^"]*)"$`,
+		func(ctx context.Context, number, feature int, result string) error {
+			held, err := featureOfProject(ctx, int32(feature))
+			if err != nil {
+				return err
+			}
+			return finishStepOf(ctx, held.GetId(), int32(number), "done", result)
+		})
+
+	sc.Step(`^the operator finishes a step the path does not hold$`, func(ctx context.Context) error {
+		return finishStep(ctx, 7, "done", "shipped")
+	})
+
+	sc.Step(`^step (\d+) says its result is "([^"]*)"$`,
+		func(ctx context.Context, number int, want string) error {
+			step, err := stepNumbered(ctx, int32(number))
+			if err != nil {
+				return err
+			}
+			if got := step.GetResult(); got != want {
+				return fmt.Errorf("step %d says its result is %q, want %q", number, got, want)
+			}
+			return nil
+		})
+
+	sc.Step(`^step (\d+) says nothing came of it$`, func(ctx context.Context, number int) error {
+		step, err := stepNumbered(ctx, int32(number))
+		if err != nil {
+			return err
+		}
+		if got := step.GetResult(); got != "" {
+			return fmt.Errorf("step %d says its result is %q, and nobody closed it", number, got)
+		}
+		if step.GetFinishedAt() != nil {
+			return fmt.Errorf("step %d carries the moment %v, and nobody closed it",
+				number, step.GetFinishedAt())
+		}
+		return nil
+	})
+
+	// Who spoke the word, and when. The two are stamped in the write that closes the step, so a step
+	// that reads as done and says neither is a record nobody can read.
+	sc.Step(`^step (\d+) says "([^"]*)" closed it$`,
+		func(ctx context.Context, number int, want string) error {
+			step, err := stepNumbered(ctx, int32(number))
+			if err != nil {
+				return err
+			}
+			if got := step.GetClosedBy(); got != want {
+				return fmt.Errorf("step %d says %q closed it, want %q", number, got, want)
+			}
+			if step.GetFinishedAt() == nil {
+				return fmt.Errorf("step %d carries no moment, so nothing says when it finished", number)
+			}
+			return nil
+		})
+
+	// The step and the session are separate records. A finish that cleared either of these would take
+	// away the record of who did the work.
+	sc.Step(`^step (\d+) still names the session that took it$`, func(ctx context.Context, number int) error {
+		p := pathFrom(ctx)
+		if p.take == nil {
+			return fmt.Errorf("no step was taken, so nothing holds one")
+		}
+		step, err := stepNumbered(ctx, int32(number))
+		if err != nil {
+			return err
+		}
+		started := p.take.GetSession()
+		if step.GetSession() != started.GetHandle() && step.GetSession() != started.GetId() {
+			return fmt.Errorf("step %d names session %q, and the session that took it is %q",
+				number, step.GetSession(), started.GetId())
+		}
+		if step.GetTakenAt() == nil {
+			return fmt.Errorf("step %d carries no take stamp, so nothing says when it was taken", number)
+		}
+		if was := p.take.GetStep().GetTakenAt().AsTime(); !step.GetTakenAt().AsTime().Equal(was) {
+			return fmt.Errorf("step %d was taken at %v and now reads %v", number, was, step.GetTakenAt())
+		}
+		return nil
+	})
+
+	// Nothing dispatches, stops or reclaims a session as a consequence of the word. The session the
+	// take started is read back whole.
+	sc.Step(`^the session that took it is untouched$`, func(ctx context.Context) error {
+		w, p := worldFrom(ctx), pathFrom(ctx)
+		if p.take == nil {
+			return fmt.Errorf("no step was taken, so no session holds one")
+		}
+		started := p.take.GetSession()
+		read, err := w.client.GetSession(ctx, &quaycrewv1.GetSessionRequest{Id: started.GetId()})
+		if err != nil {
+			return err
+		}
+		session := read.GetSession()
+		// The status is not compared against the one the take answered with, because the exec the take
+		// started settles on its own and moves it. What the word may never do is put the session down
+		// or take its container back.
+		if session.GetStatus() == "stopped" {
+			return fmt.Errorf("the session reads as stopped, and nothing stopped it")
+		}
+		if session.GetReclaimedAt() != nil {
+			return fmt.Errorf("the session was reclaimed at %v", session.GetReclaimedAt())
+		}
+		if session.GetHandle() != started.GetHandle() {
+			return fmt.Errorf("the session reads handle %q, and it took the step as %q",
+				session.GetHandle(), started.GetHandle())
+		}
+		return nil
+	})
+
+	// Counted rather than looked at, because a second exec is what a call that dispatched something
+	// would leave behind, and a check that one exec happened passes against two.
+	sc.Step(`^the model was asked (\d+) things? in all$`, func(ctx context.Context, want int) error {
+		if got := worldFrom(ctx).runner.count(); got != want {
+			return fmt.Errorf("the model was asked %d things, want %d", got, want)
+		}
+		return nil
+	})
+
+	sc.Step(`^the caller marks step "([^"]*)" done with "([^"]*)"$`,
+		func(ctx context.Context, said, result string) error {
+			return runTool(ctx, "step", "done", whereTheProjectIs(ctx), said, result)
+		})
+
+	sc.Step(`^the caller stops step "([^"]*)" with "([^"]*)"$`,
+		func(ctx context.Context, said, reason string) error {
+			return runTool(ctx, "step", "stop", whereTheProjectIs(ctx), said, reason)
+		})
+
+	sc.Step(`^the caller marks step "([^"]*)" done without saying what came of it$`,
+		func(ctx context.Context, said string) error {
+			return runTool(ctx, "step", "done", said)
+		})
 
 	// The token as a person types it, whatever is in it, because the refusals are about the shape of
 	// what somebody typed.
@@ -814,12 +965,6 @@ func setPath(ctx context.Context, document string) error {
 	return setPathOf(ctx, held.GetId(), document)
 }
 
-// stepStateForcer is the seam the two stores carry for the two states no call reaches yet. Both
-// implement it, so a scenario that cannot find it says so rather than passing quietly.
-type stepStateForcer interface {
-	ForceStepState(ctx context.Context, feature string, number int32, state string) error
-}
-
 // setPathOf writes the document to one feature and keeps what came back, so a later step reads the
 // same answer the caller got rather than asking again.
 func setPathOf(ctx context.Context, feature, document string) error {
@@ -833,6 +978,32 @@ func setPathOf(ctx context.Context, feature, document string) error {
 	}
 	p.steps, p.warnings = resp.GetSteps(), resp.GetWarnings()
 	return nil
+}
+
+// finishStep closes a step of the feature a scenario means when it names none.
+func finishStep(ctx context.Context, number int32, state, result string) error {
+	held, err := theFeature(ctx)
+	if err != nil {
+		return err
+	}
+	return finishStepOf(ctx, held.GetId(), number, state, result)
+}
+
+// finishStepOf closes one step of the feature it names, and reads the path back, so an assertion
+// reads the record rather than the answer the call gave.
+//
+// A refusal is kept the way every other refusal here is kept, and the path is left as it stood, so a
+// scenario about a refused finish reads what the write did not change.
+func finishStepOf(ctx context.Context, feature string, number int32, state, result string) error {
+	w := worldFrom(ctx)
+	_, err := w.client.FinishStep(ctx, &quaycrewv1.FinishStepRequest{
+		Feature: feature, Number: number, State: state, Result: result,
+	})
+	w.lastErr = err
+	if err != nil {
+		return nil
+	}
+	return readPath(ctx, feature)
 }
 
 // readPath reads one feature's path into the world the assertions go through.
