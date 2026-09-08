@@ -727,13 +727,19 @@ message ListStepsRequest {
 }
 message ListStepsResponse {
   repeated Step steps = 1;
+  // next is the lowest numbered step in state ready whose after step is done, or whose after is
+  // zero. It is 0 when no step qualifies.
+  //
+  // It is 0 when the request names no feature, because what is next is a question about one path.
+  //
+  // It is a sentence and never a dispatch. Reading it starts no session, takes no step and changes
+  // no row.
+  int32 next = 2;
   // milestones travel with the steps, so a caller groups the listing without a second call. This is
   // why a milestone has no read of its own on this service.
   //
   // They are empty when the request names no feature, because a milestone number restarts in each
   // feature and a merged list would read as one run of numbers.
-  //
-  // Field 2 is left for next, which says which step may be taken now.
   repeated Milestone milestones = 3;
 }
 

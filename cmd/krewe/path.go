@@ -66,14 +66,14 @@ func runPath(ctx context.Context, client quaycrewv1.ControlPlaneServiceClient, a
 		if err != nil {
 			return err
 		}
-		steps, err := printPath(ctx, client, held, typed, out)
+		steps, next, err := printPath(ctx, client, held, typed, out)
 		if err != nil {
 			return err
 		}
 		// What is next is a question about one path, so the line is printed for the feature that was
 		// named and never under a listing of several.
 		if len(steps) > 0 {
-			fmt.Fprintf(out, "%s\n", nextLine(steps))
+			fmt.Fprintf(out, "%s\n", nextLine(next))
 		}
 		fmt.Fprintln(out)
 		return nil
@@ -83,7 +83,7 @@ func runPath(ctx context.Context, client quaycrewv1.ControlPlaneServiceClient, a
 		if feature.GetState() != "open" {
 			continue
 		}
-		steps, err := printPath(ctx, client, feature, typed, out)
+		steps, _, err := printPath(ctx, client, feature, typed, out)
 		if err != nil {
 			return err
 		}
@@ -97,15 +97,15 @@ func runPath(ctx context.Context, client quaycrewv1.ControlPlaneServiceClient, a
 }
 
 // printPath draws one feature's path under a heading naming the feature, grouped under the milestones
-// the feature is delivered in, and hands back the steps it drew.
+// the feature is delivered in, and hands back the steps it drew and the step that is next.
 //
 // The heading is there whichever way the command was called, so a listing of several features and a
 // listing of one say the same thing about which path is on the screen.
 func printPath(ctx context.Context, client quaycrewv1.ControlPlaneServiceClient,
-	feature *quaycrewv1.Feature, typed string, out io.Writer) ([]*quaycrewv1.Step, error) {
+	feature *quaycrewv1.Feature, typed string, out io.Writer) ([]*quaycrewv1.Step, int32, error) {
 	resp, err := client.ListSteps(ctx, &quaycrewv1.ListStepsRequest{Feature: feature.GetId()})
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	fmt.Fprintf(out, "feature %d: %s\n\n", feature.GetNumber(), feature.GetTitle())
 	steps := resp.GetSteps()
@@ -113,11 +113,11 @@ func printPath(ctx context.Context, client quaycrewv1.ControlPlaneServiceClient,
 		fmt.Fprintf(out, "this feature has no path yet\n\n")
 		fmt.Fprintf(out, "write one: krewe path set %s %d %s path.md\n",
 			typed, feature.GetNumber(), flagFile)
-		return nil, nil
+		return nil, 0, nil
 	}
 	drawPath(out, groupPath(resp.GetMilestones(), steps))
 	fmt.Fprintf(out, "\n%s\n", countOf(steps))
-	return steps, nil
+	return steps, resp.GetNext(), nil
 }
 
 // pathGroup is one heading of the listing and the steps that print under it.
@@ -275,27 +275,19 @@ func countOf(steps []*quaycrewv1.Step) string {
 	return strings.Join(said, ", ") + "."
 }
 
-// nextLine says which step may be taken now: the lowest numbered ready step that waits for nobody, or
-// waits for a step that is done.
+// nextLine says which step may be taken now, from the number the control plane answered with.
 //
-// The steps arrive in number order, so the first one that qualifies is the lowest and nothing here
-// sorts them.
-func nextLine(steps []*quaycrewv1.Step) string {
-	done := make(map[int32]bool, len(steps))
-	for _, step := range steps {
-		if step.GetState() == stepDone {
-			done[step.GetNumber()] = true
-		}
+// The rule behind the number lives in the control plane, so a second surface that draws this path
+// cannot disagree with this one about it. The line is a sentence and nothing else: it names a command
+// to type, and printing it starts no session and takes no step.
+//
+// A number of 0 is an answer rather than a missing one. Every step is taken, or every ready step
+// waits for a step nobody finished, and the line says so instead of naming a step nobody may take.
+func nextLine(next int32) string {
+	if next == 0 {
+		return "next: nothing, every step is taken or waiting"
 	}
-	for _, step := range steps {
-		if step.GetState() != stepReady {
-			continue
-		}
-		if step.GetAfter() == 0 || done[step.GetAfter()] {
-			return fmt.Sprintf("next: step %d", step.GetNumber())
-		}
-	}
-	return "next: nothing, every step is taken or waiting"
+	return fmt.Sprintf("next: step %d", next)
 }
 
 // sessionOn is the session holding a step, and a dash where nobody holds it. A dash rather than an
