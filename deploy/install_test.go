@@ -67,8 +67,16 @@ func TestUpgradeDoesNotRunTheWholeFirstRun(t *testing.T) {
 	if !strings.Contains(upgrade, "--no-print-directory tool\n") {
 		t.Errorf("make upgrade never builds the tool, so it drains with the build from before:\n%s", upgrade)
 	}
-	if got := strings.Count(upgrade, "up --build"); got != 1 {
-		t.Errorf("make upgrade brings the stack up %d times, want once:\n%s", got, upgrade)
+	// Counted line by line rather than by substring, because the call to up is the last line of the
+	// recipe and a recipe read from the Makefile carries no newline after its last line.
+	up := 0
+	for _, line := range strings.Split(upgrade, "\n") {
+		if strings.TrimSpace(line) == "@$(MAKE) --no-print-directory up" {
+			up++
+		}
+	}
+	if up != 1 {
+		t.Errorf("make upgrade brings the stack up %d times, want once:\n%s", up, upgrade)
 	}
 
 	if built := prerequisites(t, "rebuild"); strings.Contains(built, "install") {
