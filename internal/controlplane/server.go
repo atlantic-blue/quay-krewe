@@ -880,6 +880,7 @@ func (s *Server) DeleteWorkspace(ctx context.Context, req *quaycrewv1.DeleteWork
 	for _, session := range gone {
 		s.emit(ctx, session, KindSessionDeleted, "")
 	}
+	s.SweepNames(ctx)
 	return &quaycrewv1.DeleteWorkspaceResponse{}, nil
 }
 
@@ -1096,6 +1097,7 @@ func (s *Server) DeleteProject(ctx context.Context, req *quaycrewv1.DeleteProjec
 	for _, session := range gone {
 		s.emit(ctx, session, KindSessionDeleted, "")
 	}
+	s.SweepNames(ctx)
 	return &quaycrewv1.DeleteProjectResponse{}, nil
 }
 
@@ -1735,6 +1737,7 @@ func (s *Server) SetSessionLabel(ctx context.Context, req *quaycrewv1.SetSession
 	if err := s.store.SetLabel(ctx, req.GetId(), tidyLabel(req.GetLabel())); err != nil {
 		return nil, storeError(err, "session")
 	}
+	s.SweepNames(ctx)
 	return &quaycrewv1.SetSessionLabelResponse{Session: s.reread(ctx, req.GetId())}, nil
 }
 
@@ -2222,6 +2225,7 @@ func (s *Server) ArchiveSession(ctx context.Context, req *quaycrewv1.ArchiveSess
 	}
 	archived := s.reread(ctx, req.GetId())
 	s.emit(ctx, archived, KindSessionArchived, "")
+	s.SweepNames(ctx)
 	return &quaycrewv1.ArchiveSessionResponse{Session: archived}, nil
 }
 
@@ -2283,6 +2287,7 @@ func (s *Server) ArchiveProjectSessions(ctx context.Context, req *quaycrewv1.Arc
 		s.closeSandbox(ctx, id)
 		s.emit(ctx, s.reread(ctx, id), KindSessionArchived, "")
 	}
+	s.SweepNames(ctx)
 	return &quaycrewv1.ArchiveProjectSessionsResponse{
 		Archived: archived, Skipped: int32(len(before) - len(archived)),
 	}, nil
@@ -2303,6 +2308,7 @@ func (s *Server) RestoreSession(ctx context.Context, req *quaycrewv1.RestoreSess
 	}
 	restored := s.reread(ctx, req.GetId())
 	s.emit(ctx, restored, KindSessionRestored, "")
+	s.SweepNames(ctx)
 	return &quaycrewv1.RestoreSessionResponse{Session: restored}, nil
 }
 

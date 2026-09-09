@@ -472,6 +472,9 @@ func (w *world) serve() error {
 	// a session the store still calls running is settled, because its exec died with the last process.
 	w.server.ReapStrays(context.Background())
 	w.server.SettleExecs(context.Background())
+	// And the tree of names is swept, so a scenario about a name that moved while the system was down
+	// is about the system and not about the harness.
+	w.server.SweepNames(context.Background())
 	// The way the real main starts, for a scenario about what survives a restart: the shipped hooks
 	// are offered again, and a system that already holds some is left exactly as it is.
 	if w.seedHooks {
