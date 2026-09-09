@@ -260,6 +260,8 @@ func run(ctx context.Context, client quaycrewv1.ControlPlaneServiceClient, args 
 		return runAnswer(ctx, client, args[1:], out)
 	case "where":
 		return runWhere(ctx, client, args[1:], out)
+	case "volume":
+		return runVolume(ctx, client, args[1:], out)
 	case "attach":
 		return runAttach(ctx, client, args[1:], out, os.Stdin)
 	// Internal: a status line under a conversation runs the first, `krewe` on its own runs the second,

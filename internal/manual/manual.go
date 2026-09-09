@@ -113,6 +113,13 @@ commands:
                                           directory, which is what to call the file once it is in
                                           there. It starts nothing and reads no container, so it
                                           answers when every sandbox is down
+  volume list <address>                   what a volume holds. A volume is the directory a session
+                                          reads: krewe://<workspace> is its shared folder, and
+                                          krewe://<workspace>/<project> is the folder inside that
+                                          one. A name after either is a file in it. The directory on
+                                          this machine is on the first line. Under it is one line for
+                                          each name, sorted by name, with a size on each file. A
+                                          folder that holds nothing says so
   answer <session> [--all]                 what a session came back with, and nothing else, so a
                                           caller can pipe it. The most recent answer, or with --all
                                           every one of them, oldest first
