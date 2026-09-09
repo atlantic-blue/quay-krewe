@@ -684,6 +684,7 @@ func initializeScenario(sc *godog.ScenarioContext) {
 	initializeDeployTargetSteps(sc)
 	initializeAddressSteps(sc)
 	initializeVolumeSteps(sc)
+	initializeVolumeListingSteps(sc)
 	initializeInfoSteps(sc)
 	initializeSessionEventsSteps(sc)
 	initializeObservabilitySteps(sc)
