@@ -24,6 +24,11 @@ type Storage struct {
 	// path; its own view of the directory means nothing to that daemon. Run the control plane
 	// outside a container and the two are the same path.
 	Host string
+	// NameTree is where the tree of names goes, as this process sees it. It sits beside the data
+	// directory rather than inside it: the tree is what an operator opens, and the data directory is
+	// what the system writes. Empty writes no tree, and every directory then has an identifier for a
+	// name and nothing else.
+	NameTree string
 }
 
 // Prepare creates the directories this sandbox needs and returns the mounts that carry them into

@@ -84,7 +84,16 @@ func main() {
 	// files; QC_DATA_HOST is the same directory as the host daemon sees it, which is what a sandbox
 	// actually mounts. In a container the two differ, so both are needed; run this on the host and
 	// they are the same path. Neither set means state stays in the container and dies with it.
-	storage := sandbox.Storage{Dir: os.Getenv("QC_DATA_DIR"), Host: os.Getenv("QC_DATA_HOST")}
+	// QC_NAMES_DIR is where the tree of names goes, as this process sees it: one link per workspace,
+	// named after the workspace and pointing at its shared folder, so an operator opens a folder by
+	// what it is called rather than by three generated identifiers. It is a directory of its own
+	// rather than a corner of the data directory, because it is the one part of the layout a person
+	// browses. Unset writes no tree and loses no work.
+	storage := sandbox.Storage{
+		Dir:      os.Getenv("QC_DATA_DIR"),
+		Host:     os.Getenv("QC_DATA_HOST"),
+		NameTree: os.Getenv("QC_NAMES_DIR"),
+	}
 	if storage.Dir == "" {
 		logger.Warn("no QC_DATA_DIR set: a session's conversation lives inside its container and is destroyed with it")
 	}

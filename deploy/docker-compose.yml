@@ -154,6 +154,11 @@ services:
       # what a sandbox, a sibling container on that daemon, can actually mount.
       QC_DATA_DIR: /var/lib/quaycrew
       QC_DATA_HOST: ${QC_DATA_HOST:-${HOME}/.krewe/data}
+      # The tree of names, beside the data directory rather than inside it, because it is the part of
+      # the layout a person opens: ~/.krewe/at/itv is the shared folder of the workspace called itv,
+      # and ~/.krewe/at/itv/vast is the vast project's folder in it. The links point at host paths, so
+      # they read on the machine and not in here.
+      QC_NAMES_DIR: /var/lib/krewe-names
       # The audit export. History is written to Postgres in the same breath as each exec either way;
       # this also puts every exec on <workspace>.execs for a second consumer. Set it to empty in your
       # own configuration to turn the export off, which loses nothing.
@@ -176,6 +181,7 @@ services:
       # access to the host, granted deliberately: see docs/ARCHITECTURE.md.
       - /var/run/docker.sock:/var/run/docker.sock
       - ${QC_DATA_HOST:-${HOME}/.krewe/data}:/var/lib/quaycrew
+      - ${QC_NAMES_HOST:-${HOME}/.krewe/at}:/var/lib/krewe-names
     ports:
       # Loopback only: the port is the whole system, and the token guards a caller, not the network.
       # Publish it wider only behind transport you own.

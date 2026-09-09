@@ -1,0 +1,240 @@
+package sandbox_test
+
+import (
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/atlantic-blue/quay-krewe/internal/sandbox"
+)
+
+// A name on the filesystem for every address.
+//
+// The failure it answers: a person told to put a file in front of a session had to read
+// workspaces/<24 hexadecimal characters>/volume, and a session's own directory is three of those
+// deep. The names were in the store and nowhere on disk, so the finder showed identifiers.
+
+// wholeTree is a data directory, the tree beside it, and the storage that writes both.
+func wholeTree(t *testing.T) (sandbox.Storage, string) {
+	t.Helper()
+	home := t.TempDir()
+	data := filepath.Join(home, "data")
+	tree := filepath.Join(home, "at")
+	if err := os.MkdirAll(data, 0o777); err != nil {
+		t.Fatalf("the data directory: %v", err)
+	}
+	return sandbox.Storage{Dir: data, Host: data, NameTree: tree}, tree
+}
+
+func TestAWorkspaceNameReachesItsSharedFolder(t *testing.T) {
+	storage, tree := wholeTree(t)
+
+	if err := storage.NameWorkspace("9e8153f6d4c1", "itv"); err != nil {
+		t.Fatalf("NameWorkspace: %v", err)
+	}
+
+	shared, err := storage.SharedDirectory("9e8153f6d4c1")
+	if err != nil {
+		t.Fatalf("SharedDirectory: %v", err)
+	}
+	named := filepath.Join(tree, "itv")
+	points, err := os.Readlink(named)
+	if err != nil {
+		t.Fatalf("%q is not a name pointing anywhere: %v", named, err)
+	}
+	if points != shared.Host {
+		t.Errorf("%q points at %q, want the shared folder %q", named, points, shared.Host)
+	}
+	if strings.Contains(named, "9e8153f6d4c1") {
+		t.Errorf("the name is %q, and an identifier is in it", named)
+	}
+}
+
+// The project level is the folder itself, inside the shared one, so one link carries the workspace
+// and every project in it. A file dropped at the name has to arrive in the folder a sandbox binds.
+func TestAProjectIsReachedThroughItsWorkspaceName(t *testing.T) {
+	storage, tree := wholeTree(t)
+
+	if err := storage.NameWorkspace("9e8153f6d4c1", "itv"); err != nil {
+		t.Fatalf("NameWorkspace: %v", err)
+	}
+	if err := storage.NameProject("9e8153f6d4c1", "vast"); err != nil {
+		t.Fatalf("NameProject: %v", err)
+	}
+
+	dropped := filepath.Join(tree, "itv", "vast", "explore.txt")
+	if err := os.WriteFile(dropped, []byte("a log"), 0o666); err != nil {
+		t.Fatalf("drop a file at the name: %v", err)
+	}
+
+	project, err := storage.ProjectDirectory("9e8153f6d4c1", "vast")
+	if err != nil {
+		t.Fatalf("ProjectDirectory: %v", err)
+	}
+	body, err := os.ReadFile(filepath.Join(project.Host, "explore.txt"))
+	if err != nil {
+		t.Fatalf("the file is not in the folder a sandbox binds: %v", err)
+	}
+	if string(body) != "a log" {
+		t.Errorf("the folder holds %q, want the bytes that were dropped", body)
+	}
+}
+
+// A session's own directory is not in the volume, so its name sits beside the workspace's rather
+// than under it: a link inside the shared folder points at a path on the host, and every container
+// reading that folder sees a broken name.
+func TestASessionNameSitsBesideItsWorkspaceAndReachesItsOwnDirectory(t *testing.T) {
+	storage, tree := wholeTree(t)
+	cfg := sandbox.Config{Workspace: "9e8153f6d4c1", Project: "b75f5bf62544", ID: "aa01bb02cc03"}
+
+	if err := storage.NameSession(cfg, sandbox.Names{
+		Workspace: "itv", Project: "vast", Session: "the-login-that-times-out",
+	}); err != nil {
+		t.Fatalf("NameSession: %v", err)
+	}
+
+	working, err := storage.WorkingDirectory(cfg)
+	if err != nil {
+		t.Fatalf("WorkingDirectory: %v", err)
+	}
+	named := filepath.Join(tree, "itv"+sandbox.SessionsSuffix, "vast", "the-login-that-times-out")
+	points, err := os.Readlink(named)
+	if err != nil {
+		t.Fatalf("%q is not a name pointing anywhere: %v", named, err)
+	}
+	if points != working.Host {
+		t.Errorf("%q points at %q, want the session's own directory %q", named, points, working.Host)
+	}
+	// The workspace's own name is a link, so a session name under it would be written inside the
+	// shared folder every sandbox binds.
+	if _, err := os.Lstat(filepath.Join(tree, "itv", "vast", "the-login-that-times-out")); err == nil {
+		t.Error("a session name was written inside the shared folder, where every sandbox reads it")
+	}
+}
+
+func TestNamingTheSameThingTwiceWritesNothingTheSecondTime(t *testing.T) {
+	storage, tree := wholeTree(t)
+
+	if err := storage.NameWorkspace("9e8153f6d4c1", "itv"); err != nil {
+		t.Fatalf("the first: %v", err)
+	}
+	if err := storage.NameWorkspace("9e8153f6d4c1", "itv"); err != nil {
+		t.Fatalf("the second: %v", err)
+	}
+
+	entries, err := os.ReadDir(tree)
+	if err != nil {
+		t.Fatalf("read the tree: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Errorf("the tree holds %d names, want one", len(entries))
+	}
+}
+
+// Two workspaces may hold one name, so the second cannot take the first one's name: a file dropped
+// for the first would land in the second one's folder, and nothing would say so.
+func TestANameAlreadyPointingSomewhereElseIsRefused(t *testing.T) {
+	storage, tree := wholeTree(t)
+
+	if err := storage.NameWorkspace("9e8153f6d4c1", "itv"); err != nil {
+		t.Fatalf("the first: %v", err)
+	}
+	err := storage.NameWorkspace("b75f5bf62544", "itv")
+	if err == nil {
+		t.Fatal("the second workspace took the name of the first")
+	}
+	if !strings.Contains(err.Error(), "9e8153f6d4c1") {
+		t.Errorf("the refusal is %q, and it does not say what the name points at", err)
+	}
+
+	shared, err := storage.SharedDirectory("9e8153f6d4c1")
+	if err != nil {
+		t.Fatalf("SharedDirectory: %v", err)
+	}
+	points, err := os.Readlink(filepath.Join(tree, "itv"))
+	if err != nil {
+		t.Fatalf("read the name: %v", err)
+	}
+	if points != shared.Host {
+		t.Errorf("the name points at %q, want the first workspace's folder %q", points, shared.Host)
+	}
+}
+
+// A directory somebody made by hand under a name is left where it is. This did not write it, so
+// removing it is not this view's business.
+func TestANameSomethingElseOwnsIsLeftAsItIs(t *testing.T) {
+	storage, tree := wholeTree(t)
+	mine := filepath.Join(tree, "itv")
+	if err := os.MkdirAll(mine, 0o777); err != nil {
+		t.Fatalf("the directory somebody made: %v", err)
+	}
+
+	if err := storage.NameWorkspace("9e8153f6d4c1", "itv"); err == nil {
+		t.Fatal("a directory that was already there was replaced by a name")
+	}
+	info, err := os.Lstat(mine)
+	if err != nil {
+		t.Fatalf("the directory is gone: %v", err)
+	}
+	if !info.IsDir() {
+		t.Errorf("%q is now a %v, want the directory that was there", mine, info.Mode())
+	}
+}
+
+// The top of the data directory holds the tokens and the sealing key. No workspace can be called
+// that word, and a tree of names must not be the one place in the system offering a road to them.
+func TestTheSystemsOwnWordIsNeverANameInTheTree(t *testing.T) {
+	storage, tree := wholeTree(t)
+
+	for _, called := range []string{"system", "System", "SYSTEM"} {
+		err := storage.NameWorkspace("9e8153f6d4c1", called)
+		if err == nil {
+			t.Fatalf("%q became a name in the tree", called)
+		}
+		if !strings.Contains(err.Error(), "sealing key") {
+			t.Errorf("the refusal for %q is %q, and it does not say what is in that directory", called, err)
+		}
+	}
+	if _, err := os.Lstat(filepath.Join(tree, "system")); !errors.Is(err, os.ErrNotExist) {
+		t.Error("the tree holds a name called system")
+	}
+}
+
+// A name is one segment. A workspace whose name climbed would put the tree somewhere else entirely.
+func TestANameThatClimbsIsRefused(t *testing.T) {
+	storage, _ := wholeTree(t)
+
+	for _, called := range []string{"..", ".", "../elsewhere", "itv/vast", ""} {
+		if err := storage.NameWorkspace("9e8153f6d4c1", called); err == nil {
+			t.Errorf("%q became a name in the tree", called)
+		}
+	}
+	if err := storage.NameSession(
+		sandbox.Config{Workspace: "9e8153f6d4c1", Project: "b75f5bf62544", ID: "aa01bb02cc03"},
+		sandbox.Names{Workspace: "itv", Project: "vast", Session: "../../elsewhere"},
+	); err == nil {
+		t.Error("a session name that climbs became a name in the tree")
+	}
+}
+
+// A system told no tree writes none, and says nothing about it: the tree is a view, and running
+// without one is a way of running the system rather than a failure.
+func TestNoTreeConfiguredWritesNothing(t *testing.T) {
+	dir := t.TempDir()
+	storage := sandbox.Storage{Dir: dir, Host: dir}
+
+	if err := storage.NameWorkspace("9e8153f6d4c1", "itv"); err != nil {
+		t.Errorf("NameWorkspace: %v", err)
+	}
+	if err := storage.NameSession(
+		sandbox.Config{Workspace: "9e8153f6d4c1", Project: "b75f5bf62544", ID: "aa01bb02cc03"},
+		sandbox.Names{Workspace: "itv", Project: "vast", Session: "the-login-that-times-out"},
+	); err != nil {
+		t.Errorf("NameSession: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(dir, "itv")); !errors.Is(err, os.ErrNotExist) {
+		t.Error("a name was written into the data directory")
+	}
+}
