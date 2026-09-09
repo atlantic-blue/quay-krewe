@@ -471,3 +471,78 @@ func TestAProjectCannotBeCalledAFolderTheSystemAlreadyWrites(t *testing.T) {
 		t.Fatalf("the refusal is %q, want it to say where the collision is", err)
 	}
 }
+
+// A session that took a working tree.
+//
+// The git skill teaches this shape first: the checkout goes in the workspace's volume under the
+// session's own identifier, so the session's own directory stays empty. An address that named the
+// empty one sent a person to copy a file into a directory nothing was working in, and a listing of it
+// said the session had made nothing.
+//
+// The answer is the tree rather than the checkout inside it. A file dropped into the checkout is a
+// file in somebody's git status, and the whole point of the address is somewhere to put a file.
+func TestWhereOnASessionThatTookAWorkingTreeNamesTheTreeAndNotItsOwnDirectory(t *testing.T) {
+	dir := t.TempDir()
+	storage := sandbox.Storage{Dir: dir, Host: dir}
+	held := store.NewMemory()
+	client := testClientWith(t, controlplane.Config{
+		Store: held, Runner: &model.FakeRunner{Reply: "ok"},
+		Provider: &sandbox.FakeProvider{}, Secrets: secrets.NewMemory(), Storage: storage,
+	})
+	mustRun(t, client, "workspace", "create", "acme")
+	mustRun(t, client, "project", "create", "house-bills")
+	handle := aSessionNothingHasRunIn(t, held, "house-bills")
+	session := theOnlySession(t, client)
+	tree := aWorkingTreeTaken(t, storage, session)
+
+	said := mustRun(t, client, "where", "acme/house-bills/"+handle)
+
+	if firstLineOf(said) != tree {
+		t.Fatalf("krewe where names %q, want the working tree at %q", firstLineOf(said), tree)
+	}
+	if !strings.Contains(said, "working tree") {
+		t.Fatalf("the answer does not say which root it read:\n%s", said)
+	}
+	if !strings.Contains(said, sandbox.WorktreesPath+"/"+session.GetId()) {
+		t.Fatalf("the answer does not say where the session sees it:\n%s", said)
+	}
+}
+
+// The other shape, kept beside the first one so the answer for a session that cloned into its own
+// directory is proved rather than assumed to be unchanged.
+func TestWhereOnASessionThatTookNoWorkingTreeStillNamesItsOwnDirectory(t *testing.T) {
+	client, held, _ := aSystemOnDisk(t)
+	mustRun(t, client, "workspace", "create", "acme")
+	mustRun(t, client, "project", "create", "house-bills")
+	handle := aSessionNothingHasRunIn(t, held, "house-bills")
+
+	said := mustRun(t, client, "where", "acme/house-bills/"+handle)
+
+	if !strings.Contains(said, "working directory of session") {
+		t.Fatalf("the answer does not name the session's own directory:\n%s", said)
+	}
+	if strings.Contains(said, "working tree") {
+		t.Fatalf("the answer names a working tree the session never took:\n%s", said)
+	}
+}
+
+// aWorkingTreeTaken writes what a session leaves behind when it follows the git skill: a checkout in
+// the workspace's volume, under this session's identifier. Its `.git` is a file, which is what git
+// writes in a working tree, and it answers the directory holding the checkout.
+func aWorkingTreeTaken(t *testing.T, storage sandbox.Storage, session *quaycrewv1.Session) string {
+	t.Helper()
+	volume, held := storage.VolumeDir(session.GetWorkspace())
+	if !held {
+		t.Fatal("this storage keeps no volume, so no session in it can take a working tree")
+	}
+	tree := filepath.Join(volume, "worktrees", session.GetId())
+	checkout := filepath.Join(tree, "quay-krewe")
+	if err := os.MkdirAll(checkout, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	gitdir := "gitdir: /home/agent/shared/repos/quay-krewe/.git/worktrees/" + session.GetId() + "\n"
+	if err := os.WriteFile(filepath.Join(checkout, ".git"), []byte(gitdir), 0o666); err != nil {
+		t.Fatal(err)
+	}
+	return tree
+}

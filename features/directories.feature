@@ -11,9 +11,13 @@ Feature: A name becomes a directory, so a person can put a file in front of a se
 
   So an address answers with a directory. A workspace address answers with its shared folder, which
   every session in it reads. A project address answers with a folder inside that one, named after the
-  project. A session address answers with that session's own working directory. The path is on the
-  first line with nothing beside it, so it can be typed into a shell, and under it is where a session
-  sees the same directory, which is what to call the file once it is in there.
+  project. A session address answers with where that session's work is, which is the working tree it
+  took where it took one and its own working directory where it did not. The path is on the first line
+  with nothing beside it, so it can be typed into a shell, and under it is where a session sees the
+  same directory, which is what to call the file once it is in there.
+
+  The answer names which of the two roots it read, because they are two directories and only the
+  sentence tells them apart.
 
   The project folder is where sessions were already putting a project's files, by hand. A workspace
   address and a project address used to answer with one directory between them, so the two addresses
@@ -87,3 +91,18 @@ Feature: A name becomes a directory, so a person can put a file in front of a se
     When the caller asks where "system" is
     Then standard error says "credentials"
     And the command fails
+
+  # The git skill teaches a session to take a working tree in the workspace's volume, under its own
+  # identifier, so the session's own directory stays empty. A session address that named the empty one
+  # sent a person to copy a file into a directory nothing was working in, and reading it back said the
+  # session had made nothing.
+  Scenario: A session takes a working tree, and its address lists the checkout rather than an empty directory
+    Given a workspace named "atlantic-blue"
+    And a project named "vast"
+    And a session started by dispatching "clone the repository"
+    And that session takes a working tree holding a checkout called "quay-krewe"
+    When the caller asks where that session is
+    Then the directory it names holds the folder "quay-krewe"
+    And it says the directory is that session's working tree
+    And that session reads the directory it names at the mount the answer promised
+    And that session's own directory holds nothing

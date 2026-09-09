@@ -195,3 +195,88 @@ func folderUnderTheSharedPath(value ast.Expr) (string, bool) {
 	first, _, _ := strings.Cut(trimmed, "/")
 	return first, true
 }
+
+// A session address reaches the work, which is in one of two directories.
+//
+// The failure it answers: the git skill tells a session to take a working tree in the workspace's
+// volume, so the session's own directory stays empty. An address that named the empty one sent a
+// person to copy a file into a directory nothing was working in, and reading it back said the session
+// had made nothing.
+
+func TestASessionAddressNamesTheWorkingTreeWhereTheSessionTookOne(t *testing.T) {
+	dir := t.TempDir()
+	storage := sandbox.Storage{Dir: dir, Host: dir}
+	cfg := sandbox.Config{Workspace: "a-workspace", Project: "a-project", ID: "145c0173"}
+	volume, _ := storage.VolumeDir(cfg.Workspace)
+	makeRepository(t, filepath.Join(volume, "worktrees", cfg.ID, "krewe"), false)
+
+	found, err := storage.SessionDirectory(cfg)
+	if err != nil {
+		t.Fatalf("SessionDirectory: %v", err)
+	}
+	if found.Sandbox != sandbox.WorktreesPath+"/145c0173" {
+		t.Errorf("the session reads it at %q, want %q", found.Sandbox, sandbox.WorktreesPath+"/145c0173")
+	}
+	if found.Kind != sandbox.KindWorkingTree {
+		t.Errorf("the answer calls it %q, want %q, so nothing says which root it read",
+			found.Kind, sandbox.KindWorkingTree)
+	}
+	if _, err := os.Stat(filepath.Join(found.Host, "krewe", ".git")); err != nil {
+		t.Errorf("the answer named %q, and the checkout is not in it: %v", found.Host, err)
+	}
+}
+
+// The other shape the git skill teaches, kept beside the first one so a change to either is visible.
+func TestASessionAddressNamesItsOwnDirectoryWhereItClonedIntoThatOne(t *testing.T) {
+	dir := t.TempDir()
+	storage := sandbox.Storage{Dir: dir, Host: dir}
+	cfg := sandbox.Config{Workspace: "a-workspace", Project: "a-project", ID: "145c0173"}
+	own, _ := storage.WorkingDir(cfg)
+	makeRepository(t, filepath.Join(own, "krewe"), true)
+
+	found, err := storage.SessionDirectory(cfg)
+	if err != nil {
+		t.Fatalf("SessionDirectory: %v", err)
+	}
+	if found.Sandbox != sandbox.WorkingPath {
+		t.Errorf("the session reads it at %q, want %q", found.Sandbox, sandbox.WorkingPath)
+	}
+	if found.Kind != sandbox.KindWorking {
+		t.Errorf("the answer calls it %q, want %q", found.Kind, sandbox.KindWorking)
+	}
+}
+
+// A session that has never run has neither, and the answer is still a directory somebody can copy
+// into: a job about to be dispatched is exactly when a person wants to leave it a file.
+func TestASessionThatHasNeverRunIsStillAnsweredWithItsOwnDirectory(t *testing.T) {
+	dir := t.TempDir()
+	storage := sandbox.Storage{Dir: dir, Host: dir}
+
+	found, err := storage.SessionDirectory(sandbox.Config{
+		Workspace: "a-workspace", Project: "a-project", ID: "145c0173",
+	})
+	if err != nil {
+		t.Fatalf("SessionDirectory: %v", err)
+	}
+	if found.Kind != sandbox.KindWorking {
+		t.Errorf("the answer calls it %q, want %q", found.Kind, sandbox.KindWorking)
+	}
+	info, err := os.Stat(found.Host)
+	if err != nil {
+		t.Fatalf("the answer named %q, which is not on the machine: %v", found.Host, err)
+	}
+	if !info.IsDir() {
+		t.Fatalf("the answer named %q, which is not a directory", found.Host)
+	}
+}
+
+// A system that keeps nothing on disk has no directory to name, which is a way of running it rather
+// than a fault.
+func TestASessionAddressOnASystemThatKeepsNothingSaysSo(t *testing.T) {
+	_, err := (sandbox.Storage{}).SessionDirectory(sandbox.Config{
+		Workspace: "a-workspace", Project: "a-project", ID: "145c0173",
+	})
+	if err == nil {
+		t.Fatal("a storage that keeps nothing answered with a directory")
+	}
+}

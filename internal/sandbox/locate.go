@@ -16,7 +16,7 @@ import (
 // It reads the same layout the mounts come from, so the two cannot drift into describing different
 // directories, and it starts nothing: a settled workspace answers as readily as a busy one.
 
-// DirectoryKind is which of the three directories an address landed on.
+// DirectoryKind is which directory an address landed on.
 type DirectoryKind string
 
 const (
@@ -26,6 +26,9 @@ const (
 	KindProject DirectoryKind = "project"
 	// KindWorking is one session's own working directory.
 	KindWorking DirectoryKind = "working"
+	// KindWorkingTree is the working tree one session took in its workspace's volume. A session that
+	// took one works there, and its own directory stays empty.
+	KindWorkingTree DirectoryKind = "working tree"
 )
 
 // Directory is one place a person can put a file, in the two views that matter to them.
@@ -35,7 +38,7 @@ type Directory struct {
 	// Sandbox is where the same directory appears inside a container, which is what a session calls
 	// the file once it is in there.
 	Sandbox string
-	// Kind says which of the three this is, so an answer can name it.
+	// Kind says which one this is, so an answer can name it.
 	Kind DirectoryKind
 }
 
@@ -119,6 +122,26 @@ func (s Storage) WorkingDirectory(cfg Config) (Directory, error) {
 		Sandbox: WorkingPath,
 		Kind:    KindWorking,
 	}, nil
+}
+
+// SessionDirectory is where one session's work is: the working tree it took, and its own working
+// directory where it took none.
+//
+// Two roots rather than one, because the git skill teaches two shapes and both are in use. A session
+// told to take a working tree writes into the workspace's volume under its own identifier, and its
+// own directory stays empty. An address that answered with the empty one would send a person to copy
+// a file into a directory the session is not working in, and a listing of it would say the session
+// made nothing.
+//
+// It looks in the same two roots `krewe read` looks in, and answers a different thing inside one of
+// them. Read roots at the checkout, because it is handing a file back. This names the directory the
+// checkout is in, because the answer is somewhere to put a file, and a file dropped inside a checkout
+// is a file in somebody's git status.
+func (s Storage) SessionDirectory(cfg Config) (Directory, error) {
+	if tree, held := WorkingTree(s.WorkPlaces(cfg)); held {
+		return Directory{Host: tree.Host, Sandbox: tree.Sandbox, Kind: tree.Kind}, nil
+	}
+	return s.WorkingDirectory(cfg)
 }
 
 // hostRoot is the data directory as the machine running the sandboxes sees it, falling back to this

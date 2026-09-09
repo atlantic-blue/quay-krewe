@@ -863,7 +863,7 @@ message ReadSessionWorkResponse {
   repeated SessionWorkEntry entries = 5;
 }
 
-// DirectoryKind says which of the system's two directories an answer names.
+// DirectoryKind says which of the system's directories an answer names.
 enum DirectoryKind {
   DIRECTORY_KIND_UNSPECIFIED = 0;
   // The workspace's shared folder, which every session in that workspace reads.
@@ -873,6 +873,9 @@ enum DirectoryKind {
   // A project's own folder inside the workspace's shared folder, named after the project. Every
   // session in the workspace reads it, and the sessions of that project are the ones told to.
   DIRECTORY_KIND_PROJECT = 3;
+  // The working tree one session took, in its workspace's volume and under its own identifier. A
+  // session that took one works there, so its own directory is empty and this is where the work is.
+  DIRECTORY_KIND_WORKING_TREE = 4;
 }
 
 // LocateDirectoryRequest asks where an address is on the machine, so a person can put a file in it by
@@ -887,9 +890,9 @@ message LocateDirectoryRequest {
   // project is the project id. With no session it is the answer itself: a project's own folder
   // inside the workspace's shared folder. With one it narrows the session to the project holding it.
   string project = 2;
-  // session is the session handle. With one, the answer is that session's own working directory;
-  // without one, it is the project's folder, or the workspace's shared folder where no project is
-  // named either.
+  // session is the session handle. With one, the answer is where that session's work is: the working
+  // tree it took, or its own working directory where it took none. Without one, the answer is the
+  // project's folder, or the workspace's shared folder where no project is named either.
   string session = 3;
 }
 message LocateDirectoryResponse {
@@ -899,7 +902,7 @@ message LocateDirectoryResponse {
   // sandbox is where the same directory appears inside a container, which is what a session calls the
   // file once it is in there.
   string sandbox = 2;
-  // kind says which of the three directories this is.
+  // kind says which directory this is, which is what lets an answer name the root it read.
   DirectoryKind kind = 3;
 }
 

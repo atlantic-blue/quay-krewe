@@ -48,7 +48,11 @@ func (s *Server) LocateDirectory(ctx context.Context, req *quaycrewv1.LocateDire
 	// The configuration comes off the session rather than off the request, so the answer names the
 	// directory that session's own sandbox binds. A session read through the wrong project would
 	// otherwise be answered with a path nothing mounts.
-	found, err := s.storage.WorkingDirectory(boxOf(session))
+	//
+	// Where the session took a working tree, that is the answer. Its own directory is then empty, and
+	// naming an empty directory is how a person concludes a session that worked for an hour made
+	// nothing.
+	found, err := s.storage.SessionDirectory(boxOf(session))
 	if err != nil {
 		return nil, locateError(err)
 	}
@@ -107,9 +111,10 @@ func (s *Server) sessionAt(ctx context.Context, req *quaycrewv1.LocateDirectoryR
 // a folder they were told belongs to something else.
 func answerFor(found sandbox.Directory) *quaycrewv1.LocateDirectoryResponse {
 	kinds := map[sandbox.DirectoryKind]quaycrewv1.DirectoryKind{
-		sandbox.KindShared:  quaycrewv1.DirectoryKind_DIRECTORY_KIND_SHARED,
-		sandbox.KindProject: quaycrewv1.DirectoryKind_DIRECTORY_KIND_PROJECT,
-		sandbox.KindWorking: quaycrewv1.DirectoryKind_DIRECTORY_KIND_WORKING,
+		sandbox.KindShared:      quaycrewv1.DirectoryKind_DIRECTORY_KIND_SHARED,
+		sandbox.KindProject:     quaycrewv1.DirectoryKind_DIRECTORY_KIND_PROJECT,
+		sandbox.KindWorking:     quaycrewv1.DirectoryKind_DIRECTORY_KIND_WORKING,
+		sandbox.KindWorkingTree: quaycrewv1.DirectoryKind_DIRECTORY_KIND_WORKING_TREE,
 	}
 	return &quaycrewv1.LocateDirectoryResponse{
 		Host: found.Host, Sandbox: found.Sandbox, Kind: kinds[found.Kind],

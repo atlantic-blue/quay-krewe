@@ -125,3 +125,61 @@ func makeRepository(t *testing.T, at string, clone bool) {
 		t.Fatal(err)
 	}
 }
+
+// The working tree a session took, answered as the root rather than as the checkout inside it.
+//
+// Repository names the checkout, because reading a file starts there. This names the directory the
+// checkout is in, because a person copying a file in is putting it beside the work rather than into
+// somebody's git status.
+func TestTheWorkingTreeIsTheRootRatherThanTheCheckoutInsideIt(t *testing.T) {
+	storage, cfg := aSession(t.TempDir())
+	volume, _ := storage.VolumeDir(cfg.Workspace)
+	makeRepository(t, filepath.Join(volume, "worktrees", cfg.ID, "krewe"), false)
+	places := storage.WorkPlaces(cfg)
+
+	tree, held := sandbox.WorkingTree(places)
+	if !held {
+		t.Fatalf("the system found no working tree for a session that took one")
+	}
+	if tree.Sandbox != "/home/agent/shared/worktrees/145c0173" {
+		t.Fatalf("the working tree is at %q inside a container, want the directory holding the checkout",
+			tree.Sandbox)
+	}
+	if tree.Kind != sandbox.KindWorkingTree {
+		t.Fatalf("the answer calls it %q, want %q", tree.Kind, sandbox.KindWorkingTree)
+	}
+	// The checkout itself is still reachable, and it is one level further down, which is the whole
+	// difference between the two answers.
+	checkout, _ := sandbox.Repository(places)
+	if checkout.Sandbox != tree.Sandbox+"/krewe" {
+		t.Fatalf("the checkout is at %q and the tree at %q, want the checkout inside the tree",
+			checkout.Sandbox, tree.Sandbox)
+	}
+}
+
+// A session that cloned into its own directory took no working tree. Answering that it did would name
+// a directory that is not on the machine, and the work would read as missing.
+func TestASessionThatClonedIntoItsOwnDirectoryTookNoWorkingTree(t *testing.T) {
+	storage, cfg := aSession(t.TempDir())
+	dir, _ := storage.WorkingDir(cfg)
+	makeRepository(t, filepath.Join(dir, "krewe"), true)
+
+	if tree, held := sandbox.WorkingTree(storage.WorkPlaces(cfg)); held {
+		t.Fatalf("the system read %q as a working tree, and the clone is in the session's own directory",
+			tree.Host)
+	}
+}
+
+// A working tree directory holding no clone is a clone that did not finish. Whatever the session did
+// write is in its own directory, so naming the empty one would hide it.
+func TestAWorkingTreeDirectoryWithNoCloneInItIsNotAWorkingTree(t *testing.T) {
+	storage, cfg := aSession(t.TempDir())
+	volume, _ := storage.VolumeDir(cfg.Workspace)
+	if err := os.MkdirAll(filepath.Join(volume, "worktrees", cfg.ID), 0o777); err != nil {
+		t.Fatal(err)
+	}
+
+	if tree, held := sandbox.WorkingTree(storage.WorkPlaces(cfg)); held {
+		t.Fatalf("the system read the empty directory %q as a working tree", tree.Host)
+	}
+}

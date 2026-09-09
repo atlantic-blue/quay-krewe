@@ -136,6 +136,99 @@ func initializeDirectorySteps(sc *godog.ScenarioContext) {
 	sc.Step(`^the caller makes a project called "([^"]*)"$`, func(ctx context.Context, project string) error {
 		return runTool(ctx, "project", "create", worldFrom(ctx).workspaceName+"/"+project)
 	})
+
+	// The shape the git skill teaches first: the checkout goes in the workspace's volume, under the
+	// session's own identifier, and its `.git` is a file rather than a directory. It is written here
+	// rather than cloned for real, because a scenario about which directory an address names has no
+	// business needing a network.
+	sc.Step(`^that session takes a working tree holding a checkout called "([^"]*)"$`,
+		func(ctx context.Context, repository string) error {
+			w := worldFrom(ctx)
+			current, err := w.lastExec()
+			if err != nil {
+				return err
+			}
+			volume, held := w.storage.VolumeDir(w.workspaceID)
+			if !held {
+				return fmt.Errorf("this system keeps no volume, so no session in it can take a working tree")
+			}
+			checkout := filepath.Join(volume, "worktrees", current.sessionID, repository)
+			if err := os.MkdirAll(checkout, 0o777); err != nil {
+				return err
+			}
+			gitdir := "gitdir: /home/agent/shared/repos/" + repository + "/.git/worktrees/" + current.sessionID
+			return os.WriteFile(filepath.Join(checkout, ".git"), []byte(gitdir+"\n"), 0o600)
+		})
+
+	sc.Step(`^the caller asks where that session is$`, func(ctx context.Context) error {
+		w := worldFrom(ctx)
+		current, err := w.lastExec()
+		if err != nil {
+			return err
+		}
+		return runTool(ctx, "where", w.workspaceName+"/"+w.projectName+"/"+current.handle)
+	})
+
+	sc.Step(`^it says the directory is that session's working tree$`, func(ctx context.Context) error {
+		current, err := worldFrom(ctx).lastExec()
+		if err != nil {
+			return err
+		}
+		return says("standard output", toolFrom(ctx).stdout, "the working tree of session "+current.handle)
+	})
+
+	// The half a printed path cannot prove about itself, for the working tree: that a sandbox of this
+	// session binds a directory holding it, and that the mount the answer promised is where the same
+	// directory turns up inside the container. A step that rebuilt the path would pass against a
+	// directory nothing reads.
+	sc.Step(`^that session reads the directory it names at the mount the answer promised$`,
+		func(ctx context.Context) error {
+			w := worldFrom(ctx)
+			current, err := w.lastExec()
+			if err != nil {
+				return err
+			}
+			mounts, err := w.storage.Prepare(sandbox.Config{
+				ID: current.sessionID, Workspace: w.workspaceID, Project: w.projectID,
+			})
+			if err != nil {
+				return fmt.Errorf("what a sandbox is given: %w", err)
+			}
+			named := theDirectoryNamed(ctx)
+			for _, one := range mounts {
+				rest, inside := strings.CutPrefix(named, one.Source+string(filepath.Separator))
+				if !inside {
+					continue
+				}
+				return says("standard output", toolFrom(ctx).stdout, one.Target+"/"+filepath.ToSlash(rest))
+			}
+			return fmt.Errorf("no sandbox mount holds %q, and a sandbox is given %v", named, sources(mounts))
+		})
+
+	// The other half of the sentence. The directory a session address used to answer with is empty, so
+	// naming it would have said this session made nothing.
+	sc.Step(`^that session's own directory holds nothing$`, func(ctx context.Context) error {
+		w := worldFrom(ctx)
+		current, err := w.lastExec()
+		if err != nil {
+			return err
+		}
+		own, held := w.storage.WorkingDir(sandbox.Config{
+			ID: current.sessionID, Workspace: w.workspaceID, Project: w.projectID,
+		})
+		if !held {
+			return fmt.Errorf("this system keeps no working directory, so there is none to be empty")
+		}
+		entries, err := os.ReadDir(own)
+		if err != nil {
+			return fmt.Errorf("read %q: %w", own, err)
+		}
+		if len(entries) != 0 {
+			return fmt.Errorf("the session's own directory %q holds %d entries, so it is not the empty one",
+				own, len(entries))
+		}
+		return nil
+	})
 }
 
 // theDirectoryNamed is the path the command printed, which is its whole first line.
