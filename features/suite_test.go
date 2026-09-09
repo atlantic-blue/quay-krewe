@@ -350,6 +350,9 @@ type world struct {
 	// storage is a real conversation store on disk, so a scenario can say what the model kept and
 	// what it did not. The scenarios that do not care about it seed every conversation they start.
 	storage sandbox.Storage
+	// home is the system directory the scenario got, holding both the data directory and the tree of
+	// names, so the cleanup takes the whole layout rather than half of it.
+	home string
 	// info is what the control plane reports about itself, describing the doubles the scenarios
 	// actually run against rather than a stack nobody here has.
 	info controlplane.Info
@@ -387,11 +390,18 @@ func worldFrom(ctx context.Context) *world {
 // start builds a control plane with doubles behind it and serves it over an in memory listener, so
 // the scenarios exercise the real gRPC path without a port.
 func (w *world) start() error {
-	dir, err := os.MkdirTemp("", "quaycrew-features-")
+	// The system's own directory for the scenario, laid out the way an operator's is: the data
+	// directory it writes, and the tree of names beside it, which is the part a person opens.
+	home, err := os.MkdirTemp("", "quaycrew-features-")
 	if err != nil {
 		return fmt.Errorf("conversation store for the scenario: %w", err)
 	}
-	w.storage = sandbox.Storage{Dir: dir, Host: dir}
+	w.home = home
+	dir := filepath.Join(home, "data")
+	if err := os.MkdirAll(dir, 0o777); err != nil {
+		return fmt.Errorf("conversation store for the scenario: %w", err)
+	}
+	w.storage = sandbox.Storage{Dir: dir, Host: dir, NameTree: filepath.Join(home, "at")}
 	w.skillsDir = filepath.Join(dir, "skills")
 	w.provider = &sandbox.FakeProvider{}
 	w.runner = &recordingRunner{}
@@ -681,6 +691,7 @@ func initializeScenario(sc *godog.ScenarioContext) {
 	initializeExecWordSteps(sc)
 	initializeLevelWordSteps(sc)
 	initializeDirectorySteps(sc)
+	initializeNameSteps(sc)
 	initializeVersionSteps(sc)
 	initializeAttachSteps(sc)
 	initializeContextSteps(sc)
@@ -741,8 +752,8 @@ func initializeScenario(sc *godog.ScenarioContext) {
 			w.stop()
 			// The conversation store outlives a restart, which is the point of it, so it is cleaned
 			// up here rather than in stop.
-			if w.storage.Dir != "" {
-				_ = os.RemoveAll(w.storage.Dir)
+			if w.home != "" {
+				_ = os.RemoveAll(w.home)
 			}
 			for _, dir := range w.scratch {
 				_ = os.RemoveAll(dir)

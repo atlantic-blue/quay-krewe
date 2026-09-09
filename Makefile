@@ -75,8 +75,11 @@ print-%:
 # The data directory is made here too, and made first, because docker creates a missing bind mount
 # source itself and creates it as root. That would leave the system's own directory owned by root, and
 # the next `krewe use` unable to write the address you are working in into it.
+#
+# The tree of names is a bind mount source as well, so it is made here for the same reason. It is the
+# directory an operator opens: ~/.krewe/at/itv is the shared folder of the workspace called itv.
 config:
-	@mkdir -p "$(KREWE_HOME)/data"
+	@mkdir -p "$(KREWE_HOME)/data" "$(KREWE_HOME)/at"
 	@if [ ! -f "$(ENV_FILE)" ]; then \
 		mkdir -p "$(dir $(ENV_FILE))"; \
 		cp deploy/env.example "$(ENV_FILE)"; \

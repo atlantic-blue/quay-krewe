@@ -846,6 +846,7 @@ func (s *Server) CreateWorkspace(ctx context.Context, req *quaycrewv1.CreateWork
 	if err != nil {
 		return nil, storeError(err, "create workspace")
 	}
+	s.nameWorkspace(ctx, workspace)
 	return &quaycrewv1.CreateWorkspaceResponse{Workspace: workspace}, nil
 }
 
@@ -1025,6 +1026,7 @@ func (s *Server) CreateProject(ctx context.Context, req *quaycrewv1.CreateProjec
 	if err != nil {
 		return nil, storeError(err, "workspace")
 	}
+	s.nameProject(ctx, project)
 	return &quaycrewv1.CreateProjectResponse{Project: project}, nil
 }
 
@@ -1153,6 +1155,7 @@ func (s *Server) Dispatch(ctx context.Context, req *quaycrewv1.DispatchRequest) 
 	}
 	if created {
 		s.emit(ctx, session, KindSessionCreated, "")
+		s.nameSession(ctx, session)
 	}
 	// A handle is matched whether the session is put away or not, so a dispatch to one the operator
 	// archived used to start a container for a session nobody can see. Archiving stops the session, and
