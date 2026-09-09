@@ -208,6 +208,11 @@ func main() {
 	// stopped, archived or deleted after this process last saw it is running for nobody.
 	server.ReapStrays(ctx)
 
+	// And the tree of names is made to say what the store says: a label that changed, a session that was
+	// put away and a workspace that was deleted while this was down all left the tree pointing at
+	// directories nobody is working in.
+	server.SweepNames(ctx)
+
 	// And what was mid exec when the system went down is settled the same way: an exec runs in this
 	// process, so a session the store still calls running is one whose exec died with the last one.
 	server.SettleExecs(ctx)

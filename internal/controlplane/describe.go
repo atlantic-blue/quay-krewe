@@ -178,7 +178,11 @@ func (s *Server) describeSession(ctx context.Context, sessionID string) {
 	}
 	if err := s.store.SetDescription(ctx, sessionID, description, execs); err != nil {
 		slog.DebugContext(ctx, "a session's description could not be kept", "session", sessionID, "error", err)
+		return
 	}
+	// A session nobody labelled is called by the line the system wrote about it, so writing that line
+	// renames it, and the tree follows a rename.
+	s.SweepNames(ctx)
 }
 
 // isTheQuestionBack says whether what came back is the question rather than an answer to it.

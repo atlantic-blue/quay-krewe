@@ -49,3 +49,31 @@ Feature: Every address has a name on the filesystem
     And a project named "vast"
     When a session started by dispatching "look at the login"
     Then the tree of names holds no identifier
+
+  # The three things that move a name. A tree written once and never repaired points at directories
+  # nobody is working in, and a name that opens the wrong folder is worse than no name at all.
+  Scenario: A renamed session is under the new name and not the old one
+    Given a workspace named "itv"
+    And a project named "vast"
+    When a session is dispatched with the title "the login that times out"
+    And the operator labels the session "the checkout that times out"
+    Then the name "itv.sessions/vast/the-checkout-that-times-out" is in the tree
+    And the name "itv.sessions/vast/the-login-that-times-out" is not in the tree
+
+  Scenario: A workspace is deleted, and the tree of names holds nothing pointing at it
+    Given a workspace named "itv"
+    And a project named "vast"
+    When a session is dispatched with the title "the login that times out"
+    And the operator deletes the workspace
+    Then the tree of names holds nothing
+
+  # The tree is a view, so it is repaired from the store rather than kept. A workspace that existed
+  # before any of this shipped gets its name here too.
+  Scenario: A tree that was deleted is written again when the system starts
+    Given a workspace named "itv"
+    And a project named "vast"
+    When a session is dispatched with the title "the login that times out"
+    And the tree of names is deleted
+    And the control plane restarts
+    Then the name "itv" is in the tree
+    And the name "itv.sessions/vast/the-login-that-times-out" is in the tree

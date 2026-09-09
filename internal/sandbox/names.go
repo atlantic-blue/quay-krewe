@@ -1,9 +1,12 @@
 package sandbox
 
 import (
+	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/atlantic-blue/quay-krewe/internal/name"
@@ -86,22 +89,18 @@ func (s Storage) NameSession(cfg Config, named Names) error {
 	if err := usableAsName("workspace", named.Workspace); err != nil {
 		return err
 	}
-	for _, part := range []struct{ kind, value string }{
-		{"project", named.Project}, {"session", named.Session},
-	} {
-		if err := usableAsPath(part.kind, part.value); err != nil {
-			return err
-		}
+	if err := usablePart(named); err != nil {
+		return err
 	}
 	working, err := s.WorkingDirectory(cfg)
 	if err != nil {
 		return err
 	}
-	under := filepath.Join(s.NameTree, named.Workspace+SessionsSuffix, named.Project)
-	if err := makeWritableDir(under); err != nil {
+	at := filepath.Join(s.NameTree, sessionNameAt(named))
+	if err := makeWritableDir(filepath.Dir(at)); err != nil {
 		return err
 	}
-	return pointAt(filepath.Join(under, named.Session), working.Host)
+	return pointAt(at, working.Host)
 }
 
 // pointAt makes one name in the tree.
@@ -150,4 +149,223 @@ func usableAsName(what, value string) error {
 		return fmt.Errorf("sandbox: %q names the directory holding the tokens and the sealing key, so it is not a name in the tree", value)
 	}
 	return nil
+}
+
+// Held is every name the store holds right now: what each workspace is called, and what each live
+// session is called under its workspace and project. It is the whole answer rather than a change,
+// because the tree is a view and a view is repaired by being written again.
+//
+// The order matters. Two workspaces may hold one name, and so may two sessions of one project, so the
+// first entry keeps the name and the ones after it are said out loud rather than written. Give them
+// oldest first and the tree answers the same way every time it is built.
+type Held struct {
+	Workspaces []WorkspaceName
+	Sessions   []SessionName
+}
+
+// WorkspaceName is one workspace: the identifier its directory is named after, and what a person
+// calls it.
+type WorkspaceName struct {
+	ID   string
+	Name string
+}
+
+// SessionName is one session: the identifiers that locate its own directory, and the names it is
+// filed under.
+type SessionName struct {
+	Config Config
+	Names  Names
+}
+
+// WriteNames makes the tree say what the store says, and nothing else.
+//
+// A label changes, a session is put away and a workspace is deleted, and a tree written once then
+// points at directories nobody is working in. This is the repair: it runs at start up, so a system
+// that was down while things moved comes up correct, and it runs after each of those changes, so the
+// tree is right in between. A workspace made before any of this shipped gets its name here too,
+// because the tree is built from the store rather than added to as things are made.
+//
+// It writes the whole tree each time rather than the one name that moved. Deleting a workspace takes
+// every session name in it, so the targeted form would be the same walk with a second set of rules to
+// keep in step with this one. The cost is a read of the store and a read of the tree, on an operator's
+// action rather than on a request path.
+//
+// What it takes away is what it writes: a link. A file or a directory somebody left here was not
+// written by this view, so removing it is not this view's business, and it is left where it is.
+//
+// A name it cannot write costs the tree that name and not the sweep. The reason comes back joined
+// with every other, because a name that quietly did not appear is a person opening a folder that is
+// not there.
+func (s Storage) WriteNames(held Held) error {
+	if s.NameTree == "" || s.Dir == "" {
+		return nil
+	}
+	if err := makeWritableDir(s.NameTree); err != nil {
+		return err
+	}
+	wanted, refused := s.wantedNames(held)
+	trouble := []error{refused, s.takeAwayWhatWent(wanted)}
+	for _, at := range slices.Sorted(maps.Keys(wanted)) {
+		trouble = append(trouble, repointAt(filepath.Join(s.NameTree, at), wanted[at]))
+	}
+	return errors.Join(trouble...)
+}
+
+// wantedNames is every name the tree should hold, from the path inside the tree to the directory on
+// the host it points at.
+//
+// The directories are made here, which is how a name whose directory went comes back pointing at
+// something: the same call that says where a name points creates what it points at.
+func (s Storage) wantedNames(held Held) (map[string]string, error) {
+	wanted := make(map[string]string, len(held.Workspaces)+len(held.Sessions))
+	var refused []error
+	claim := func(at, to, whose string) {
+		if taken, already := wanted[at]; already {
+			if taken != to {
+				refused = append(refused, fmt.Errorf(
+					"sandbox: %s is the name of two %ss, so the tree holds the one made first, at %s",
+					at, whose, taken))
+			}
+			return
+		}
+		wanted[at] = to
+	}
+	for _, workspace := range held.Workspaces {
+		if err := usableAsName("workspace", workspace.Name); err != nil {
+			refused = append(refused, err)
+			continue
+		}
+		shared, err := s.SharedDirectory(workspace.ID)
+		if err != nil {
+			refused = append(refused, err)
+			continue
+		}
+		claim(workspace.Name, shared.Host, "workspace")
+	}
+	for _, session := range held.Sessions {
+		if err := usableAsName("workspace", session.Names.Workspace); err != nil {
+			refused = append(refused, err)
+			continue
+		}
+		if err := usablePart(session.Names); err != nil {
+			refused = append(refused, err)
+			continue
+		}
+		working, err := s.WorkingDirectory(session.Config)
+		if err != nil {
+			refused = append(refused, err)
+			continue
+		}
+		claim(sessionNameAt(session.Names), working.Host, "session")
+	}
+	return wanted, errors.Join(refused...)
+}
+
+// takeAwayWhatWent removes every link the store no longer holds a name for, and the directories that
+// held nothing but those links.
+//
+// A session directory left standing empty says a workspace has sessions when it has none, so it goes
+// with the last name in it. It goes only when it is empty, so anything else in there keeps it.
+func (s Storage) takeAwayWhatWent(wanted map[string]string) error {
+	entries, err := os.ReadDir(s.NameTree)
+	if err != nil {
+		return fmt.Errorf("sandbox: read the tree at %s: %w", s.NameTree, err)
+	}
+	var trouble []error
+	for _, entry := range entries {
+		switch {
+		case entry.Type()&os.ModeSymlink != 0:
+			trouble = append(trouble, s.takeAwayUnless(entry.Name(), wanted))
+		case entry.IsDir() && strings.HasSuffix(entry.Name(), SessionsSuffix):
+			trouble = append(trouble, s.takeAwaySessionNames(entry.Name(), wanted))
+		}
+	}
+	return errors.Join(trouble...)
+}
+
+// takeAwaySessionNames does the same one level down, under a workspace's session directory, where a
+// name is filed by project and then by session.
+func (s Storage) takeAwaySessionNames(sessions string, wanted map[string]string) error {
+	projects, err := os.ReadDir(filepath.Join(s.NameTree, sessions))
+	if err != nil {
+		return fmt.Errorf("sandbox: read %s: %w", sessions, err)
+	}
+	var trouble []error
+	for _, project := range projects {
+		if !project.IsDir() {
+			continue
+		}
+		under := filepath.Join(sessions, project.Name())
+		named, err := os.ReadDir(filepath.Join(s.NameTree, under))
+		if err != nil {
+			trouble = append(trouble, fmt.Errorf("sandbox: read %s: %w", under, err))
+			continue
+		}
+		for _, one := range named {
+			if one.Type()&os.ModeSymlink == 0 {
+				continue
+			}
+			trouble = append(trouble, s.takeAwayUnless(filepath.Join(under, one.Name()), wanted))
+		}
+		trouble = append(trouble, s.takeAwayIfEmpty(under))
+	}
+	return errors.Join(append(trouble, s.takeAwayIfEmpty(sessions))...)
+}
+
+// takeAwayUnless removes one name the store no longer holds.
+func (s Storage) takeAwayUnless(at string, wanted map[string]string) error {
+	if _, keep := wanted[at]; keep {
+		return nil
+	}
+	if err := os.Remove(filepath.Join(s.NameTree, at)); err != nil {
+		return fmt.Errorf("sandbox: take the name %s away: %w", at, err)
+	}
+	return nil
+}
+
+// takeAwayIfEmpty removes a directory this view made to file names under, once the last name in it
+// has gone. A directory holding anything else is left alone.
+func (s Storage) takeAwayIfEmpty(at string) error {
+	held, err := os.ReadDir(filepath.Join(s.NameTree, at))
+	if err != nil || len(held) > 0 {
+		return nil
+	}
+	if err := os.Remove(filepath.Join(s.NameTree, at)); err != nil {
+		return fmt.Errorf("sandbox: take the empty directory %s away: %w", at, err)
+	}
+	return nil
+}
+
+// sessionNameAt is where one session's name is filed, inside the tree.
+func sessionNameAt(named Names) string {
+	return filepath.Join(named.Workspace+SessionsSuffix, named.Project, named.Session)
+}
+
+// usablePart refuses a project or a session name that would land somewhere other than where it says.
+func usablePart(named Names) error {
+	for _, part := range []struct{ kind, value string }{
+		{"project", named.Project}, {"session", named.Session},
+	} {
+		if err := usableAsPath(part.kind, part.value); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// repointAt is pointAt with the store's answer behind it, so a name that went stale is moved onto the
+// directory the store says rather than refused.
+//
+// Creating a name refuses to move one, because it holds one workspace's word and cannot tell which of
+// the two is right. The sweep read every name in the system before it wrote any of them, so it can.
+func repointAt(from, to string) error {
+	if held, err := os.Readlink(from); err == nil && held != to {
+		if err := os.Remove(from); err != nil {
+			return fmt.Errorf("sandbox: take the stale name %s away: %w", from, err)
+		}
+	}
+	if err := makeWritableDir(filepath.Dir(from)); err != nil {
+		return err
+	}
+	return pointAt(from, to)
 }

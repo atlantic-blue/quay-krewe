@@ -2,6 +2,7 @@ package features_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -121,6 +122,53 @@ func initializeNameSteps(sc *godog.ScenarioContext) {
 		}
 		if held == 0 {
 			return fmt.Errorf("the tree at %q is empty, so it says nothing about identifiers", w.storage.NameTree)
+		}
+		return nil
+	})
+
+	// The three things that move a name. These steps read the tree itself rather than a mount,
+	// because what is under test is whether a link is there at all.
+	sc.Step(`^the tree of names is deleted$`, func(ctx context.Context) error {
+		w := worldFrom(ctx)
+		return os.RemoveAll(w.storage.NameTree)
+	})
+
+	// A name that is there and opens nothing is the failure the sweep exists to repair, so this asks
+	// both questions: the link is in the tree, and the directory it points at is on the machine.
+	sc.Step(`^the name "([^"]*)" is in the tree$`, func(ctx context.Context, named string) error {
+		w := worldFrom(ctx)
+		at := filepath.Join(w.storage.NameTree, filepath.FromSlash(named))
+		points, err := os.Readlink(at)
+		if err != nil {
+			return fmt.Errorf("%q is not a name pointing anywhere: %w", at, err)
+		}
+		if _, err := os.Stat(at); err != nil {
+			return fmt.Errorf("%q points at %q, and there is nothing there: %w", at, points, err)
+		}
+		return nil
+	})
+
+	sc.Step(`^the name "([^"]*)" is not in the tree$`, func(ctx context.Context, named string) error {
+		w := worldFrom(ctx)
+		at := filepath.Join(w.storage.NameTree, filepath.FromSlash(named))
+		if _, err := os.Lstat(at); !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("%q is still in the tree", at)
+		}
+		return nil
+	})
+
+	sc.Step(`^the tree of names holds nothing$`, func(ctx context.Context) error {
+		w := worldFrom(ctx)
+		held, err := os.ReadDir(w.storage.NameTree)
+		if err != nil {
+			return fmt.Errorf("read the tree at %q: %w", w.storage.NameTree, err)
+		}
+		if len(held) > 0 {
+			left := make([]string, 0, len(held))
+			for _, one := range held {
+				left = append(left, one.Name())
+			}
+			return fmt.Errorf("the tree still holds %v", left)
 		}
 		return nil
 	})
