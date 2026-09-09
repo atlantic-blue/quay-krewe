@@ -26,7 +26,7 @@ Feature: A file is deleted from a volume
   Scenario: Deleting a name that is not there says what the directory holds, and fails
     Given a workspace named "atlantic-blue"
     And a project named "vast"
-    When the caller asks where "atlantic-blue/vast" is
+    When the caller lists the volume "krewe://atlantic-blue/vast"
     And that directory holds
       | name        | contents |
       | explore.txt | eeee     |
@@ -40,7 +40,7 @@ Feature: A file is deleted from a volume
   Scenario: One named file goes and nothing beside it does
     Given a workspace named "atlantic-blue"
     And a project named "vast"
-    When the caller asks where "atlantic-blue/vast" is
+    When the caller lists the volume "krewe://atlantic-blue/vast"
     And that directory holds
       | name        | contents |
       | explore.txt | eeee     |
@@ -59,7 +59,7 @@ Feature: A file is deleted from a volume
   Scenario: A folder in the volume is refused rather than emptied
     Given a workspace named "atlantic-blue"
     And a project named "vast"
-    When the caller asks where "atlantic-blue/vast" is
+    When the caller lists the volume "krewe://atlantic-blue/vast"
     And that directory holds
       | name  | contents |
       | logs/ |          |
@@ -76,7 +76,7 @@ Feature: A file is deleted from a volume
   Scenario: The volume itself is refused rather than emptied
     Given a workspace named "atlantic-blue"
     And a project named "vast"
-    When the caller asks where "atlantic-blue/vast" is
+    When the caller lists the volume "krewe://atlantic-blue/vast"
     And that directory holds
       | name        | contents |
       | explore.txt | eeee     |
