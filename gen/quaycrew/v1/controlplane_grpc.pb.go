@@ -64,6 +64,8 @@ const (
 	ControlPlaneService_FinishFeature_FullMethodName            = "/quaycrew.v1.ControlPlaneService/FinishFeature"
 	ControlPlaneService_ReadSessionWork_FullMethodName          = "/quaycrew.v1.ControlPlaneService/ReadSessionWork"
 	ControlPlaneService_LocateDirectory_FullMethodName          = "/quaycrew.v1.ControlPlaneService/LocateDirectory"
+	ControlPlaneService_PutVolumeFile_FullMethodName            = "/quaycrew.v1.ControlPlaneService/PutVolumeFile"
+	ControlPlaneService_GetVolumeFile_FullMethodName            = "/quaycrew.v1.ControlPlaneService/GetVolumeFile"
 	ControlPlaneService_ImportSkill_FullMethodName              = "/quaycrew.v1.ControlPlaneService/ImportSkill"
 	ControlPlaneService_ListSkills_FullMethodName               = "/quaycrew.v1.ControlPlaneService/ListSkills"
 	ControlPlaneService_AttachSkill_FullMethodName              = "/quaycrew.v1.ControlPlaneService/AttachSkill"
@@ -161,6 +163,14 @@ type ControlPlaneServiceClient interface {
 	// Says where an address is on the machine, so a person can put a file in it by hand. It reads the
 	// layout rather than a running container, so it answers when nothing is running.
 	LocateDirectory(ctx context.Context, in *LocateDirectoryRequest, opts ...grpc.CallOption) (*LocateDirectoryResponse, error)
+	// The bytes of one file in a volume, in both directions. They stream because the tool and the
+	// volume are not always on one machine, and because a file is bigger than a message may be.
+	//
+	// Neither is denied to the driver, for the reason LocateDirectory and ReadSessionWork are not:
+	// they carry the bytes of a file and they grant nothing. A call that widens what a session may do
+	// is the operator's to make, and these two do not widen anything.
+	PutVolumeFile(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[PutVolumeFileRequest, PutVolumeFileResponse], error)
+	GetVolumeFile(ctx context.Context, in *GetVolumeFileRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[GetVolumeFileResponse], error)
 	ImportSkill(ctx context.Context, in *ImportSkillRequest, opts ...grpc.CallOption) (*ImportSkillResponse, error)
 	ListSkills(ctx context.Context, in *ListSkillsRequest, opts ...grpc.CallOption) (*ListSkillsResponse, error)
 	AttachSkill(ctx context.Context, in *AttachSkillRequest, opts ...grpc.CallOption) (*AttachSkillResponse, error)
@@ -639,6 +649,38 @@ func (c *controlPlaneServiceClient) LocateDirectory(ctx context.Context, in *Loc
 	return out, nil
 }
 
+func (c *controlPlaneServiceClient) PutVolumeFile(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[PutVolumeFileRequest, PutVolumeFileResponse], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &ControlPlaneService_ServiceDesc.Streams[0], ControlPlaneService_PutVolumeFile_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[PutVolumeFileRequest, PutVolumeFileResponse]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type ControlPlaneService_PutVolumeFileClient = grpc.ClientStreamingClient[PutVolumeFileRequest, PutVolumeFileResponse]
+
+func (c *controlPlaneServiceClient) GetVolumeFile(ctx context.Context, in *GetVolumeFileRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[GetVolumeFileResponse], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &ControlPlaneService_ServiceDesc.Streams[1], ControlPlaneService_GetVolumeFile_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[GetVolumeFileRequest, GetVolumeFileResponse]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type ControlPlaneService_GetVolumeFileClient = grpc.ServerStreamingClient[GetVolumeFileResponse]
+
 func (c *controlPlaneServiceClient) ImportSkill(ctx context.Context, in *ImportSkillRequest, opts ...grpc.CallOption) (*ImportSkillResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ImportSkillResponse)
@@ -851,6 +893,14 @@ type ControlPlaneServiceServer interface {
 	// Says where an address is on the machine, so a person can put a file in it by hand. It reads the
 	// layout rather than a running container, so it answers when nothing is running.
 	LocateDirectory(context.Context, *LocateDirectoryRequest) (*LocateDirectoryResponse, error)
+	// The bytes of one file in a volume, in both directions. They stream because the tool and the
+	// volume are not always on one machine, and because a file is bigger than a message may be.
+	//
+	// Neither is denied to the driver, for the reason LocateDirectory and ReadSessionWork are not:
+	// they carry the bytes of a file and they grant nothing. A call that widens what a session may do
+	// is the operator's to make, and these two do not widen anything.
+	PutVolumeFile(grpc.ClientStreamingServer[PutVolumeFileRequest, PutVolumeFileResponse]) error
+	GetVolumeFile(*GetVolumeFileRequest, grpc.ServerStreamingServer[GetVolumeFileResponse]) error
 	ImportSkill(context.Context, *ImportSkillRequest) (*ImportSkillResponse, error)
 	ListSkills(context.Context, *ListSkillsRequest) (*ListSkillsResponse, error)
 	AttachSkill(context.Context, *AttachSkillRequest) (*AttachSkillResponse, error)
@@ -1013,6 +1063,12 @@ func (UnimplementedControlPlaneServiceServer) ReadSessionWork(context.Context, *
 }
 func (UnimplementedControlPlaneServiceServer) LocateDirectory(context.Context, *LocateDirectoryRequest) (*LocateDirectoryResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method LocateDirectory not implemented")
+}
+func (UnimplementedControlPlaneServiceServer) PutVolumeFile(grpc.ClientStreamingServer[PutVolumeFileRequest, PutVolumeFileResponse]) error {
+	return status.Error(codes.Unimplemented, "method PutVolumeFile not implemented")
+}
+func (UnimplementedControlPlaneServiceServer) GetVolumeFile(*GetVolumeFileRequest, grpc.ServerStreamingServer[GetVolumeFileResponse]) error {
+	return status.Error(codes.Unimplemented, "method GetVolumeFile not implemented")
 }
 func (UnimplementedControlPlaneServiceServer) ImportSkill(context.Context, *ImportSkillRequest) (*ImportSkillResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ImportSkill not implemented")
@@ -1884,6 +1940,24 @@ func _ControlPlaneService_LocateDirectory_Handler(srv interface{}, ctx context.C
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ControlPlaneService_PutVolumeFile_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(ControlPlaneServiceServer).PutVolumeFile(&grpc.GenericServerStream[PutVolumeFileRequest, PutVolumeFileResponse]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type ControlPlaneService_PutVolumeFileServer = grpc.ClientStreamingServer[PutVolumeFileRequest, PutVolumeFileResponse]
+
+func _ControlPlaneService_GetVolumeFile_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(GetVolumeFileRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(ControlPlaneServiceServer).GetVolumeFile(m, &grpc.GenericServerStream[GetVolumeFileRequest, GetVolumeFileResponse]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type ControlPlaneService_GetVolumeFileServer = grpc.ServerStreamingServer[GetVolumeFileResponse]
+
 func _ControlPlaneService_ImportSkill_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ImportSkillRequest)
 	if err := dec(in); err != nil {
@@ -2358,6 +2432,17 @@ var ControlPlaneService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _ControlPlaneService_GetHealth_Handler,
 		},
 	},
-	Streams:  []grpc.StreamDesc{},
+	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "PutVolumeFile",
+			Handler:       _ControlPlaneService_PutVolumeFile_Handler,
+			ClientStreams: true,
+		},
+		{
+			StreamName:    "GetVolumeFile",
+			Handler:       _ControlPlaneService_GetVolumeFile_Handler,
+			ServerStreams: true,
+		},
+	},
 	Metadata: "quaycrew/v1/controlplane.proto",
 }

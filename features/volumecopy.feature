@@ -12,9 +12,9 @@ Feature: A file is copied into a volume
   refused. A copy that writes over the last one silently is how the work in it is lost. Saying
   --replace means it.
 
-  The bytes are copied by the command, on the machine the tool and the sandboxes share. They go
-  through one interface with one method. The day the volume is on another machine, that method
-  becomes a stream. Nothing a person types changes.
+  The bytes go through one interface with one method, and the method is a stream through the control
+  plane. The tool and the volume are not always on one machine, and a copy on this one reaches
+  nothing where they are apart. What a person types is the same either way.
 
   Background:
     Given a running control plane

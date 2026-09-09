@@ -22,28 +22,42 @@ import (
 // It starts nothing and reads no container, which is the case that had no answer at all: a bind mount
 // can only be read off a container that is up, and the question is usually asked once they are down.
 func (s *Server) LocateDirectory(ctx context.Context, req *quaycrewv1.LocateDirectoryRequest) (*quaycrewv1.LocateDirectoryResponse, error) {
-	if req.GetWorkspace() == "" {
-		return nil, status.Error(codes.InvalidArgument,
-			"say which workspace: krewe volume list krewe://<workspace>[/<project>[/<session>]]")
-	}
-	if _, err := s.store.GetWorkspace(ctx, req.GetWorkspace()); err != nil {
-		return nil, storeError(err, "workspace")
-	}
-
-	if req.GetSession() == "" {
-		if req.GetProject() == "" {
-			found, err := s.storage.SharedDirectory(req.GetWorkspace())
-			if err != nil {
-				return nil, locateError(err)
-			}
-			return answerFor(found), nil
-		}
-		return s.projectDirectory(ctx, req)
-	}
-
-	session, err := s.sessionAt(ctx, req)
+	found, err := s.directoryFor(ctx, req.GetWorkspace(), req.GetProject(), req.GetSession())
 	if err != nil {
 		return nil, err
+	}
+	return answerFor(found), nil
+}
+
+// directoryFor is the directory an address landed on, in every view of it at once.
+//
+// It is separate from the call above because the calls that carry bytes need the same three
+// directories and a different view of them. LocateDirectory hands back the path on the machine, for
+// a person. A put and a get open the directory themselves, which is the path this process sees, and
+// under Kubernetes those two are not the same path.
+func (s *Server) directoryFor(ctx context.Context, workspace, project, session string) (sandbox.Directory, error) {
+	if workspace == "" {
+		return sandbox.Directory{}, status.Error(codes.InvalidArgument,
+			"say which workspace: krewe volume list krewe://<workspace>[/<project>[/<session>]]")
+	}
+	if _, err := s.store.GetWorkspace(ctx, workspace); err != nil {
+		return sandbox.Directory{}, storeError(err, "workspace")
+	}
+
+	if session == "" {
+		if project == "" {
+			found, err := s.storage.SharedDirectory(workspace)
+			if err != nil {
+				return sandbox.Directory{}, locateError(err)
+			}
+			return found, nil
+		}
+		return s.projectDirectory(ctx, workspace, project)
+	}
+
+	held, err := s.sessionAt(ctx, workspace, project, session)
+	if err != nil {
+		return sandbox.Directory{}, err
 	}
 	// The configuration comes off the session rather than off the request, so the answer names the
 	// directory that session's own sandbox binds. A session read through the wrong project would
@@ -52,11 +66,11 @@ func (s *Server) LocateDirectory(ctx context.Context, req *quaycrewv1.LocateDire
 	// Where the session took a working tree, that is the answer. Its own directory is then empty, and
 	// naming an empty directory is how a person concludes a session that worked for an hour made
 	// nothing.
-	found, err := s.storage.SessionDirectory(boxOf(session))
+	found, err := s.storage.SessionDirectory(boxOf(held))
 	if err != nil {
-		return nil, locateError(err)
+		return sandbox.Directory{}, locateError(err)
 	}
-	return answerFor(found), nil
+	return found, nil
 }
 
 // projectDirectory is a project's own folder inside its workspace's shared folder.
@@ -67,19 +81,19 @@ func (s *Server) LocateDirectory(ctx context.Context, req *quaycrewv1.LocateDire
 //
 // A project of another workspace is a not found rather than a folder. Answering it would make a
 // directory in the wrong volume, which nothing mounts, and hand back a path that stays empty.
-func (s *Server) projectDirectory(ctx context.Context, req *quaycrewv1.LocateDirectoryRequest) (*quaycrewv1.LocateDirectoryResponse, error) {
-	project, err := s.store.GetProject(ctx, req.GetProject())
+func (s *Server) projectDirectory(ctx context.Context, workspace, project string) (sandbox.Directory, error) {
+	held, err := s.store.GetProject(ctx, project)
 	if err != nil {
-		return nil, storeError(err, "project")
+		return sandbox.Directory{}, storeError(err, "project")
 	}
-	if project.GetWorkspace() != req.GetWorkspace() {
-		return nil, status.Error(codes.NotFound, "no such project in that workspace")
+	if held.GetWorkspace() != workspace {
+		return sandbox.Directory{}, status.Error(codes.NotFound, "no such project in that workspace")
 	}
-	found, err := s.storage.ProjectDirectory(req.GetWorkspace(), project.GetName())
+	found, err := s.storage.ProjectDirectory(workspace, held.GetName())
 	if err != nil {
-		return nil, locateError(err)
+		return sandbox.Directory{}, locateError(err)
 	}
-	return answerFor(found), nil
+	return found, nil
 }
 
 // sessionAt finds the session an address landed on. Either identifier reaches it, because an address
@@ -87,17 +101,17 @@ func (s *Server) projectDirectory(ctx context.Context, req *quaycrewv1.LocateDir
 //
 // Archived sessions are read too. Putting a session away hides it from a listing and leaves its
 // directory exactly where it was, so refusing to name that directory would hide the work as well.
-func (s *Server) sessionAt(ctx context.Context, req *quaycrewv1.LocateDirectoryRequest) (*quaycrewv1.Session, error) {
-	filter := store.SessionFilter{Workspace: req.GetWorkspace(), Project: req.GetProject()}
+func (s *Server) sessionAt(ctx context.Context, workspace, project, session string) (*quaycrewv1.Session, error) {
+	filter := store.SessionFilter{Workspace: workspace, Project: project}
 	for _, archived := range []bool{false, true} {
 		filter.Archived = archived
 		sessions, err := s.store.ListSessions(ctx, filter)
 		if err != nil {
 			return nil, storeError(err, "session")
 		}
-		for _, session := range sessions {
-			if session.GetHandle() == req.GetSession() || session.GetId() == req.GetSession() {
-				return session, nil
+		for _, held := range sessions {
+			if held.GetHandle() == session || held.GetId() == session {
+				return held, nil
 			}
 		}
 	}

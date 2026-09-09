@@ -3,6 +3,7 @@ package workspace
 import (
 	"fmt"
 	"path"
+	"path/filepath"
 	"strings"
 
 	"github.com/atlantic-blue/quay-krewe/internal/display"
@@ -131,7 +132,7 @@ func ParseVolumePath(value string) (VolumePath, error) {
 			}
 		}
 	}
-	parsed.Key = cleanKey(strings.Join(rest, Separator))
+	parsed.Key = HeldKey(strings.Join(rest, Separator))
 	return parsed, nil
 }
 
@@ -170,16 +171,25 @@ func isSessionID(segment string) bool {
 	return len(segment) <= longestSessionID && display.LooksLikeIdentifier(segment)
 }
 
-// cleanKey holds a key inside the directory it was given.
+// HeldKey holds a key inside the directory it was given.
 //
 // The leading slash is what makes a key that climbs harmless: it is resolved against the root of
 // nothing, so `../../etc/passwd` becomes `/etc/passwd` and then a name inside the volume rather than
 // a road out of it.
-func cleanKey(key string) string {
+//
+// The parser calls it on what it reads, and so does each end that turns a key into a path on disk.
+// One guard rather than a copy of it in every package: a key reaches the tool, then the control
+// plane, and a second reading of this rule is a second chance to get it wrong.
+func HeldKey(key string) string {
 	if key == "" {
 		return ""
 	}
-	return strings.TrimPrefix(path.Clean("/"+key), Separator)
+	return strings.TrimPrefix(path.Clean(Separator+key), Separator)
+}
+
+// InVolume is where a key becomes a path on disk, held inside the root it names.
+func InVolume(root, key string) string {
+	return filepath.Join(root, filepath.FromSlash(HeldKey(key)))
 }
 
 // HasKey reports whether the address names a file rather than the directory itself.
