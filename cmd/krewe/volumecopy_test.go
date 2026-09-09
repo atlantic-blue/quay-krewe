@@ -373,9 +373,9 @@ func (r *recordingVolume) Delete(_ context.Context, at workspace.VolumeLocation)
 	return r.at, nil
 }
 
-// hostVolume is where a key becomes a path on disk on the road that writes. So it is where a key that
-// climbs has to be held. The parser cleans what it reads, and this is the guard under it: a key that
-// reached the transport from anywhere else lands inside the volume or it lands nowhere.
+// The control plane is where a key becomes a path on disk on the road that writes. So it is where a
+// key that climbs has to be held. The parser cleans what it reads, and this is the guard under it: a
+// key that reached the transport from anywhere else lands inside the volume or it lands nowhere.
 //
 // The path it answers with is held too. A file written inside the volume and reported at the path the
 // key asked for names a file that is not there.
@@ -392,7 +392,7 @@ func TestPuttingAKeyThatClimbsStaysInsideTheDirectory(t *testing.T) {
 	}
 	found.Address.Key = "../passwd"
 
-	at, err := hostVolume{client: client}.Put(context.Background(), found,
+	at, err := planeVolume{hostVolume{client: client}}.Put(context.Background(), found,
 		"passwd", strings.NewReader("a secret"), false)
 
 	if err != nil {

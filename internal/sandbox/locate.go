@@ -31,8 +31,11 @@ const (
 	KindWorkingTree DirectoryKind = "working tree"
 )
 
-// Directory is one place a person can put a file, in the two views that matter to them.
+// Directory is one place a person can put a file, in the views that matter.
 type Directory struct {
+	// Dir is the directory as this process sees it, which is what opens a file in it. The control
+	// plane may be in a container, and Host is then a path it cannot open.
+	Dir string
 	// Host is the directory on the machine running the sandboxes, which is where the file goes.
 	Host string
 	// Sandbox is where the same directory appears inside a container, which is what a session calls
@@ -57,10 +60,12 @@ func (s Storage) SharedDirectory(workspace string) (Directory, error) {
 		return Directory{}, err
 	}
 	parts := []string{"workspaces", workspace, "volume"}
-	if err := makeWritableDir(filepath.Join(append([]string{s.Dir}, parts...)...)); err != nil {
+	dir := filepath.Join(append([]string{s.Dir}, parts...)...)
+	if err := makeWritableDir(dir); err != nil {
 		return Directory{}, err
 	}
 	return Directory{
+		Dir:     dir,
 		Host:    path.Join(append([]string{s.hostRoot()}, parts...)...),
 		Sandbox: SharedPath,
 		Kind:    KindShared,
@@ -89,10 +94,12 @@ func (s Storage) ProjectDirectory(workspace, project string) (Directory, error) 
 		}
 	}
 	parts := []string{"workspaces", workspace, "volume", project}
-	if err := makeWritableDir(filepath.Join(append([]string{s.Dir}, parts...)...)); err != nil {
+	dir := filepath.Join(append([]string{s.Dir}, parts...)...)
+	if err := makeWritableDir(dir); err != nil {
 		return Directory{}, err
 	}
 	return Directory{
+		Dir:     dir,
 		Host:    path.Join(append([]string{s.hostRoot()}, parts...)...),
 		Sandbox: path.Join(SharedPath, project),
 		Kind:    KindProject,
@@ -114,10 +121,12 @@ func (s Storage) WorkingDirectory(cfg Config) (Directory, error) {
 		}
 	}
 	parts := []string{"workspaces", cfg.Workspace, "projects", cfg.Project, "sessions", cfg.ID, "workspace"}
-	if err := makeWritableDir(filepath.Join(append([]string{s.Dir}, parts...)...)); err != nil {
+	dir := filepath.Join(append([]string{s.Dir}, parts...)...)
+	if err := makeWritableDir(dir); err != nil {
 		return Directory{}, err
 	}
 	return Directory{
+		Dir:     dir,
 		Host:    path.Join(append([]string{s.hostRoot()}, parts...)...),
 		Sandbox: WorkingPath,
 		Kind:    KindWorking,
@@ -139,7 +148,7 @@ func (s Storage) WorkingDirectory(cfg Config) (Directory, error) {
 // inside a checkout is a file in somebody's git status.
 func (s Storage) SessionDirectory(cfg Config) (Directory, error) {
 	if tree, held := WorkingTree(s.WorkPlaces(cfg)); held {
-		return Directory{Host: tree.Host, Sandbox: tree.Sandbox, Kind: tree.Kind}, nil
+		return Directory(tree), nil
 	}
 	return s.WorkingDirectory(cfg)
 }

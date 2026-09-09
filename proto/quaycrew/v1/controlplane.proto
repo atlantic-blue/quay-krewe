@@ -912,6 +912,71 @@ message LocateDirectoryResponse {
   DirectoryKind kind = 3;
 }
 
+// The bytes of one file in a volume, carried in pieces.
+//
+// A volume is a directory the machine running the sandboxes holds. Where the tool runs on that same
+// machine it can open the directory itself, and where it does not, under Kubernetes for example, the
+// directory is inside the control plane and the tool can reach nothing. These two calls are the road
+// that works in both places.
+//
+// They stream because a message has a ceiling. The default is four mebibytes, the file that started
+// this work is over one, and a call that must hold a whole file in one message puts a limit back in
+// a different place. So the bytes go in pieces and neither end holds the file.
+
+// PutVolumeFileRequest is one piece of a copy into a volume.
+//
+// The first message names where the file goes and carries no bytes. Every message after it is bytes.
+// A stream that sends bytes first is refused, because nothing knows what to do with them.
+message PutVolumeFileRequest {
+  oneof part {
+    PutVolumeFileStart start = 1;
+    bytes chunk = 2;
+  }
+}
+// PutVolumeFileStart says where the file goes and what to do about a name that is already there.
+message PutVolumeFileStart {
+  // workspace is the workspace id, and is required: every volume is inside one.
+  string workspace = 1;
+  // project is the project id, and empty means the workspace's shared folder.
+  string project = 2;
+  // session is the session handle, and empty means the folder above it.
+  string session = 3;
+  // key is the name of the file inside that directory, slash separated. A key that names a folder
+  // takes the file's own name inside it, the way copying into a folder does everywhere else. A key
+  // that climbs is held inside the volume before anything opens it.
+  string key = 4;
+  // name is what the file is called where it came from. It is used where the key names a folder, or
+  // where there is no key at all, which is how `cp ./log.txt krewe://itv/vast` keeps its own name.
+  string name = 5;
+  // replace says the caller means to write over a name that is already there. False refuses one,
+  // because a copy that writes over the last file silently is how the work in it is lost.
+  bool replace = 6;
+  // address is what the person typed, and it is used to name the file in a refusal. Nothing is
+  // resolved from it: the levels above carry the identifiers, and this carries the words a person
+  // reads. A refusal that named an identifier would name a thing they never typed.
+  string address = 7;
+}
+message PutVolumeFileResponse {
+  // sandbox is the path a session reads the file at, which is what the tool prints. It is the answer
+  // rather than the host path, because the person who copied the file names it to a session next.
+  string sandbox = 1;
+}
+
+// GetVolumeFileRequest asks for one file out of a volume. The levels are read the way a put reads
+// them, and a key that names a folder is refused: a whole folder is out of scope, and taking the
+// first file in one would lose the rest without saying so.
+message GetVolumeFileRequest {
+  string workspace = 1;
+  string project = 2;
+  string session = 3;
+  string key = 4;
+}
+message GetVolumeFileResponse {
+  // chunk is a piece of the file, in order. A file of no bytes answers with no message at all, which
+  // is the whole of an empty file.
+  bytes chunk = 1;
+}
+
 // SecretRef names a secret a workspace has set. It carries no value and there is no call that returns
 // one: a value the backend holds must not become readable because a client asked politely. The only
 // reader is the system itself, at the moment an exec needs it.
@@ -1364,6 +1429,15 @@ service ControlPlaneService {
   // Says where an address is on the machine, so a person can put a file in it by hand. It reads the
   // layout rather than a running container, so it answers when nothing is running.
   rpc LocateDirectory(LocateDirectoryRequest) returns (LocateDirectoryResponse);
+
+  // The bytes of one file in a volume, in both directions. They stream because the tool and the
+  // volume are not always on one machine, and because a file is bigger than a message may be.
+  //
+  // Neither is denied to the driver, for the reason LocateDirectory and ReadSessionWork are not:
+  // they carry the bytes of a file and they grant nothing. A call that widens what a session may do
+  // is the operator's to make, and these two do not widen anything.
+  rpc PutVolumeFile(stream PutVolumeFileRequest) returns (PutVolumeFileResponse);
+  rpc GetVolumeFile(GetVolumeFileRequest) returns (stream GetVolumeFileResponse);
 
   rpc ImportSkill(ImportSkillRequest) returns (ImportSkillResponse);
   rpc ListSkills(ListSkillsRequest) returns (ListSkillsResponse);

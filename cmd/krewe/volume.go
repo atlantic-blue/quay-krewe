@@ -15,6 +15,8 @@ import (
 	quaycrewv1 "github.com/atlantic-blue/quay-krewe/gen/quaycrew/v1"
 	"github.com/atlantic-blue/quay-krewe/internal/display"
 	"github.com/atlantic-blue/quay-krewe/internal/workspace"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // The verb for the files a volume holds.
@@ -24,9 +26,10 @@ import (
 // for a session and for nothing else. So nothing said what a workspace's shared folder held, and
 // nothing put a file in one or took one out. Both words are gone, and each names this one instead.
 //
-// The bytes are read on the machine this runs on. The tool and the volume are on one machine today,
-// so the path the system hands back is a path this process can open. Where they are not, this call
-// becomes a stream through the control plane. The address a person types does not change.
+// The bytes of a file travel through the control plane, in pieces. The tool and the volume are not
+// always on one machine: under Kubernetes the volume is beside the control plane, and a path the
+// system hands back reaches nothing here. A listing and a delete still open the directory on this
+// machine, so both of those wait for a step of their own.
 
 // volumeUsage names the address form, because the scheme is the part nobody guesses.
 const volumeUsage = "usage: krewe volume list <address>" +
@@ -42,10 +45,6 @@ const volumeUsage = "usage: krewe volume list <address>" +
 // flagReplace says the caller means to write over a name that is already there.
 const flagReplace = "--replace"
 
-// volumeFileMode is the mode a file takes in a volume. A session reads it from a container as
-// somebody else, so its owner alone is not enough.
-const volumeFileMode = 0o666
-
 // machineFileMode is the mode a file takes on the machine the tool runs on. The person who typed the
 // command reads it, so it is the ordinary mode of a file rather than the one a container needs.
 const machineFileMode = 0o644
@@ -58,9 +57,9 @@ func runVolume(ctx context.Context, client quaycrewv1.ControlPlaneServiceClient,
 	case "list":
 		return runVolumeList(ctx, client, args[1:], out)
 	case "cp":
-		return runVolumeCopy(ctx, hostVolume{client: client}, client, args[1:], out)
+		return runVolumeCopy(ctx, planeVolume{hostVolume{client: client}}, client, args[1:], out)
 	case "delete":
-		return runVolumeDelete(ctx, hostVolume{client: client}, client, args[1:], out)
+		return runVolumeDelete(ctx, planeVolume{hostVolume{client: client}}, client, args[1:], out)
 	default:
 		return fmt.Errorf("there is no volume %s: %s", args[0], volumeUsage)
 	}
@@ -92,10 +91,9 @@ func runVolumeList(ctx context.Context, client quaycrewv1.ControlPlaneServiceCli
 
 // volumeTransport carries bytes to a volume and back from one.
 //
-// It is an interface because of where the bytes are. The tool and the sandboxes run on one machine
-// today, so a copy is a copy on that machine. Under Kubernetes they do not, and the same command has
-// to become a stream through the control plane. Everything above this works in addresses and never in
-// host paths, so that change replaces one implementation and alters nothing a person types.
+// It is an interface because of where the bytes are. Everything above it works in addresses and never
+// in host paths, which is what let the copy become a stream through the control plane without
+// altering anything a person types.
 type volumeTransport interface {
 	// Put writes body at the address, and answers with the path a session reads the file at.
 	//
@@ -109,9 +107,9 @@ type volumeTransport interface {
 
 	// Get reads the file the address names. The caller closes what comes back.
 	//
-	// A reader rather than the bytes themselves, because step 11 makes this a stream: a file above the
-	// message ceiling arrives in pieces, and holding a whole one in memory to hand it over would put
-	// the ceiling back in a different place.
+	// A reader rather than the bytes themselves, because this is a stream: a file above the message
+	// ceiling arrives in pieces, and holding a whole one in memory to hand it over would put the
+	// ceiling back in a different place.
 	//
 	// An address that names a directory is refused here. A whole directory is out of scope, and
 	// copying the first file in one loses the rest without saying so.
@@ -264,7 +262,7 @@ func copyOutOfVolume(ctx context.Context, carry volumeTransport, client quaycrew
 	if err := refuseNameAlreadyThere(at, replace); err != nil {
 		return err
 	}
-	if err := writeWholeFile(at, body, machineFileMode); err != nil {
+	if err := writeWholeFile(at, body); err != nil {
 		return err
 	}
 	fmt.Fprintln(out, at)
@@ -296,68 +294,140 @@ func refuseNameAlreadyThere(at string, replace bool) error {
 	return nil
 }
 
-// hostVolume is the transport for a volume on the machine this runs on.
+// volumeChunk is how much of a file one message carries on the way in.
 //
-// It asks the control plane where the address is and copies the bytes there itself. That works
-// because the two are one machine. Where they are not, the implementation behind the interface
-// changes and this file does not.
+// The size is this sender's own choice. It is far below the four mebibyte message ceiling, so the
+// framing around a chunk cannot reach it, and the reader at the other end puts back together whatever
+// sizes arrive.
+const volumeChunk = 64 << 10
+
+// planeVolume carries the bytes of one file through the control plane, in pieces.
+//
+// The control plane holds the volume, so it makes every decision about the filesystem: which name the
+// file takes, whether that name is already there, and where the bytes land. This end sends an address
+// and bytes, and that is what makes the same command work where the volume is on another machine.
+type planeVolume struct{ hostVolume }
+
+// Put sends where the file goes, then the file.
+//
+// The address of the directory travels with it so a refusal can name the file the way it was typed.
+// Nothing is resolved from it: the identifiers beside it are what the control plane reads.
+func (p planeVolume) Put(ctx context.Context, to workspace.VolumeLocation, name string, body io.Reader, replace bool) (string, error) {
+	stream, err := p.client.PutVolumeFile(ctx)
+	if err != nil {
+		return "", err
+	}
+	directory := to.Address
+	directory.Key = ""
+	sent := stream.Send(&quaycrewv1.PutVolumeFileRequest{
+		Part: &quaycrewv1.PutVolumeFileRequest_Start{Start: &quaycrewv1.PutVolumeFileStart{
+			Workspace: to.Where.WorkspaceID, Project: to.Where.ProjectID, Session: to.Where.SessionID,
+			Key: to.Address.Key, Name: name, Replace: replace, Address: directory.String(),
+		}},
+	})
+	// A send that ends the stream means the other end has already answered, and the answer is under
+	// the close below. Reporting the end of the stream instead would hide the refusal behind it.
+	if sent != nil && !errors.Is(sent, io.EOF) {
+		return "", sent
+	}
+	carry := make([]byte, volumeChunk)
+	for sent == nil {
+		read, err := body.Read(carry)
+		if read > 0 {
+			sent = stream.Send(&quaycrewv1.PutVolumeFileRequest{
+				Part: &quaycrewv1.PutVolumeFileRequest_Chunk{Chunk: carry[:read]},
+			})
+			if sent != nil && !errors.Is(sent, io.EOF) {
+				return "", sent
+			}
+		}
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return "", err
+		}
+	}
+	answer, err := stream.CloseAndRecv()
+	if err != nil {
+		return "", alreadyThere(err)
+	}
+	return answer.GetSandbox(), nil
+}
+
+// alreadyThere turns the refusal for a name that is taken into the one that says what to type.
+//
+// The control plane names the file, because it is the end that knows which name the file took. What
+// to type instead is a word of this tool, so it is added here.
+func alreadyThere(err error) error {
+	if status.Code(err) != codes.AlreadyExists {
+		return err
+	}
+	return fmt.Errorf("%s: say %s to write over it", status.Convert(err).Message(), flagReplace)
+}
+
+// Get asks for the file the address names and hands back the pieces as one reader.
+//
+// The first message is read here rather than on the first Read. A refusal, a name that is not there
+// among them, then arrives from this call, which is before the caller opens anything on this machine.
+func (p planeVolume) Get(ctx context.Context, from workspace.VolumeLocation) (io.ReadCloser, error) {
+	reading, stop := context.WithCancel(ctx)
+	stream, err := p.client.GetVolumeFile(reading, &quaycrewv1.GetVolumeFileRequest{
+		Workspace: from.Where.WorkspaceID, Project: from.Where.ProjectID, Session: from.Where.SessionID,
+		Key: from.Address.Key,
+	})
+	if err != nil {
+		stop()
+		return nil, err
+	}
+	first, err := stream.Recv()
+	if err != nil && !errors.Is(err, io.EOF) {
+		stop()
+		return nil, err
+	}
+	// A file of no bytes ends the stream at once, and that is the whole of an empty file.
+	return &volumeReader{stream: stream, held: first.GetChunk(), done: errors.Is(err, io.EOF), stop: stop}, nil
+}
+
+// volumeReader is the pieces of a file arriving, read as one file.
+type volumeReader struct {
+	stream quaycrewv1.ControlPlaneService_GetVolumeFileClient
+	held   []byte
+	done   bool
+	stop   context.CancelFunc
+}
+
+func (v *volumeReader) Read(into []byte) (int, error) {
+	for len(v.held) == 0 {
+		if v.done {
+			return 0, io.EOF
+		}
+		message, err := v.stream.Recv()
+		if err != nil {
+			v.done = true
+			return 0, err
+		}
+		v.held = message.GetChunk()
+	}
+	read := copy(into, v.held)
+	v.held = v.held[read:]
+	return read, nil
+}
+
+// Close ends the call. A caller that stops reading half way, because the file it was writing was
+// refused, leaves the other end sending into nothing until somebody says so.
+func (v *volumeReader) Close() error {
+	v.stop()
+	return nil
+}
+
+// hostVolume is the part of the transport that still opens the directory on this machine.
+//
+// One road is left on it. The bytes of a file moved to the control plane, because the tool and the
+// volume are not always on one machine. A delete still names a path this process opens, and so does
+// the listing, so both of them are a step of their own.
 type hostVolume struct {
 	client quaycrewv1.ControlPlaneServiceClient
-}
-
-func (h hostVolume) Put(ctx context.Context, to workspace.VolumeLocation, name string, body io.Reader, replace bool) (string, error) {
-	found, err := h.client.LocateDirectory(ctx, &quaycrewv1.LocateDirectoryRequest{
-		Workspace: to.Where.WorkspaceID,
-		Project:   to.Where.ProjectID,
-		Session:   to.Where.SessionID,
-	})
-	if err != nil {
-		return "", err
-	}
-	key := volumeKeyFor(found.GetHost(), to.Address.Key, name)
-	inside := inVolume(found.GetHost(), key)
-
-	switch _, err := os.Stat(inside); {
-	case err == nil && !replace:
-		taken := to.Address
-		taken.Key = key
-		return "", fmt.Errorf("%s is already there: say %s to write over it", taken, flagReplace)
-	case err != nil && !os.IsNotExist(err):
-		return "", err
-	}
-	if err := writeWholeFile(inside, body, volumeFileMode); err != nil {
-		return "", err
-	}
-	return path.Join(found.GetSandbox(), key), nil
-}
-
-// Get opens the file the address names, on the machine this runs on.
-//
-// The key is held inside the volume here, the way the write road holds it. This is the point of use,
-// and a key that reached the transport from anywhere else is cleaned here or nowhere.
-func (h hostVolume) Get(ctx context.Context, from workspace.VolumeLocation) (io.ReadCloser, error) {
-	found, err := h.client.LocateDirectory(ctx, &quaycrewv1.LocateDirectoryRequest{
-		Workspace: from.Where.WorkspaceID,
-		Project:   from.Where.ProjectID,
-		Session:   from.Where.SessionID,
-	})
-	if err != nil {
-		return nil, err
-	}
-	inside := inVolume(found.GetHost(), from.Address.Key)
-	info, err := os.Stat(inside)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("%s holds nothing called %q", found.GetHost(), volumeKey(from.Address.Key))
-		}
-		return nil, err
-	}
-	// A whole directory is out of scope on this road too, and a directory opened as a file reads as an
-	// error from the operating system rather than as an answer to what was typed.
-	if info.IsDir() {
-		return nil, fmt.Errorf("%s is a folder, and this copies one file: name a file in it", from.Address)
-	}
-	return os.Open(inside)
 }
 
 // Delete removes the file the address names, on the machine this runs on.
@@ -373,8 +443,8 @@ func (h hostVolume) Delete(ctx context.Context, at workspace.VolumeLocation) (st
 	if err != nil {
 		return "", err
 	}
-	key := volumeKey(at.Address.Key)
-	inside := inVolume(found.GetHost(), key)
+	key := workspace.HeldKey(at.Address.Key)
+	inside := workspace.InVolume(found.GetHost(), key)
 	info, err := os.Stat(inside)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -417,23 +487,6 @@ func whatItHolds(dir string) string {
 	return strings.Join(names, ", ")
 }
 
-// volumeKeyFor is the name the file lands under, held inside the volume.
-//
-// A key that names a directory keeps the file's own name inside it, the way copying a file into a
-// folder does everywhere else. An empty key is the directory the address itself named, which is the
-// same case. `krewe volume cp ./log.txt krewe://itv/vast` writes log.txt into the vast folder.
-//
-// It answers with the held key rather than with the one it was given, because the caller prints where
-// the file went. A key that climbs, written inside the volume and reported at the path it asked for,
-// names a file that is not there.
-func volumeKeyFor(root, key, name string) string {
-	held := volumeKey(key)
-	if info, err := os.Stat(inVolume(root, held)); err == nil && info.IsDir() {
-		return volumeKey(path.Join(held, name))
-	}
-	return held
-}
-
 // writeWholeFile puts the bytes there in one move.
 //
 // They go to a temporary name in the same directory. The rename onto the real one is one operation,
@@ -441,10 +494,9 @@ func volumeKeyFor(root, key, name string) string {
 // long enough to copy that a session can read half of one. Half a file reads as a broken file rather
 // than as a copy still under way.
 //
-// The mode is set after the write, and the caller says what it is. A temporary file is made readable
-// by its owner alone, which is right for neither end of this: a session in a container is somebody
-// else, and a file on this machine is shared with the tools the operator runs next.
-func writeWholeFile(at string, body io.Reader, mode os.FileMode) error {
+// The mode is set after the write. A temporary file is made readable by its owner alone, and a file
+// on this machine is shared with the tools the operator runs next.
+func writeWholeFile(at string, body io.Reader) error {
 	partial, err := os.CreateTemp(filepath.Dir(at), "."+filepath.Base(at)+".")
 	if err != nil {
 		return err
@@ -457,7 +509,7 @@ func writeWholeFile(at string, body io.Reader, mode os.FileMode) error {
 	if err := partial.Close(); err != nil {
 		return err
 	}
-	if err := os.Chmod(partial.Name(), mode); err != nil {
+	if err := os.Chmod(partial.Name(), machineFileMode); err != nil {
 		return err
 	}
 	return os.Rename(partial.Name(), at)
@@ -468,7 +520,7 @@ func writeWholeFile(at string, body io.Reader, mode os.FileMode) error {
 // The path goes first, on its own line. A listing is only useful beside the directory it read: a name
 // that is missing and a name in another folder read the same otherwise.
 func listVolume(root, key string, out io.Writer) error {
-	inside := inVolume(root, key)
+	inside := workspace.InVolume(root, key)
 	info, err := os.Stat(inside)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -493,21 +545,6 @@ func listVolume(root, key string, out io.Writer) error {
 	}
 	fmt.Fprint(out, volumeRows(entries))
 	return nil
-}
-
-// inVolume is where a key becomes a path on disk. This is the point of use, and a key that came from
-// anywhere else is held here.
-func inVolume(root, key string) string {
-	return filepath.Join(root, filepath.FromSlash(volumeKey(key)))
-}
-
-// volumeKey holds a key inside the directory it names.
-//
-// The leading slash makes a key that climbs harmless. It resolves against the root of nothing, so
-// ../../etc/passwd becomes /etc/passwd, and then a name inside the volume. The parser cleans a key it
-// read the same way, and this is the guard under it.
-func volumeKey(key string) string {
-	return strings.TrimPrefix(path.Clean(workspace.Separator+key), workspace.Separator)
 }
 
 // volumeRows is the table. os.ReadDir hands its entries back sorted by name, and that order is the
