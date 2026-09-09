@@ -340,6 +340,160 @@ func initializePathSteps(sc *godog.ScenarioContext) {
 		return nil
 	})
 
+	// Several steps at once, and the cap that says how many.
+
+	// Two takes are two sessions. One session builds one step, so a fan out that gave two steps to
+	// one session would be a wider session rather than a second one.
+	sc.Step(`^step (\d+) and step (\d+) name different sessions$`,
+		func(ctx context.Context, first, second int) error {
+			held, err := theFeature(ctx)
+			if err != nil {
+				return err
+			}
+			if err := readPath(ctx, held.GetId()); err != nil {
+				return err
+			}
+			one, err := stepNumbered(ctx, int32(first))
+			if err != nil {
+				return err
+			}
+			other, err := stepNumbered(ctx, int32(second))
+			if err != nil {
+				return err
+			}
+			if one.GetSession() == "" || other.GetSession() == "" {
+				return fmt.Errorf("step %d names session %q and step %d names session %q, and a taken step names one",
+					first, one.GetSession(), second, other.GetSession())
+			}
+			if one.GetSession() == other.GetSession() {
+				return fmt.Errorf("step %d and step %d both name session %q",
+					first, second, one.GetSession())
+			}
+			return nil
+		})
+
+	// The cap refusal is its own code, because it is not a state the caller got wrong. The work is
+	// allowed and there is no room for it yet.
+	sc.Step(`^the control plane refuses it as too many steps at once$`, func(ctx context.Context) error {
+		return refused(worldFrom(ctx), codes.ResourceExhausted)
+	})
+
+	// The count the take answered with, and never one worked out here. It is the count the write
+	// made, so a take that dispatched without counting is a failure rather than a number that
+	// happens to agree.
+	sc.Step(`^the take says (\d+) of (\d+) steps are in flight$`,
+		func(ctx context.Context, flying, want int) error {
+			p := pathFrom(ctx)
+			if p.take == nil {
+				return fmt.Errorf("no step was taken, so nothing counted what is in flight")
+			}
+			if got := p.take.GetInFlight(); got != int32(flying) {
+				return fmt.Errorf("the take says %d steps are in flight, want %d", got, flying)
+			}
+			if got := p.take.GetStepsInFlightCap(); got != int32(want) {
+				return fmt.Errorf("the take says the cap is %d, want %d", got, want)
+			}
+			return nil
+		})
+
+	sc.Step(`^the operator caps the steps in flight at (\d+)$`, func(ctx context.Context, atOnce int) error {
+		w := worldFrom(ctx)
+		_, err := w.client.SetStepsInFlightCap(ctx, &quaycrewv1.SetStepsInFlightCapRequest{
+			Project: w.projectID, StepsInFlightCap: int32(atOnce)})
+		w.lastErr = err
+		return nil
+	})
+
+	// Read back off the design rather than off what the write answered, so a refused write that
+	// wrote anyway is a failure here.
+	sc.Step(`^the cap on steps in flight is (\d+)$`, func(ctx context.Context, want int) error {
+		w := worldFrom(ctx)
+		resp, err := w.client.GetDesign(ctx, &quaycrewv1.GetDesignRequest{Project: w.projectID})
+		if err != nil {
+			return err
+		}
+		if got := resp.GetDesign().GetStepsInFlightCap(); got != int32(want) {
+			return fmt.Errorf("the project caps the steps in flight at %d, want %d", got, want)
+		}
+		return nil
+	})
+
+	sc.Step(`^the driver asks to cap the steps in flight$`, func(ctx context.Context) error {
+		return asDriver(ctx, func(ctx context.Context, client quaycrewv1.ControlPlaneServiceClient) error {
+			_, err := client.SetStepsInFlightCap(ctx, &quaycrewv1.SetStepsInFlightCapRequest{
+				Project: worldFrom(ctx).projectID, StepsInFlightCap: 20})
+			return err
+		})
+	})
+
+	// The guard on the fan out, read as the whole path rather than as one step. A step that started
+	// because another one ended would name a session, and counting the steps that name one is what
+	// catches it wherever it happened.
+	sc.Step(`^no step but step (\d+) names a session$`, func(ctx context.Context, number int) error {
+		held, err := theFeature(ctx)
+		if err != nil {
+			return err
+		}
+		if err := readPath(ctx, held.GetId()); err != nil {
+			return err
+		}
+		for _, step := range pathFrom(ctx).steps {
+			if step.GetNumber() == int32(number) || step.GetSession() == "" {
+				continue
+			}
+			return fmt.Errorf("step %d names session %q, and only step %d took one",
+				step.GetNumber(), step.GetSession(), number)
+		}
+		return nil
+	})
+
+	// The refusal is read against the steps that are actually in flight, rather than against a
+	// sentence written here, so a refusal that named two of three passes nothing. The count is
+	// asserted first: a loop over an empty list names nothing and would report success.
+	sc.Step(`^the refusal names the steps in flight with the feature each one sits in$`,
+		func(ctx context.Context) error {
+			w := worldFrom(ctx)
+			if w.lastErr == nil {
+				return fmt.Errorf("nothing was refused")
+			}
+			features, err := w.client.ListFeatures(ctx, &quaycrewv1.ListFeaturesRequest{
+				Project: w.projectID})
+			if err != nil {
+				return err
+			}
+			named := 0
+			for _, feature := range features.GetFeatures() {
+				listed, err := w.client.ListSteps(ctx, &quaycrewv1.ListStepsRequest{
+					Feature: feature.GetId()})
+				if err != nil {
+					return err
+				}
+				for _, step := range listed.GetSteps() {
+					if step.GetState() != "taken" {
+						continue
+					}
+					named++
+					want := fmt.Sprintf("step %d.%d %s",
+						feature.GetNumber(), step.GetNumber(), feature.GetTitle())
+					if !strings.Contains(w.lastErr.Error(), want) {
+						return fmt.Errorf("the refusal is %q, and it never names %q",
+							w.lastErr.Error(), want)
+					}
+				}
+			}
+			if named == 0 {
+				return fmt.Errorf("no step is in flight, so this proves nothing about the refusal")
+			}
+			return nil
+		})
+	sc.Step(`^the caller reads the cap on steps in flight$`, func(ctx context.Context) error {
+		return runTool(ctx, "path", "cap", whereTheProjectIs(ctx))
+	})
+
+	sc.Step(`^the caller caps the steps in flight at "([^"]*)"$`, func(ctx context.Context, said string) error {
+		return runTool(ctx, "path", "cap", whereTheProjectIs(ctx), said)
+	})
+
 	sc.Step(`^the path holds (\d+) milestones$`, func(ctx context.Context, want int) error {
 		if got := len(pathFrom(ctx).milestones); got != want {
 			return fmt.Errorf("the path holds %d milestones, want %d", got, want)

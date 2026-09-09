@@ -69,6 +69,10 @@ func runStepTake(ctx context.Context, client quaycrewv1.ControlPlaneServiceClien
 		resp.GetSession().GetId(), resp.GetSession().GetHandle())
 	fmt.Fprintf(out, "it was asked to:\n\n%s\n", strings.TrimRight(resp.GetText(), "\n"))
 	sayWarnings(out, resp.GetWarnings())
+	// Both numbers are the control plane's, read off the response. Counting the steps here would put
+	// a second count of one thing in a second place, and the two would disagree the moment a take
+	// landed between this call and that one.
+	fmt.Fprintf(out, "\n%d of %d steps in flight\n", resp.GetInFlight(), resp.GetStepsInFlightCap())
 	return nil
 }
 

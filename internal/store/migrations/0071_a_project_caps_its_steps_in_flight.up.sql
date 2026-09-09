@@ -1,0 +1,12 @@
+-- How many steps of one project may be in state `taken` at one time.
+--
+-- The cap is one number on the project and it counts across every feature. Nothing can collide across
+-- features, because the check reads the whole project, so one number protects the machine and the
+-- operator's reading. A second cap per feature would let a project with five features run five times
+-- this number while every number written down still read the same.
+--
+-- The default of 3 is a guess about how many sessions one person reads at once. Nothing measured it.
+-- A count of how often a take is refused for it is what would replace the number.
+--
+-- Lowering it never stops a session that runs. It refuses the next take.
+alter table project_designs add column if not exists steps_in_flight_cap integer not null default 3;

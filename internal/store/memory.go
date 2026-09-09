@@ -614,7 +614,11 @@ func (m *Memory) SetContext(_ context.Context, scope ContextScope, owner, body s
 func contextKey(scope ContextScope, owner string) string { return string(scope) + "/" + owner }
 
 // GetDesign returns the project's design. A project with no design answers with a Design carrying
-// only its identifier, which is the normal state and not an error.
+// its identifier and the cap the column would have given it, which is the normal state and not an
+// error.
+//
+// The cap is answered rather than left at zero, because zero is a number that refuses every take and
+// a project nobody configured refuses nothing.
 func (m *Memory) GetDesign(_ context.Context, project string) (*quaycrewv1.Design, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -623,7 +627,7 @@ func (m *Memory) GetDesign(_ context.Context, project string) (*quaycrewv1.Desig
 	}
 	held, ok := m.designs[project]
 	if !ok {
-		return &quaycrewv1.Design{Project: project}, nil
+		return &quaycrewv1.Design{Project: project, StepsInFlightCap: DefaultStepsInFlightCap}, nil
 	}
 	return copyDesign(held), nil
 }
@@ -694,7 +698,9 @@ func (m *Memory) writeDesign(project string, change func(*quaycrewv1.Design)) (*
 	}
 	held, ok := m.designs[project]
 	if !ok {
-		held = &quaycrewv1.Design{Project: project}
+		// The row is born carrying the column default, so a project that only ever set a brief reads
+		// the same cap as one that has no row at all.
+		held = &quaycrewv1.Design{Project: project, StepsInFlightCap: DefaultStepsInFlightCap}
 		m.designs[project] = held
 	}
 	change(held)
@@ -842,31 +848,90 @@ func (m *Memory) GetStep(_ context.Context, feature string, number int32) (*quay
 	return proto.Clone(held).(*quaycrewv1.Step), nil
 }
 
-// TakeStep gives a ready step to a session.
+// TakeStep gives a ready step to a session, and says how many steps of the project run once it lands.
 //
 // The step is addressed by its feature, and step 3 of one feature is a different step from step 3 of
-// another, so taking one leaves the other ready.
+// another, so taking one leaves the other ready. The cap is not addressed that way: it belongs to the
+// project, and the count reads every feature of it.
 //
-// The whole read and write happen under the one lock, because Postgres reads the state in the
-// statement that writes it and the two stores have to answer the same thing to two callers racing
-// for one step.
-func (m *Memory) TakeStep(_ context.Context, feature string, number int32, session string) (*quaycrewv1.Step, error) {
+// The whole read and write happen under the one lock, because Postgres does the count and the write
+// in one transaction and the two stores have to answer the same thing to two callers racing for one
+// step, and to two callers racing for the last place under the cap.
+func (m *Memory) TakeStep(_ context.Context, feature string, number int32, session string) (
+	*quaycrewv1.Step, int32, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, err := m.featureLocked(feature); err != nil {
-		return nil, err
-	}
-	held, err := m.stepLocked(feature, number)
+	held, err := m.featureLocked(feature)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	if held.GetState() != StepReady {
-		return nil, ErrStepNotReady
+	step, err := m.stepLocked(feature, number)
+	if err != nil {
+		return nil, 0, err
 	}
-	held.State = StepTaken
-	held.Session = session
-	held.TakenAt = timestamppb.New(time.Now().UTC())
-	return proto.Clone(held).(*quaycrewv1.Step), nil
+	if step.GetState() != StepReady {
+		return nil, 0, ErrStepNotReady
+	}
+	flying := m.stepsInFlightLocked(held.GetProject())
+	atOnce := m.stepsInFlightCapLocked(held.GetProject())
+	if int32(len(flying)) >= atOnce {
+		return nil, 0, &StepsInFlightError{Steps: flying, Cap: atOnce}
+	}
+	step.State = StepTaken
+	step.Session = session
+	step.TakenAt = timestamppb.New(time.Now().UTC())
+	return proto.Clone(step).(*quaycrewv1.Step), int32(len(flying)) + 1, nil
+}
+
+// stepsInFlightLocked is every step of one project in state taken, with the feature each one sits in,
+// by feature number and then step number. The caller holds the lock.
+//
+// The order is the store's rather than the caller's, so the refusal a person reads names the same
+// steps in the same order however the maps happen to be walked.
+func (m *Memory) stepsInFlightLocked(project string) []StepInFlight {
+	flying := make([]StepInFlight, 0)
+	for _, feature := range m.features[project] {
+		for _, step := range m.steps[feature.GetId()] {
+			if step.GetState() != StepTaken {
+				continue
+			}
+			flying = append(flying, StepInFlight{
+				Number:        step.GetNumber(),
+				FeatureNumber: feature.GetNumber(),
+				FeatureTitle:  feature.GetTitle(),
+			})
+		}
+	}
+	sort.Slice(flying, func(i, j int) bool {
+		if flying[i].FeatureNumber != flying[j].FeatureNumber {
+			return flying[i].FeatureNumber < flying[j].FeatureNumber
+		}
+		return flying[i].Number < flying[j].Number
+	})
+	return flying
+}
+
+// stepsInFlightCapLocked is how many steps this project may hold in state taken at one time. A
+// project with no design row has set no cap and reads the default, which is what the column would
+// have given it. The caller holds the lock.
+func (m *Memory) stepsInFlightCapLocked(project string) int32 {
+	held, ok := m.designs[project]
+	if !ok {
+		return DefaultStepsInFlightCap
+	}
+	return held.GetStepsInFlightCap()
+}
+
+// SetStepsInFlightCap records how many steps of one project may be in state taken at one time, and
+// creates the row on first use the way every other design write does.
+//
+// The number is kept as it is given, for the reason Postgres keeps it: the control plane refuses one
+// outside the bounds, and a second check here is a second place for the bounds to drift.
+func (m *Memory) SetStepsInFlightCap(_ context.Context, project string, atOnce int32) (
+	*quaycrewv1.Design, error) {
+	return m.writeDesign(project, func(design *quaycrewv1.Design) {
+		design.StepsInFlightCap = atOnce
+	})
 }
 
 // FinishStep records what came of a step: the word that closes it, what somebody wrote, who spoke

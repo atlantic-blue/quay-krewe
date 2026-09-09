@@ -207,13 +207,20 @@ commands:
                                           step it waits for. A step that names no predecessor waits
                                           for the number below it. The other features of the project
                                           keep the paths they have
+  path cap [<address>] [<number>]         how many steps of the project may run at once, counted
+                                          across every feature. With no number it prints the cap and
+                                          what runs now and writes nothing. The default of three is
+                                          a guess about how many sessions one person reads at once,
+                                          and nothing measured it. Lowering it stops no session that
+                                          runs, it refuses the next take
   step take [<address>]                   start a session on one step, and let go of it. A step is
     <feature>.<number>                    named as 2.3, which is step 3 of feature 2, and a bare
                                           number is refused. The session is given that step whole:
                                           what changes, what it touches and what proves it. It is
                                           refused while the design carries no approval, and while
                                           somebody already holds the step, and a refusal starts
-                                          nothing
+                                          nothing. Several steps run at once, up to the project's
+                                          cap, and the last line says how many are in flight
   step done [<address>]                   record what came of a step, and close it. The result is
     <feature>.<number> "<result>"         required: nothing can see inside a container, so what you
                                           write is what the next session reads. It touches no

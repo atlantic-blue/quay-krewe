@@ -578,6 +578,13 @@ message Design {
   // caller claimed, never what the system authenticated, and it grants nothing.
   string written_by = 6;
   google.protobuf.Timestamp updated_at = 7;
+  // steps_in_flight_cap is how many steps of this project may be in state taken at one time. It
+  // counts across every feature rather than inside one, so three steps in flight is three steps
+  // wherever they sit.
+  //
+  // The default is 3. That number is a guess about how many sessions one person reads at once, and
+  // nothing measured it. A count of how often a take is refused for it is what would replace it.
+  int32 steps_in_flight_cap = 17;
   // contracts is a second body beside body: the contracts document, whole, in markdown. Writing it
   // does not clear approved, because the approval is the operator's word about the design body and
   // the contracts are read from that body.
@@ -633,6 +640,18 @@ message ApproveDesignRequest {
   string project = 1;
 }
 message ApproveDesignResponse {
+  Design design = 1;
+}
+
+// SetStepsInFlightCapRequest says how many steps of one project may be in state taken at one time.
+//
+// The cap is one number on the project and it counts across every feature. There is no second cap
+// per feature: nothing can collide across features, because the check reads the whole project.
+message SetStepsInFlightCapRequest {
+  string project = 1;
+  int32 steps_in_flight_cap = 2;
+}
+message SetStepsInFlightCapResponse {
   Design design = 1;
 }
 
@@ -757,6 +776,13 @@ message TakeStepResponse {
   Session session = 2;
   string text = 3;
   repeated string warnings = 4;
+  // in_flight counts the steps of this project in state taken after this take, and
+  // steps_in_flight_cap is the number it was counted against.
+  //
+  // Both travel back so a caller says what runs now without asking again, and so the line it prints
+  // is the count the write made rather than one read a moment later.
+  int32 in_flight = 5;
+  int32 steps_in_flight_cap = 6;
 }
 
 // FinishStepRequest records what came of one step of a feature's path.
@@ -1345,6 +1371,11 @@ service ControlPlaneService {
   // The refusal an unapproved design earns is the gate, and it is on the operator's own command as
   // much as on this one.
   rpc TakeStep(TakeStepRequest) returns (TakeStepResponse);
+
+  // How many steps of one project may run at once. The driver is refused it: the cap is what the
+  // operator reads at once, so a session that could raise its own would widen the fan out nobody
+  // asked for.
+  rpc SetStepsInFlightCap(SetStepsInFlightCapRequest) returns (SetStepsInFlightCapResponse);
 
   // Recording what came of a step: done, or stopped, and what somebody wrote about it. It touches no
   // session, because the step and the session that took it are separate records.

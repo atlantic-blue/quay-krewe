@@ -2683,7 +2683,7 @@ func runPathConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 			store.Step{Number: 1, Title: "the first"},
 			store.Step{Number: 2, Title: "the second", After: 1},
 			store.Step{Number: 3, Title: "the third", After: 2})
-		if _, err := s.TakeStep(ctx, feature.GetId(), 2, "session-one"); err != nil {
+		if _, _, err := s.TakeStep(ctx, feature.GetId(), 2, "session-one"); err != nil {
 			t.Fatalf("TakeStep: %v", err)
 		}
 
@@ -2721,7 +2721,7 @@ func runPathConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 		writePath(t, s, feature.GetId(),
 			store.Step{Number: 1, Title: "the first"},
 			store.Step{Number: 2, Title: "the second", After: 1})
-		if _, err := s.TakeStep(ctx, feature.GetId(), 2, "session-one"); err != nil {
+		if _, _, err := s.TakeStep(ctx, feature.GetId(), 2, "session-one"); err != nil {
 			t.Fatalf("TakeStep: %v", err)
 		}
 
@@ -2783,7 +2783,7 @@ func runPathConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 			store.Step{Number: 1, Title: "the first"},
 			store.Step{Number: 2, Title: "the second", After: 1},
 			store.Step{Number: 3, Title: "the third", After: 2})
-		if _, err := s.TakeStep(ctx, feature.GetId(), 3, "session-one"); err != nil {
+		if _, _, err := s.TakeStep(ctx, feature.GetId(), 3, "session-one"); err != nil {
 			t.Fatalf("TakeStep: %v", err)
 		}
 		finishStep(t, s, feature.GetId(), 1, store.StepDone)
@@ -2811,7 +2811,7 @@ func runPathConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 			store.Step{Number: 1, Title: "sign up"},
 			store.Step{Number: 2, Title: "sign in", After: 1})
 		writePath(t, s, second.GetId(), store.Step{Number: 1, Title: "checkout"})
-		if _, err := s.TakeStep(ctx, first.GetId(), 2, "session-one"); err != nil {
+		if _, _, err := s.TakeStep(ctx, first.GetId(), 2, "session-one"); err != nil {
 			t.Fatalf("TakeStep: %v", err)
 		}
 
@@ -2891,7 +2891,7 @@ func runPathConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 		writePath(t, s, feature.GetId(),
 			store.Step{Number: 1, Title: "the first"},
 			store.Step{Number: 2, Title: "the second", Intention: "as written", After: 1})
-		taken, err := s.TakeStep(ctx, feature.GetId(), 2, "session-one")
+		taken, _, err := s.TakeStep(ctx, feature.GetId(), 2, "session-one")
 		if err != nil {
 			t.Fatalf("TakeStep: %v", err)
 		}
@@ -3032,6 +3032,393 @@ func runPathConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 			t.Fatalf("ListSteps on a missing feature answered %v, want ErrNotFound", err)
 		}
 	})
+
+	// The cap on how many steps run at once. It is one number on the project, it counts across every
+	// feature of it, and the count is the write's own.
+
+	t.Run("a project nobody configured caps the steps in flight at the default", func(t *testing.T) {
+		s := newDataset(t)(t)
+		project := newProject(t, s, "acme", "house-bills")
+
+		design, err := s.GetDesign(context.Background(), project.GetId())
+		if err != nil {
+			t.Fatalf("GetDesign: %v", err)
+		}
+		if got := design.GetStepsInFlightCap(); got != store.DefaultStepsInFlightCap {
+			t.Fatalf("a project with no design row caps the steps in flight at %d, want %d",
+				got, store.DefaultStepsInFlightCap)
+		}
+	})
+
+	// The row is created on first use, the way every other design write creates it.
+	t.Run("setting the cap on a project with no design row reads back", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		project := newProject(t, s, "acme", "house-bills")
+
+		written, err := s.SetStepsInFlightCap(ctx, project.GetId(), 5)
+		if err != nil {
+			t.Fatalf("SetStepsInFlightCap: %v", err)
+		}
+		if got := written.GetStepsInFlightCap(); got != 5 {
+			t.Errorf("the write answered with a cap of %d, want 5", got)
+		}
+		read, err := s.GetDesign(ctx, project.GetId())
+		if err != nil {
+			t.Fatalf("GetDesign: %v", err)
+		}
+		if got := read.GetStepsInFlightCap(); got != 5 {
+			t.Fatalf("the design reads back a cap of %d, want 5", got)
+		}
+	})
+
+	// The cap says nothing about what the design body means, so the operator's word survives it.
+	t.Run("setting the cap leaves the approval where it is", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		project := newProject(t, s, "acme", "house-bills")
+
+		if _, err := s.SetProjectDesign(ctx, project.GetId(), "# Bills\n", ""); err != nil {
+			t.Fatalf("SetProjectDesign: %v", err)
+		}
+		if _, err := s.ApproveProjectDesign(ctx, project.GetId()); err != nil {
+			t.Fatalf("ApproveProjectDesign: %v", err)
+		}
+		design, err := s.SetStepsInFlightCap(ctx, project.GetId(), 4)
+		if err != nil {
+			t.Fatalf("SetStepsInFlightCap: %v", err)
+		}
+		if !design.GetApproved() {
+			t.Fatal("setting the cap cleared the approval, and it says nothing about the design body")
+		}
+	})
+
+	t.Run("setting the cap on a project that does not exist is refused", func(t *testing.T) {
+		s := newDataset(t)(t)
+		if _, err := s.SetStepsInFlightCap(context.Background(), "no-such-project", 4); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("setting the cap on a missing project answered %v, want ErrNotFound", err)
+		}
+	})
+
+	// The count the take answers with is the one its own write made, so a caller printing it prints
+	// what runs rather than what a second read a moment later says.
+	t.Run("the take says how many steps are in flight once it lands", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		feature := newFeature(t, s, newProject(t, s, "acme", "house-bills"), "the bills")
+		writePath(t, s, feature.GetId(),
+			store.Step{Number: 1, Title: "the first"},
+			store.Step{Number: 2, Title: "the second"})
+
+		for at, want := range []int32{1, 2} {
+			_, flying, err := s.TakeStep(ctx, feature.GetId(), int32(at)+1, "session-one")
+			if err != nil {
+				t.Fatalf("TakeStep on step %d: %v", at+1, err)
+			}
+			if flying != want {
+				t.Errorf("the take on step %d says %d steps are in flight, want %d", at+1, flying, want)
+			}
+		}
+	})
+
+	// The rule the whole cap rests on. A fourth take with three in flight is refused, and the refusal
+	// names all three so the operator knows which one to finish.
+	t.Run("a take at the cap is refused, naming the steps in flight and the cap", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		project := newProject(t, s, "acme", "house-bills")
+		feature := newFeature(t, s, project, "the bills")
+		// The test names its own cap. Read from the store's default, it would stop saying
+		// anything about the rule the moment that default moved.
+		const cappedAt = int32(3)
+
+		writePath(t, s, feature.GetId(),
+			store.Step{Number: 1, Title: "the first"},
+			store.Step{Number: 2, Title: "the second"},
+			store.Step{Number: 3, Title: "the third"},
+			store.Step{Number: 4, Title: "the fourth"})
+		if _, err := s.SetStepsInFlightCap(ctx, project.GetId(), cappedAt); err != nil {
+			t.Fatalf("SetStepsInFlightCap: %v", err)
+		}
+		for number := int32(1); number <= cappedAt; number++ {
+			if _, _, err := s.TakeStep(ctx, feature.GetId(), number, "session-one"); err != nil {
+				t.Fatalf("TakeStep on step %d: %v", number, err)
+			}
+		}
+
+		_, _, err := s.TakeStep(ctx, feature.GetId(), 4, "session-four")
+		if !errors.Is(err, store.ErrTooManyStepsInFlight) {
+			t.Fatalf("the take at the cap answered %v, want ErrTooManyStepsInFlight", err)
+		}
+		var full *store.StepsInFlightError
+		if !errors.As(err, &full) {
+			t.Fatalf("the refusal is %v, and it carries no steps for the caller to name", err)
+		}
+		if full.Cap != cappedAt {
+			t.Errorf("the refusal names a cap of %d, want %d", full.Cap, cappedAt)
+		}
+		if len(full.Steps) != int(cappedAt) {
+			t.Fatalf("the refusal names %d steps in flight, want %d", len(full.Steps), cappedAt)
+		}
+		for at, held := range full.Steps {
+			if held.Number != int32(at)+1 {
+				t.Errorf("the refusal names step %d in place %d, want step %d", held.Number, at, at+1)
+			}
+			if held.FeatureNumber != feature.GetNumber() || held.FeatureTitle != feature.GetTitle() {
+				t.Errorf("the refusal puts step %d in feature %d %q, want feature %d %q",
+					held.Number, held.FeatureNumber, held.FeatureTitle,
+					feature.GetNumber(), feature.GetTitle())
+			}
+		}
+		read, err := s.GetStep(ctx, feature.GetId(), 4)
+		if err != nil {
+			t.Fatalf("GetStep after the refusal: %v", err)
+		}
+		if read.GetState() != store.StepReady || read.GetSession() != "" {
+			t.Fatalf("the refused take left step 4 as %q held by %q", read.GetState(), read.GetSession())
+		}
+	})
+
+	// The trap the re-keying put here. The step is addressed by its feature and the cap is not: read
+	// inside one feature, a project with three features would run three times the number it was set.
+	t.Run("the cap counts across every feature of the project", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		project := newProject(t, s, "acme", "house-bills")
+		first := newFeature(t, s, project, "authentication")
+		second := newFeature(t, s, project, "payment")
+		third := newFeature(t, s, project, "delivery")
+		writePath(t, s, first.GetId(),
+			store.Step{Number: 1, Title: "sign up"},
+			store.Step{Number: 2, Title: "sign in"})
+		writePath(t, s, second.GetId(), store.Step{Number: 1, Title: "checkout"})
+		writePath(t, s, third.GetId(), store.Step{Number: 1, Title: "post it"})
+		// The test names its own cap. Read from the default, this would say nothing about the rule
+		// the moment the default moved.
+		const cappedAt = int32(3)
+		if _, err := s.SetStepsInFlightCap(ctx, project.GetId(), cappedAt); err != nil {
+			t.Fatalf("SetStepsInFlightCap: %v", err)
+		}
+		for _, feature := range []string{first.GetId(), second.GetId(), third.GetId()} {
+			if _, _, err := s.TakeStep(ctx, feature, 1, "session-one"); err != nil {
+				t.Fatalf("TakeStep: %v", err)
+			}
+		}
+
+		_, _, err := s.TakeStep(ctx, first.GetId(), 2, "session-four")
+		if !errors.Is(err, store.ErrTooManyStepsInFlight) {
+			t.Fatalf("a fourth take across three features answered %v, want ErrTooManyStepsInFlight", err)
+		}
+		var full *store.StepsInFlightError
+		if !errors.As(err, &full) {
+			t.Fatalf("the refusal is %v, and it carries no steps", err)
+		}
+		want := []store.StepInFlight{
+			{Number: 1, FeatureNumber: first.GetNumber(), FeatureTitle: "authentication"},
+			{Number: 1, FeatureNumber: second.GetNumber(), FeatureTitle: "payment"},
+			{Number: 1, FeatureNumber: third.GetNumber(), FeatureTitle: "delivery"},
+		}
+		if !slices.Equal(full.Steps, want) {
+			t.Fatalf("the refusal names %v, want %v", full.Steps, want)
+		}
+	})
+
+	// The cap belongs to one project. Two projects each run their own steps and never wait for
+	// each other.
+	t.Run("one project at its cap leaves another project's take alone", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		project := newProject(t, s, "acme", "house-bills")
+		busy := newFeature(t, s, project, "the bills")
+		// The test names its own cap. Read from the store's default, it would stop saying
+		// anything about the rule the moment that default moved.
+		const cappedAt = int32(3)
+
+		quiet := newFeature(t, s, newProject(t, s, "acme", "car-bills"), "the other bills")
+		writePath(t, s, busy.GetId(),
+			store.Step{Number: 1, Title: "the first"},
+			store.Step{Number: 2, Title: "the second"},
+			store.Step{Number: 3, Title: "the third"})
+		writePath(t, s, quiet.GetId(), store.Step{Number: 1, Title: "its own first"})
+		if _, err := s.SetStepsInFlightCap(ctx, project.GetId(), cappedAt); err != nil {
+			t.Fatalf("SetStepsInFlightCap: %v", err)
+		}
+		for number := int32(1); number <= cappedAt; number++ {
+			if _, _, err := s.TakeStep(ctx, busy.GetId(), number, "session-one"); err != nil {
+				t.Fatalf("TakeStep on step %d: %v", number, err)
+			}
+		}
+
+		if _, _, err := s.TakeStep(ctx, quiet.GetId(), 1, "session-elsewhere"); err != nil {
+			t.Fatalf("a take in a quiet project answered %v, and its own cap has room", err)
+		}
+	})
+
+	// Finishing one makes room for the next. The count reads the state, so a step that closed stops
+	// being counted without anything else being written.
+	t.Run("finishing a step at the cap lets the next take pass", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		project := newProject(t, s, "acme", "house-bills")
+		feature := newFeature(t, s, project, "the bills")
+		// The test names its own cap. Read from the store's default, it would stop saying
+		// anything about the rule the moment that default moved.
+		const cappedAt = int32(3)
+
+		writePath(t, s, feature.GetId(),
+			store.Step{Number: 1, Title: "the first"},
+			store.Step{Number: 2, Title: "the second"},
+			store.Step{Number: 3, Title: "the third"},
+			store.Step{Number: 4, Title: "the fourth"})
+		if _, err := s.SetStepsInFlightCap(ctx, project.GetId(), cappedAt); err != nil {
+			t.Fatalf("SetStepsInFlightCap: %v", err)
+		}
+		for number := int32(1); number <= cappedAt; number++ {
+			if _, _, err := s.TakeStep(ctx, feature.GetId(), number, "session-one"); err != nil {
+				t.Fatalf("TakeStep on step %d: %v", number, err)
+			}
+		}
+		finishStep(t, s, feature.GetId(), 1, store.StepDone)
+
+		_, flying, err := s.TakeStep(ctx, feature.GetId(), 4, "session-four")
+		if err != nil {
+			t.Fatalf("the take after a step closed answered %v, and the cap has room", err)
+		}
+		if flying != cappedAt {
+			t.Fatalf("the take says %d steps are in flight, want %d", flying, cappedAt)
+		}
+	})
+
+	// Lowering it refuses the next take and stops nothing. A cap that reached into running sessions
+	// would end work nobody asked it to end.
+	t.Run("lowering the cap below what runs now refuses the next take and moves nothing", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		feature := newFeature(t, s, newProject(t, s, "acme", "house-bills"), "the bills")
+		writePath(t, s, feature.GetId(),
+			store.Step{Number: 1, Title: "the first"},
+			store.Step{Number: 2, Title: "the second"},
+			store.Step{Number: 3, Title: "the third"})
+		for number := int32(1); number <= 2; number++ {
+			if _, _, err := s.TakeStep(ctx, feature.GetId(), number, "session-one"); err != nil {
+				t.Fatalf("TakeStep on step %d: %v", number, err)
+			}
+		}
+		if _, err := s.SetStepsInFlightCap(ctx, feature.GetProject(), 1); err != nil {
+			t.Fatalf("SetStepsInFlightCap: %v", err)
+		}
+
+		if _, _, err := s.TakeStep(ctx, feature.GetId(), 3, "session-three"); !errors.Is(err, store.ErrTooManyStepsInFlight) {
+			t.Fatalf("the take under a lowered cap answered %v, want ErrTooManyStepsInFlight", err)
+		}
+		read, err := s.ListSteps(ctx, feature.GetId())
+		if err != nil {
+			t.Fatalf("ListSteps: %v", err)
+		}
+		for _, step := range read[:2] {
+			if step.GetState() != store.StepTaken || step.GetSession() != "session-one" {
+				t.Errorf("step %d reads as %q held by %q, and lowering a cap stops nothing",
+					step.GetNumber(), step.GetState(), step.GetSession())
+			}
+		}
+	})
+
+	// The raise is what the refusal tells the operator to do, so it has to work.
+	t.Run("raising the cap lets the take that was refused pass", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		project := newProject(t, s, "acme", "house-bills")
+		feature := newFeature(t, s, project, "the bills")
+		// The test names its own cap. Read from the store's default, it would stop saying
+		// anything about the rule the moment that default moved.
+		const cappedAt = int32(3)
+
+		writePath(t, s, feature.GetId(),
+			store.Step{Number: 1, Title: "the first"},
+			store.Step{Number: 2, Title: "the second"},
+			store.Step{Number: 3, Title: "the third"},
+			store.Step{Number: 4, Title: "the fourth"})
+		if _, err := s.SetStepsInFlightCap(ctx, project.GetId(), cappedAt); err != nil {
+			t.Fatalf("SetStepsInFlightCap: %v", err)
+		}
+		for number := int32(1); number <= cappedAt; number++ {
+			if _, _, err := s.TakeStep(ctx, feature.GetId(), number, "session-one"); err != nil {
+				t.Fatalf("TakeStep on step %d: %v", number, err)
+			}
+		}
+		if _, _, err := s.TakeStep(ctx, feature.GetId(), 4, "session-four"); !errors.Is(err, store.ErrTooManyStepsInFlight) {
+			t.Fatalf("the fourth take answered %v, want ErrTooManyStepsInFlight", err)
+		}
+
+		if _, err := s.SetStepsInFlightCap(ctx, feature.GetProject(), cappedAt+1); err != nil {
+			t.Fatalf("SetStepsInFlightCap: %v", err)
+		}
+		_, flying, err := s.TakeStep(ctx, feature.GetId(), 4, "session-four")
+		if err != nil {
+			t.Fatalf("the take after the raise answered %v, and the cap has room", err)
+		}
+		if flying != cappedAt+1 {
+			t.Fatalf("the take says %d steps are in flight, want %d",
+				flying, cappedAt+1)
+		}
+	})
+
+	// A step somebody already holds is refused for that and never for the cap. A full project would
+	// otherwise send the operator to finish something when the step was never on offer.
+	t.Run("a take on a held step at the cap is refused for the state and not for the cap", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		project := newProject(t, s, "acme", "house-bills")
+		feature := newFeature(t, s, project, "the bills")
+		// The test names its own cap. Read from the store's default, it would stop saying
+		// anything about the rule the moment that default moved.
+		const cappedAt = int32(3)
+
+		writePath(t, s, feature.GetId(),
+			store.Step{Number: 1, Title: "the first"},
+			store.Step{Number: 2, Title: "the second"},
+			store.Step{Number: 3, Title: "the third"})
+		if _, err := s.SetStepsInFlightCap(ctx, project.GetId(), cappedAt); err != nil {
+			t.Fatalf("SetStepsInFlightCap: %v", err)
+		}
+		for number := int32(1); number <= cappedAt; number++ {
+			if _, _, err := s.TakeStep(ctx, feature.GetId(), number, "session-one"); err != nil {
+				t.Fatalf("TakeStep on step %d: %v", number, err)
+			}
+		}
+
+		if _, _, err := s.TakeStep(ctx, feature.GetId(), 1, "session-two"); !errors.Is(err, store.ErrStepNotReady) {
+			t.Fatalf("taking a held step at the cap answered %v, want ErrStepNotReady", err)
+		}
+	})
+
+	// A step the path does not hold is not found, whatever the cap says.
+	t.Run("a take on a step the path does not hold is not found at the cap", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		project := newProject(t, s, "acme", "house-bills")
+		feature := newFeature(t, s, project, "the bills")
+		// The test names its own cap. Read from the store's default, it would stop saying
+		// anything about the rule the moment that default moved.
+		const cappedAt = int32(3)
+
+		writePath(t, s, feature.GetId(),
+			store.Step{Number: 1, Title: "the first"},
+			store.Step{Number: 2, Title: "the second"},
+			store.Step{Number: 3, Title: "the third"})
+		if _, err := s.SetStepsInFlightCap(ctx, project.GetId(), cappedAt); err != nil {
+			t.Fatalf("SetStepsInFlightCap: %v", err)
+		}
+		for number := int32(1); number <= cappedAt; number++ {
+			if _, _, err := s.TakeStep(ctx, feature.GetId(), number, "session-one"); err != nil {
+				t.Fatalf("TakeStep on step %d: %v", number, err)
+			}
+		}
+
+		if _, _, err := s.TakeStep(ctx, feature.GetId(), 9, "session-two"); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("taking a step the path does not hold answered %v, want ErrNotFound", err)
+		}
+	})
 }
 
 // numbersOf is a path's step numbers, in the order the store answered with.
@@ -3147,7 +3534,7 @@ func runTakeConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 		if _, err := s.SetPath(ctx, feature.GetId(), nil, []store.Step{{Number: 1, Title: "the first"}}); err != nil {
 			t.Fatalf("SetPath: %v", err)
 		}
-		taken, err := s.TakeStep(ctx, feature.GetId(), 1, "session-one")
+		taken, _, err := s.TakeStep(ctx, feature.GetId(), 1, "session-one")
 		if err != nil {
 			t.Fatalf("TakeStep: %v", err)
 		}
@@ -3181,10 +3568,10 @@ func runTakeConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 		if _, err := s.SetPath(ctx, feature.GetId(), nil, []store.Step{{Number: 1, Title: "the first"}}); err != nil {
 			t.Fatalf("SetPath: %v", err)
 		}
-		if _, err := s.TakeStep(ctx, feature.GetId(), 1, "session-one"); err != nil {
+		if _, _, err := s.TakeStep(ctx, feature.GetId(), 1, "session-one"); err != nil {
 			t.Fatalf("TakeStep: %v", err)
 		}
-		if _, err := s.TakeStep(ctx, feature.GetId(), 1, "session-two"); !errors.Is(err, store.ErrStepNotReady) {
+		if _, _, err := s.TakeStep(ctx, feature.GetId(), 1, "session-two"); !errors.Is(err, store.ErrStepNotReady) {
 			t.Fatalf("taking a step twice answered %v, want ErrStepNotReady", err)
 		}
 		read, err := s.GetStep(ctx, feature.GetId(), 1)
@@ -3208,10 +3595,10 @@ func runTakeConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 		}); err != nil {
 			t.Fatalf("SetPath: %v", err)
 		}
-		if _, err := s.TakeStep(ctx, feature.GetId(), 1, "session-one"); err != nil {
+		if _, _, err := s.TakeStep(ctx, feature.GetId(), 1, "session-one"); err != nil {
 			t.Fatalf("TakeStep on step 1: %v", err)
 		}
-		if _, err := s.TakeStep(ctx, feature.GetId(), 2, "session-two"); err != nil {
+		if _, _, err := s.TakeStep(ctx, feature.GetId(), 2, "session-two"); err != nil {
 			t.Fatalf("TakeStep on step 2: %v", err)
 		}
 		read, err := s.ListSteps(ctx, feature.GetId())
@@ -3240,7 +3627,7 @@ func runTakeConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 				t.Fatalf("SetPath: %v", err)
 			}
 		}
-		if _, err := s.TakeStep(ctx, first.GetId(), 3, "session-one"); err != nil {
+		if _, _, err := s.TakeStep(ctx, first.GetId(), 3, "session-one"); err != nil {
 			t.Fatalf("TakeStep on authentication's step 3: %v", err)
 		}
 		read, err := s.GetStep(ctx, second.GetId(), 3)
@@ -3304,7 +3691,7 @@ func runTakeConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 		feature := newFeature(t, s, newProject(t, s, "acme", "house-bills"), "the bills")
 		writePath(t, s, feature.GetId(), store.Step{Number: 1, Title: "the first"})
 
-		taken, err := s.TakeStep(ctx, feature.GetId(), 1, "session-one")
+		taken, _, err := s.TakeStep(ctx, feature.GetId(), 1, "session-one")
 		if err != nil {
 			t.Fatalf("TakeStep: %v", err)
 		}
@@ -3431,10 +3818,10 @@ func runTakeConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 		if _, err := s.SetPath(ctx, feature.GetId(), nil, []store.Step{{Number: 1, Title: "the first"}}); err != nil {
 			t.Fatalf("SetPath: %v", err)
 		}
-		if _, err := s.TakeStep(ctx, feature.GetId(), 7, "session-one"); !errors.Is(err, store.ErrNotFound) {
+		if _, _, err := s.TakeStep(ctx, feature.GetId(), 7, "session-one"); !errors.Is(err, store.ErrNotFound) {
 			t.Fatalf("TakeStep on a step nobody wrote answered %v, want ErrNotFound", err)
 		}
-		if _, err := s.TakeStep(ctx, "no-such-feature", 1, "session-one"); !errors.Is(err, store.ErrNotFound) {
+		if _, _, err := s.TakeStep(ctx, "no-such-feature", 1, "session-one"); !errors.Is(err, store.ErrNotFound) {
 			t.Fatalf("TakeStep on a missing feature answered %v, want ErrNotFound", err)
 		}
 	})
