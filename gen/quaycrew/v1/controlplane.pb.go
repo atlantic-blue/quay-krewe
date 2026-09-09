@@ -4671,13 +4671,19 @@ func (x *ListStepsRequest) GetFeature() string {
 type ListStepsResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	Steps []*Step                `protobuf:"bytes,1,rep,name=steps,proto3" json:"steps,omitempty"`
+	// next is the lowest numbered step in state ready whose after step is done, or whose after is
+	// zero. It is 0 when no step qualifies.
+	//
+	// It is 0 when the request names no feature, because what is next is a question about one path.
+	//
+	// It is a sentence and never a dispatch. Reading it starts no session, takes no step and changes
+	// no row.
+	Next int32 `protobuf:"varint,2,opt,name=next,proto3" json:"next,omitempty"`
 	// milestones travel with the steps, so a caller groups the listing without a second call. This is
 	// why a milestone has no read of its own on this service.
 	//
 	// They are empty when the request names no feature, because a milestone number restarts in each
 	// feature and a merged list would read as one run of numbers.
-	//
-	// Field 2 is left for next, which says which step may be taken now.
 	Milestones    []*Milestone `protobuf:"bytes,3,rep,name=milestones,proto3" json:"milestones,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -4718,6 +4724,13 @@ func (x *ListStepsResponse) GetSteps() []*Step {
 		return x.Steps
 	}
 	return nil
+}
+
+func (x *ListStepsResponse) GetNext() int32 {
+	if x != nil {
+		return x.Next
+	}
+	return 0
 }
 
 func (x *ListStepsResponse) GetMilestones() []*Milestone {
@@ -8673,9 +8686,10 @@ const file_quaycrew_v1_controlplane_proto_rawDesc = "" +
 	"\x05steps\x18\x01 \x03(\v2\x11.quaycrew.v1.StepR\x05steps\x12\x1a\n" +
 	"\bwarnings\x18\x02 \x03(\tR\bwarnings\",\n" +
 	"\x10ListStepsRequest\x12\x18\n" +
-	"\afeature\x18\x01 \x01(\tR\afeature\"t\n" +
+	"\afeature\x18\x01 \x01(\tR\afeature\"\x88\x01\n" +
 	"\x11ListStepsResponse\x12'\n" +
-	"\x05steps\x18\x01 \x03(\v2\x11.quaycrew.v1.StepR\x05steps\x126\n" +
+	"\x05steps\x18\x01 \x03(\v2\x11.quaycrew.v1.StepR\x05steps\x12\x12\n" +
+	"\x04next\x18\x02 \x01(\x05R\x04next\x126\n" +
 	"\n" +
 	"milestones\x18\x03 \x03(\v2\x16.quaycrew.v1.MilestoneR\n" +
 	"milestones\"C\n" +

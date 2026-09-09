@@ -1169,6 +1169,15 @@ func (s *Server) ListSteps(ctx context.Context, req *quaycrewv1.ListStepsRequest
 		})
 	}
 	answer := &quaycrewv1.ListStepsResponse{Steps: steps}
+	// What is next is the operator's next command, and it is a sentence: reading it starts no
+	// session, takes no step and writes nothing.
+	//
+	// It is left at 0 when the request names no feature, because what is next is a question about
+	// one path, and a lowest number read across several paths would name a step of a path nobody
+	// asked about.
+	if req.GetFeature() != "" {
+		answer.Next = nextStep(steps)
+	}
 	// The milestones travel with the steps, so a caller groups the listing without a second call.
 	// They are left out when the request names no feature, because a milestone number restarts in
 	// each feature and a merged list would read as one run of numbers.
@@ -1183,6 +1192,40 @@ func (s *Server) ListSteps(ctx context.Context, req *quaycrewv1.ListStepsRequest
 		answer.Milestones = milestones
 	}
 	return answer, nil
+}
+
+// nextStep is the lowest numbered step somebody may take now: a step in state ready whose predecessor
+// is done, or that waits for nobody.
+//
+// Both halves of the rule are read. A ready step whose predecessor is unfinished is not next, however
+// low its number, because taking it would build on work nobody proved. Answering with the lowest
+// ready step alone is right on a path where the steps were done in order and wrong everywhere else.
+//
+// It answers 0 when no step qualifies, and 0 is an answer rather than an error: an empty path has
+// nothing to start, and so does a path where every ready step waits on something unfinished.
+//
+// The order it is given does not decide the answer, so a caller that sorted nothing gets the same
+// number as a caller that did.
+func nextStep(steps []*quaycrewv1.Step) int32 {
+	done := make(map[int32]bool, len(steps))
+	for _, step := range steps {
+		if step.GetState() == stepDone {
+			done[step.GetNumber()] = true
+		}
+	}
+	next := int32(0)
+	for _, step := range steps {
+		if step.GetState() != store.StepReady {
+			continue
+		}
+		if step.GetAfter() != 0 && !done[step.GetAfter()] {
+			continue
+		}
+		if next == 0 || step.GetNumber() < next {
+			next = step.GetNumber()
+		}
+	}
+	return next
 }
 
 // Taking a step: the gate the operator's own command is refused by, the write that records who holds

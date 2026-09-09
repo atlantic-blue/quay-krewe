@@ -659,6 +659,128 @@ Feature: A project holds a numbered path of steps
     When the operator reads the path
     Then the path holds 0 steps
 
+  # What is next is the operator's next command, put in front of them. It is a sentence and never a
+  # dispatch: the read starts no session, takes no step and changes no row.
+  Scenario: A path with the first two steps done says the third is next
+    Given the project's path is:
+      """
+      ## 1. The store holds a project's brief
+      ## 2. The store holds a project's design
+      ## 3. The command line reads it back
+      """
+    And step 1 is recorded as done
+    And step 2 is recorded as done
+    When the operator reads the path
+    Then the path says step 3 is next
+
+  # A path nobody has touched. Step 1 waits for nobody, and it is the lowest step that is ready.
+  Scenario: A path nobody has started says the first step is next
+    Given the project's path is:
+      """
+      ## 1. The store holds a project's brief
+      ## 2. The store holds a project's design
+      """
+    When the operator reads the path
+    Then the path says step 1 is next
+
+  # Both halves of the rule are read. Step 2 is the lowest ready step and it waits for a step that
+  # stopped, so it is not next. Reading the state and skipping the predecessor names step 2 here, and
+  # step 2 is the step nobody may take.
+  Scenario: A ready step waiting for an unfinished step is not next
+    Given the project's path is:
+      """
+      ## 1. The store holds a project's brief
+
+      ## 2. The store holds a project's design
+
+      ## 3. The command line reads it back
+
+      After
+      """
+    And step 1 is recorded as stopped
+    When the operator reads the path
+    Then step 2 waits for step 1
+    And the path says step 3 is next
+
+  # A step somebody holds is not on offer, whatever it waits for.
+  Scenario: A step somebody took is never next
+    Given the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+
+      ## 2. The store holds a project's design
+
+      ## 3. The command line reads it back
+
+      After
+      """
+    And the operator took step 1
+    When the operator reads the path
+    Then the path says step 3 is next
+
+  Scenario: A step that is done or stopped is never next
+    Given the project's path is:
+      """
+      ## 1. The store holds a project's brief
+      ## 2. The store holds a project's design
+      """
+    And step 1 is recorded as done
+    And step 2 is recorded as stopped
+    When the operator reads the path
+    Then the path says nothing is next
+
+  # Every ready step waits for a step nobody finished, so there is nothing to start. Nothing is an
+  # answer here, and it is not an error.
+  Scenario: With every ready step waiting the path says nothing is next
+    Given the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+      ## 2. The store holds a project's design
+      """
+    And the operator took step 1
+    When the operator reads the path
+    Then the path says nothing is next
+
+  Scenario: An empty path says nothing is next
+    When the operator reads the path
+    Then the path holds 0 steps
+    And the path says nothing is next
+
+  # What is next is a question about one path. Read across every feature, the lowest number would name
+  # a step of a path nobody asked about.
+  Scenario: A read naming no feature says nothing is next
+    Given the project's feature "authentication"
+    And the project's feature "payment"
+    And the operator sets the path of feature 1 to:
+      """
+      ## 1. Sign up
+      """
+    And the operator sets the path of feature 2 to:
+      """
+      ## 1. Checkout
+      """
+    When the operator reads the path of every feature
+    Then the path holds 2 steps
+    And the path says nothing is next
+
+  # The guard the whole slice stands on. Reading what is next is a sentence, so nothing starts and
+  # nothing moves.
+  Scenario: Reading what is next starts no session and moves no step
+    Given the project's path is:
+      """
+      ## 1. The store holds a project's brief
+      ## 2. The store holds a project's design
+      """
+    When the operator reads the path
+    Then the path says step 1 is next
+    And 0 sessions were started
+    And step 1 is still ready
+    And step 2 is still ready
+
   Scenario: The path of a feature that does not exist is refused
     When the operator reads the path of a feature that does not exist
     Then the control plane refuses it as not found
@@ -1948,6 +2070,35 @@ Feature: A project holds a numbered path of steps
     Then standard output carries "step 1.1 of house-bills is done: shipped as pull request 712"
     And the caller reads the path
     And standard output carries "done"
+
+  # The operator's next command, under the line saying this one closed. It names a step and starts
+  # nothing: the take is still typed.
+  Scenario: Marking a step done prints the step that is next
+    Given the system listens on an address the tool can dial
+    And the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+      ## 2. The store holds a project's design
+      """
+    When the caller marks step "1.1" done with "shipped as pull request 712"
+    Then standard output carries "step 1.1 of house-bills is done"
+    And standard output carries "next: step 2"
+    And 0 sessions were started
+
+  # The last step of a path closes and there is nothing to start. The line says so rather than naming
+  # a step nobody may take.
+  Scenario: Marking the last step done says nothing is next
+    Given the system listens on an address the tool can dial
+    And the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+      """
+    When the caller marks step "1.1" done with "shipped as pull request 712"
+    Then standard output carries "next: nothing, every step is taken or waiting"
 
   # The two words take the same arguments in the same order, so the two are one thing to learn.
   Scenario: The caller stops a step and the reason reads back
