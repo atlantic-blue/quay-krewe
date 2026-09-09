@@ -16,6 +16,18 @@ import (
 // It reads the same layout the mounts come from, so the two cannot drift into describing different
 // directories, and it starts nothing: a settled workspace answers as readily as a busy one.
 
+// DirectoryKind is which of the three directories an address landed on.
+type DirectoryKind string
+
+const (
+	// KindShared is the workspace's shared folder, which every session in it reads.
+	KindShared DirectoryKind = "shared"
+	// KindProject is a project's own folder inside that shared one.
+	KindProject DirectoryKind = "project"
+	// KindWorking is one session's own working directory.
+	KindWorking DirectoryKind = "working"
+)
+
 // Directory is one place a person can put a file, in the two views that matter to them.
 type Directory struct {
 	// Host is the directory on the machine running the sandboxes, which is where the file goes.
@@ -23,8 +35,8 @@ type Directory struct {
 	// Sandbox is where the same directory appears inside a container, which is what a session calls
 	// the file once it is in there.
 	Sandbox string
-	// Shared says this is the workspace's shared folder rather than one session's own directory.
-	Shared bool
+	// Kind says which of the three this is, so an answer can name it.
+	Kind DirectoryKind
 }
 
 // SharedDirectory is a workspace's shared folder, made if it is not there.
@@ -48,7 +60,39 @@ func (s Storage) SharedDirectory(workspace string) (Directory, error) {
 	return Directory{
 		Host:    path.Join(append([]string{s.hostRoot()}, parts...)...),
 		Sandbox: SharedPath,
-		Shared:  true,
+		Kind:    KindShared,
+	}, nil
+}
+
+// ProjectDirectory is a project's own folder inside its workspace's shared folder, made if it is not
+// there, for the reason SharedDirectory is made.
+//
+// It is named after the project rather than after the project's identifier. This is the one
+// directory in the layout a person reads out loud: they type an address and copy a file into what
+// comes back, and a session is told to open it by name. Twenty four characters of hexadecimal under
+// /home/agent/shared is the identifier this whole feature exists to stop anybody reading.
+//
+// The names the system already writes at this level are refused at project creation, so the folder
+// cannot land on top of a session's working tree or the shared clone of a repository.
+func (s Storage) ProjectDirectory(workspace, project string) (Directory, error) {
+	if s.Dir == "" {
+		return Directory{}, ErrNoDirectories
+	}
+	for _, part := range []struct{ kind, value string }{
+		{"workspace", workspace}, {"project", project},
+	} {
+		if err := usableAsPath(part.kind, part.value); err != nil {
+			return Directory{}, err
+		}
+	}
+	parts := []string{"workspaces", workspace, "volume", project}
+	if err := makeWritableDir(filepath.Join(append([]string{s.Dir}, parts...)...)); err != nil {
+		return Directory{}, err
+	}
+	return Directory{
+		Host:    path.Join(append([]string{s.hostRoot()}, parts...)...),
+		Sandbox: path.Join(SharedPath, project),
+		Kind:    KindProject,
 	}, nil
 }
 
@@ -73,6 +117,7 @@ func (s Storage) WorkingDirectory(cfg Config) (Directory, error) {
 	return Directory{
 		Host:    path.Join(append([]string{s.hostRoot()}, parts...)...),
 		Sandbox: WorkingPath,
+		Kind:    KindWorking,
 	}, nil
 }
 

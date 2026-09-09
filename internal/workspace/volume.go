@@ -13,11 +13,6 @@ import (
 // typing at. A copy takes one of each, and `itv/vast` reads as both, so this is what tells them apart.
 const Scheme = "krewe://"
 
-// Worktrees is the folder a session's working tree goes in, directly inside a workspace's shared
-// folder. A project folder sits at that same level, so a project of this name would be one path
-// naming two directories.
-const Worktrees = "worktrees"
-
 // longestSessionID is a session identifier at full length. The system makes one from twelve random
 // bytes, so it is 24 hexadecimal characters, and a listing prints the first 8 of them. A segment
 // longer than this is hexadecimal for some other reason, a commit for example, and it is a file name.
@@ -122,10 +117,10 @@ func ParseVolumePath(value string) (VolumePath, error) {
 	if len(rest) > 0 && canBeLevel(rest[0]) {
 		parsed.Project, parsed.Kind, rest = rest[0], VolumeProject, rest[1:]
 		parsed.Ambiguous = LevelProject
-		if parsed.Project == Worktrees {
+		if held := name.ReservedProject(parsed.Project); held != "" {
 			return VolumePath{}, fmt.Errorf(
-				"workspace: %q is where this system writes a session's working tree, so no project is called it: reach one at %sitv/vast/<session>",
-				Worktrees, Scheme)
+				"workspace: %q is where this system writes %s, so no project is called it: name a project, or reach a session at %sitv/vast/<session>",
+				parsed.Project, held, Scheme)
 		}
 		if len(rest) > 0 && canBeLevel(rest[0]) {
 			parsed.Session, parsed.Kind, rest = rest[0], VolumeWorking, rest[1:]

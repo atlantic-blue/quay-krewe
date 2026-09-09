@@ -718,7 +718,7 @@ func runProject(ctx context.Context, client quaycrewv1.ControlPlaneServiceClient
 	case "list":
 		scope := ""
 		where := systemWide("projects").locatable(
-			"the shared folder these work in: krewe where <workspace>")
+			"the folder one of these works in: krewe where <workspace>/<project>")
 		if len(args) > 1 {
 			located, err := locate(ctx, client, args[1])
 			if err != nil {
@@ -727,7 +727,7 @@ func runProject(ctx context.Context, client quaycrewv1.ControlPlaneServiceClient
 			scope = located.WorkspaceID
 			where = narrowedTo("projects", located.Path.Workspace,
 				"krewe project list on its own reads every workspace").locatable(
-				"the shared folder these work in: krewe where " + located.Path.Workspace)
+				"the folder one of these works in: krewe where " + located.Path.Workspace + "/<project>")
 		}
 		resp, err := client.ListProjects(ctx, &quaycrewv1.ListProjectsRequest{Workspace: scope})
 		if err != nil {

@@ -184,3 +184,33 @@ func TestTheWordTheLevelUsedToTakeIsRefusedHoweverItIsTyped(t *testing.T) {
 		}
 	}
 }
+
+// A project's folder now sits directly inside the workspace's shared folder, beside the two folders
+// the system writes there itself. A project called either of them would be one path naming two
+// directories: a file copied to `krewe://itv/worktrees` would land on a session's checkout.
+func TestAProjectCannotTakeAFolderTheSystemAlreadyWrites(t *testing.T) {
+	for _, typed := range []string{"worktrees", "repos", "Worktrees", "REPOS", "  repos  "} {
+		err := name.ValidateProject(typed)
+		if err == nil {
+			t.Fatalf("ValidateProject(%q) = nil, want the refusal that says what is in that folder", typed)
+		}
+		// The refusal that says what the folder holds, rather than the one that says to lowercase it.
+		if strings.Contains(err.Error(), "lowercase letters, digits and hyphens") {
+			t.Fatalf("ValidateProject(%q) = %q, which advises typing a name this refuses", typed, err)
+		}
+		if !strings.Contains(err.Error(), "shared folder") {
+			t.Fatalf("ValidateProject(%q) = %q, and it never says where the collision is", typed, err)
+		}
+	}
+
+	// Only the words themselves. Every other name goes on to the general rule, and fails or passes
+	// there.
+	for _, typed := range []string{"vast", "worktrees-of-wrath", "reposition", "house-bills"} {
+		if err := name.ValidateProject(typed); err != nil {
+			t.Fatalf("ValidateProject(%q) = %v, want it left alone", typed, err)
+		}
+	}
+	if err := name.ValidateProject("House Bills"); err == nil {
+		t.Fatal("ValidateProject(\"House Bills\") = nil, so the general rule stopped running")
+	}
+}

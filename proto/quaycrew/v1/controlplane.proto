@@ -870,6 +870,9 @@ enum DirectoryKind {
   DIRECTORY_KIND_SHARED = 1;
   // One session's own working directory.
   DIRECTORY_KIND_WORKING = 2;
+  // A project's own folder inside the workspace's shared folder, named after the project. Every
+  // session in the workspace reads it, and the sessions of that project are the ones told to.
+  DIRECTORY_KIND_PROJECT = 3;
 }
 
 // LocateDirectoryRequest asks where an address is on the machine, so a person can put a file in it by
@@ -881,10 +884,12 @@ enum DirectoryKind {
 message LocateDirectoryRequest {
   // workspace is the workspace id, and is required: every directory this answers for is inside one.
   string workspace = 1;
-  // project is the project id, and narrows session to the project holding it.
+  // project is the project id. With no session it is the answer itself: a project's own folder
+  // inside the workspace's shared folder. With one it narrows the session to the project holding it.
   string project = 2;
   // session is the session handle. With one, the answer is that session's own working directory;
-  // without one, it is the workspace's shared folder.
+  // without one, it is the project's folder, or the workspace's shared folder where no project is
+  // named either.
   string session = 3;
 }
 message LocateDirectoryResponse {
@@ -894,7 +899,7 @@ message LocateDirectoryResponse {
   // sandbox is where the same directory appears inside a container, which is what a session calls the
   // file once it is in there.
   string sandbox = 2;
-  // kind says which of the two directories this is.
+  // kind says which of the three directories this is.
   DirectoryKind kind = 3;
 }
 
