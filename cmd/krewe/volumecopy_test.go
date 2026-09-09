@@ -257,14 +257,15 @@ func TestVolumeCopyOfADirectoryIsRefused(t *testing.T) {
 }
 
 // The scheme is what tells the two arguments apart, because acme/house-bills is a good relative path
-// and a good address. Both ways round are refused, and both refusals say the form.
+// and a good address. One argument of each kind is a direction. Two of a kind is neither, and both
+// pairs are refused with the form on the end of the refusal.
 func TestVolumeCopySaysWhichArgumentCarriesTheScheme(t *testing.T) {
 	client, _ := aVolumeToCopyInto(t)
 	source, _ := aFileOf(t, "explore.txt", 8)
 
 	for _, args := range [][]string{
 		{"volume", "cp", source, "acme/house-bills"},
-		{"volume", "cp", "krewe://acme/house-bills/explore.txt", "."},
+		{"volume", "cp", "krewe://acme/house-bills/explore.txt", "krewe://acme/house-bills/kept.txt"},
 		{"volume", "cp", source},
 		{"volume", "cp"},
 		{"volume", "cp", source, "krewe://acme/house-bills", source},
@@ -339,12 +340,17 @@ func TestVolumeCopyGoesThroughTheTransportAndNotThroughAPath(t *testing.T) {
 }
 
 // recordingVolume is a transport that keeps what it was asked to carry and writes nothing.
+//
+// gives is what it hands back on the way out, so a copy out can be driven with bytes that are in no
+// volume at all. That is what proves nothing above the transport reads a path of its own.
 type recordingVolume struct {
 	at      string
 	address string
 	name    string
 	body    []byte
 	replace bool
+	gives   []byte
+	asked   string
 }
 
 func (r *recordingVolume) Put(_ context.Context, to workspace.VolumeLocation, name string, body io.Reader, replace bool) (string, error) {
@@ -354,6 +360,11 @@ func (r *recordingVolume) Put(_ context.Context, to workspace.VolumeLocation, na
 	}
 	r.address, r.name, r.body, r.replace = to.Address.String(), name, read, replace
 	return r.at, nil
+}
+
+func (r *recordingVolume) Get(_ context.Context, from workspace.VolumeLocation) (io.ReadCloser, error) {
+	r.asked = from.Address.String()
+	return io.NopCloser(bytes.NewReader(r.gives)), nil
 }
 
 // hostVolume is where a key becomes a path on disk on the road that writes. So it is where a key that
