@@ -26,7 +26,7 @@ import (
 // that writes over the last one silently is how the work in it is lost.
 
 // theLogFile is the size of the file that started this feature, in bytes. It is over the one mebibyte
-// ceiling `krewe read` holds a file to. So a copy cannot be that call with a writer on the end of it.
+// ceiling `krewe read` held a file to. So a copy cannot be that call with a writer on the end of it.
 const theLogFile = 1_105_815
 
 // aVolumeToCopyInto stands a system up with a workspace and a project, and hands back the client and
@@ -39,7 +39,7 @@ func aVolumeToCopyInto(t *testing.T) (quaycrewv1.ControlPlaneServiceClient, stri
 	client, _, _ := aSystemOnDisk(t)
 	mustRun(t, client, "workspace", "create", "acme")
 	mustRun(t, client, "project", "create", "house-bills")
-	return client, firstLineOf(mustRun(t, client, "where", "acme/house-bills"))
+	return client, theVolumeAt(t, client, "acme/house-bills")
 }
 
 // aFileOf writes a file of that many bytes on the machine and hands back its path and its bytes.
@@ -351,6 +351,7 @@ type recordingVolume struct {
 	replace bool
 	gives   []byte
 	asked   string
+	removed string
 }
 
 func (r *recordingVolume) Put(_ context.Context, to workspace.VolumeLocation, name string, body io.Reader, replace bool) (string, error) {
@@ -365,6 +366,11 @@ func (r *recordingVolume) Put(_ context.Context, to workspace.VolumeLocation, na
 func (r *recordingVolume) Get(_ context.Context, from workspace.VolumeLocation) (io.ReadCloser, error) {
 	r.asked = from.Address.String()
 	return io.NopCloser(bytes.NewReader(r.gives)), nil
+}
+
+func (r *recordingVolume) Delete(_ context.Context, at workspace.VolumeLocation) (string, error) {
+	r.removed = at.Address.String()
+	return r.at, nil
 }
 
 // hostVolume is where a key becomes a path on disk on the road that writes. So it is where a key that

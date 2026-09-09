@@ -15,7 +15,7 @@ import (
 
 // krewe volume cp, in the other direction: a file a session wrote comes back.
 //
-// The failure it answers: `krewe read` is the only way a file left a volume, and it holds a file to
+// The failure it answers: `krewe read` was the only way a file left a volume, and it held a file to
 // one mebibyte. A session that wrote a log bigger than that had written it somewhere nobody could
 // reach without opening a directory named in generated identifiers.
 //

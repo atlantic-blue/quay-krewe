@@ -11,21 +11,17 @@ import (
 	"github.com/cucumber/godog"
 )
 
-// Steps for the command that turns an address into a directory.
+// Steps for the address that turns into a directory.
 //
 // They run the real tool in its own process, because the shape of the answer is what is specified: a
-// path alone on the first line is what makes `cd "$(krewe where acme)"` work, and a line that is one
-// line inside the test process can be two on the caller's screen.
+// path alone on the first line is what makes `cd "$(krewe volume list acme)"` work, and a line that
+// is one line inside the test process can be two on the caller's screen.
 //
 // The directory is then checked against what a sandbox binds, read from the same call the container
 // runtime is given, rather than against a path this file builds. A path assembled correctly and
 // mounted nowhere is exactly the failure this scenario exists to catch.
 
 func initializeDirectorySteps(sc *godog.ScenarioContext) {
-	sc.Step(`^the caller asks where "([^"]*)" is$`, func(ctx context.Context, address string) error {
-		return runTool(ctx, "where", address)
-	})
-
 	sc.Step(`^the directory it names exists on the machine$`, func(ctx context.Context) error {
 		named := theDirectoryNamed(ctx)
 		info, err := os.Stat(named)
@@ -36,10 +32,6 @@ func initializeDirectorySteps(sc *godog.ScenarioContext) {
 			return fmt.Errorf("the command named %q, which is not a directory", named)
 		}
 		return nil
-	})
-
-	sc.Step(`^it says a session reads that directory at "([^"]*)"$`, func(ctx context.Context, mount string) error {
-		return says("standard output", toolFrom(ctx).stdout, mount)
 	})
 
 	sc.Step(`^the first line is a path and nothing else$`, func(ctx context.Context) error {
@@ -142,28 +134,19 @@ func initializeDirectorySteps(sc *godog.ScenarioContext) {
 			return os.WriteFile(filepath.Join(checkout, ".git"), []byte(gitdir+"\n"), 0o600)
 		})
 
-	sc.Step(`^the caller asks where that session is$`, func(ctx context.Context) error {
+	sc.Step(`^the caller lists the volume of that session$`, func(ctx context.Context) error {
 		w := worldFrom(ctx)
 		current, err := w.lastExec()
 		if err != nil {
 			return err
 		}
-		return runTool(ctx, "where", w.workspaceName+"/"+w.projectName+"/"+current.handle)
-	})
-
-	sc.Step(`^it says the directory is that session's working tree$`, func(ctx context.Context) error {
-		current, err := worldFrom(ctx).lastExec()
-		if err != nil {
-			return err
-		}
-		return says("standard output", toolFrom(ctx).stdout, "the working tree of session "+current.handle)
+		return runTool(ctx, "volume", "list", w.workspaceName+"/"+w.projectName+"/"+current.handle)
 	})
 
 	// The half a printed path cannot prove about itself, for the working tree: that a sandbox of this
-	// session binds a directory holding it, and that the mount the answer promised is where the same
-	// directory turns up inside the container. A step that rebuilt the path would pass against a
-	// directory nothing reads.
-	sc.Step(`^that session reads the directory it names at the mount the answer promised$`,
+	// session binds a directory holding the one that was named, so the checkout turns up inside the
+	// container. A step that rebuilt the path would pass against a directory nothing reads.
+	sc.Step(`^that session reads the directory it names at the mount a sandbox is given$`,
 		func(ctx context.Context) error {
 			w := worldFrom(ctx)
 			current, err := w.lastExec()
@@ -182,7 +165,12 @@ func initializeDirectorySteps(sc *godog.ScenarioContext) {
 				if !inside {
 					continue
 				}
-				return says("standard output", toolFrom(ctx).stdout, one.Target+"/"+filepath.ToSlash(rest))
+				read := one.Target + "/" + filepath.ToSlash(rest)
+				if _, err := os.Stat(filepath.Join(one.Source, filepath.FromSlash(rest))); err != nil {
+					return fmt.Errorf("a sandbox reads %q at %q, and there is nothing at %q: %w",
+						one.Source, one.Target, read, err)
+				}
+				return nil
 			}
 			return fmt.Errorf("no sandbox mount holds %q, and a sandbox is given %v", named, sources(mounts))
 		})
@@ -235,6 +223,22 @@ func sources(mounts []sandbox.Mount) []string {
 // reads. It answers with the path so a step that has to open the file can, and it fails where there
 // is nothing to open.
 func whatASandboxReadsAt(ctx context.Context, at string) (string, error) {
+	read, err := whereASandboxReads(ctx, at)
+	if err != nil {
+		return "", err
+	}
+	if _, err := os.Stat(read); err != nil {
+		return "", fmt.Errorf("a sandbox reads that path at %q, and there is no file there: %w", read, err)
+	}
+	return read, nil
+}
+
+// whereASandboxReads is the same walk, and it stops at the path rather than at the file.
+//
+// A step about a file that is gone needs the two halves apart. Reading "there is no file" off a
+// failure of the whole walk would pass just as well against a mount that was never made, which is the
+// one thing every scenario here is standing on.
+func whereASandboxReads(ctx context.Context, at string) (string, error) {
 	w := worldFrom(ctx)
 	mounts, err := w.storage.Prepare(sandbox.Config{
 		ID: "a-session", Workspace: w.workspaceID, Project: "a-project",
@@ -247,12 +251,7 @@ func whatASandboxReadsAt(ctx context.Context, at string) (string, error) {
 		if !inside {
 			continue
 		}
-		read := filepath.Join(one.Source, filepath.FromSlash(rest))
-		if _, err := os.Stat(read); err != nil {
-			return "", fmt.Errorf("a sandbox reads %q at %q, and there is no file at %q: %w",
-				one.Source, one.Target, read, err)
-		}
-		return read, nil
+		return filepath.Join(one.Source, filepath.FromSlash(rest)), nil
 	}
 	return "", fmt.Errorf("no sandbox mount holds %q, and a sandbox is given %v", at, sources(mounts))
 }

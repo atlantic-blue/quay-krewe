@@ -1,9 +1,9 @@
 Feature: A listing says what a volume holds
 
-  A volume is the directory a session reads, and nothing said what was in one. `krewe where` names
-  the directory and leaves the person to open it by hand. `krewe read` answers for a session and for
+  A volume is the directory a session reads, and nothing said what was in one. `krewe where` named
+  the directory and left the person to open it by hand. `krewe read` answered for a session and for
   nothing else. So a file copied into a workspace's shared folder, or into a project's folder inside
-  it, could not be checked from the tool at all.
+  it, could not be checked from the tool at all. Both words are gone, and each one says to type this.
 
   `krewe volume list krewe://itv/vast` prints what that folder holds. The directory on the machine
   is on the first line. Under it is one line for each name, sorted by name, with a size on each file
@@ -21,7 +21,7 @@ Feature: A listing says what a volume holds
   Scenario: A file put in the folder by hand appears in the listing under the name it was given
     Given a workspace named "atlantic-blue"
     And a project named "vast"
-    When the caller asks where "atlantic-blue/vast" is
+    When the caller lists the volume "krewe://atlantic-blue/vast"
     And a file called "explore.txt" is put in that directory by hand
     And the caller lists the volume "krewe://atlantic-blue/vast"
     Then the listing reads
@@ -34,7 +34,7 @@ Feature: A listing says what a volume holds
   Scenario: The listing is one line for each name, sorted, with a size on each file
     Given a workspace named "atlantic-blue"
     And a project named "vast"
-    When the caller asks where "atlantic-blue/vast" is
+    When the caller lists the volume "krewe://atlantic-blue/vast"
     And that directory holds
       | name      | contents |
       | beta.txt  | bbbb     |
@@ -59,7 +59,7 @@ Feature: A listing says what a volume holds
   # this is. The system is asked, and a name that is no project is a file in the shared folder.
   Scenario: A name that is no project is read as a file in the shared folder
     Given a workspace named "atlantic-blue"
-    When the caller asks where "atlantic-blue" is
+    When the caller lists the volume "krewe://atlantic-blue"
     And a file called "screenshot.png" is put in that directory by hand
     And the caller lists the volume "krewe://atlantic-blue/screenshot.png"
     Then the listing reads

@@ -24,7 +24,7 @@ import (
 func (s *Server) LocateDirectory(ctx context.Context, req *quaycrewv1.LocateDirectoryRequest) (*quaycrewv1.LocateDirectoryResponse, error) {
 	if req.GetWorkspace() == "" {
 		return nil, status.Error(codes.InvalidArgument,
-			"say which workspace: krewe where <workspace>[/<project>[/<session>]]")
+			"say which workspace: krewe volume list krewe://<workspace>[/<project>[/<session>]]")
 	}
 	if _, err := s.store.GetWorkspace(ctx, req.GetWorkspace()); err != nil {
 		return nil, storeError(err, "workspace")

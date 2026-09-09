@@ -15,7 +15,7 @@ import (
 // The failure it answers: a volume is the directory a session reads, and nothing said what was in
 // one. `krewe where` named the directory and left the person to open it by hand, and `krewe read`
 // answered for a session and for nothing else. So a file copied into a workspace's shared folder
-// could not be checked from the tool at all.
+// could not be checked from the tool at all. Both words are gone, and each names this one instead.
 
 // aVolumeHolding stands a system up, puts a workspace and a project in it, and writes what the test
 // names into the project's folder. It hands back the client and that directory.
@@ -28,7 +28,7 @@ func aVolumeHolding(t *testing.T, files map[string]string, folders ...string) (q
 	client, _, _ := aSystemOnDisk(t)
 	mustRun(t, client, "workspace", "create", "acme")
 	mustRun(t, client, "project", "create", "house-bills")
-	folder := firstLineOf(mustRun(t, client, "where", "acme/house-bills"))
+	folder := theVolumeAt(t, client, "acme/house-bills")
 	for name, body := range files {
 		if err := os.WriteFile(filepath.Join(folder, name), []byte(body), 0o666); err != nil {
 			t.Fatalf("write %s: %v", name, err)
@@ -40,6 +40,14 @@ func aVolumeHolding(t *testing.T, files map[string]string, folders ...string) (q
 		}
 	}
 	return client, folder
+}
+
+// theVolumeAt is the directory an address is kept in on this machine, which is the listing own first
+// line. Tests take it from the tool answer rather than building the path themselves, because a path
+// assembled correctly and mounted nowhere would pass against every assertion under it.
+func theVolumeAt(t *testing.T, client quaycrewv1.ControlPlaneServiceClient, address string) string {
+	t.Helper()
+	return firstLineOf(mustRun(t, client, "volume", "list", address))
 }
 
 // The listing itself: the directory on the first line, then one row for each name, sorted, with a
@@ -160,7 +168,7 @@ func TestListingAKeyThatClimbsStaysInsideTheDirectory(t *testing.T) {
 func TestVolumeListReadsANameThatIsNoProjectAsAFileInTheSharedFolder(t *testing.T) {
 	client, _, _ := aSystemOnDisk(t)
 	mustRun(t, client, "workspace", "create", "acme")
-	shared := firstLineOf(mustRun(t, client, "where", "acme"))
+	shared := theVolumeAt(t, client, "acme")
 	if err := os.WriteFile(filepath.Join(shared, "screenshot.png"), []byte("a picture"), 0o666); err != nil {
 		t.Fatalf("write the file: %v", err)
 	}
@@ -194,7 +202,7 @@ func TestVolumeListReachesASessionsOwnDirectory(t *testing.T) {
 	mustRun(t, client, "workspace", "create", "acme")
 	mustRun(t, client, "project", "create", "house-bills")
 	handle := aSessionNothingHasRunIn(t, held, "house-bills")
-	own := firstLineOf(mustRun(t, client, "where", "acme/house-bills/"+handle))
+	own := theVolumeAt(t, client, "acme/house-bills/"+handle)
 	if err := os.WriteFile(filepath.Join(own, "answer.md"), []byte("done"), 0o666); err != nil {
 		t.Fatalf("write the file: %v", err)
 	}
@@ -206,6 +214,35 @@ func TestVolumeListReachesASessionsOwnDirectory(t *testing.T) {
 	}
 	if rows := rowsOf(said); len(rows) != 2 || rows[1] != "answer.md 4" {
 		t.Fatalf("the session's directory reads %v:\n%s", rows, said)
+	}
+}
+
+// A session that was put away is out of the listing, and its volume goes with it.
+//
+// Archiving hides a session, and hiding it means hiding what it holds. The files stay on the machine,
+// because archiving deletes nothing, and the address stops reaching them until the session comes back.
+func TestVolumeListDoesNotReachASessionThatWasPutAway(t *testing.T) {
+	client, held, _ := aSystemOnDisk(t)
+	mustRun(t, client, "workspace", "create", "acme")
+	mustRun(t, client, "project", "create", "house-bills")
+	handle := aSessionNothingHasRunIn(t, held, "house-bills")
+	own := theVolumeAt(t, client, "acme/house-bills/"+handle)
+	if err := os.WriteFile(filepath.Join(own, "answer.md"), []byte("done"), 0o666); err != nil {
+		t.Fatalf("write the file: %v", err)
+	}
+	mustRun(t, client, "archive", handle)
+
+	_, err := asked(t, client, "volume", "list", "krewe://acme/house-bills/"+handle)
+
+	if err == nil {
+		t.Fatal("the volume of an archived session was listed, so archiving hides the row and not the files")
+	}
+	if !strings.Contains(err.Error(), "session") {
+		t.Errorf("the refusal is %q, which does not say the session is the part that is missing", err)
+	}
+	// And nothing was deleted, which is the other half of what the word promises.
+	if _, err := os.Stat(filepath.Join(own, "answer.md")); err != nil {
+		t.Fatalf("archiving took what the session left: %v", err)
 	}
 }
 

@@ -1,6 +1,6 @@
 Feature: A file is copied into a volume
 
-  A person holding a file had `krewe where`, which names a directory and leaves them to copy into it
+  A person holding a file had `krewe where`, which named a directory and left them to copy into it
   by hand. There was no write verb at all. The name of that directory carries up to three generated
   identifiers, so the copy could not be typed from anything on the screen.
 
