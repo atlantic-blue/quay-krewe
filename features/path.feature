@@ -33,10 +33,12 @@ Feature: A project holds a numbered path of steps
 
   Several steps run at once. The operator takes each one, so every session starts because somebody
   typed a command: no command reads the path and dispatches, and a step that finishes starts nothing.
-  A cap on the project says how many steps may be in state taken at one time, and the default is
-  three. Three is a guess about how many sessions one person reads at once, and nothing measured it.
-  The cap counts across every feature of the project rather than inside one, so three steps in flight
-  is three steps wherever they sit, and the refusal names the feature each one is in.
+  A cap on the project says how many steps may be in state taken at one time, and the default is ten.
+  Ten is an observation: this project held ten steps in state taken at one moment on 9 September
+  2026, and the default is that count, so the cap refuses no work the system was already doing. It is
+  not a tuned number. The cap counts across every feature of the project rather than inside one, so
+  three steps in flight is three steps wherever they sit, and the refusal names the feature each one
+  is in.
 
   There is no way to empty a path. A document with no step heading is refused, so a wrong file path
   cannot take somebody's path away.
@@ -1756,8 +1758,8 @@ Feature: A project holds a numbered path of steps
     And step 4 and step 6 name different sessions
     And 2 sessions were started
 
-  # The cap is one number on the project, and this project set none, so the refusal reads the default
-  # of three.
+  # The cap is lowered to 3 first, so the refusal is reached in three takes rather than in ten. What
+  # is proved is the rule, and the rule reads the project's own number.
   Scenario: A fourth take is refused, naming the cap and the three steps in flight
     Given the project's design is "# Bills\n"
     And the operator approved the project's design
@@ -1779,6 +1781,7 @@ Feature: A project holds a numbered path of steps
 
       After
       """
+    And the operator caps the steps in flight at 3
     And the operator took step 1
     And the operator took step 2
     And the operator took step 3
@@ -1817,6 +1820,7 @@ Feature: A project holds a numbered path of steps
       """
       ## 1. Post it
       """
+    And the operator caps the steps in flight at 3
     And the operator took step 1 of feature 1
     And the operator took step 1 of feature 2
     And the operator took step 1 of feature 3
@@ -1848,6 +1852,7 @@ Feature: A project holds a numbered path of steps
 
       After
       """
+    And the operator caps the steps in flight at 3
     And the operator took step 1
     And the operator took step 2
     And the operator took step 3
@@ -1878,6 +1883,7 @@ Feature: A project holds a numbered path of steps
 
       After
       """
+    And the operator caps the steps in flight at 3
     And the operator took step 1
     And the operator took step 2
     And the operator took step 3
@@ -1923,12 +1929,12 @@ Feature: A project holds a numbered path of steps
       """
     And the operator took step 1
     When the operator takes step 2
-    Then the take says 2 of 3 steps are in flight
+    Then the take says 2 of 10 steps are in flight
 
-  # Three is a guess about how many sessions one person reads at once. Nothing measured it. A count
-  # of how often the refusal fires is what would replace it.
-  Scenario: A project nobody configured caps the steps in flight at three
-    Then the cap on steps in flight is 3
+  # Ten is what this project had in state taken at one moment on 9 September 2026. It is the number
+  # the system was already running, taken as the default so the cap refuses no work it already does.
+  Scenario: A project nobody configured caps the steps in flight at ten
+    Then the cap on steps in flight is 10
 
   # Lowering it refuses the next take. It never stops a session that already runs.
   Scenario: Lowering the cap below what runs now leaves both sessions running
@@ -1961,19 +1967,19 @@ Feature: A project holds a numbered path of steps
     When the operator caps the steps in flight at 0
     Then the control plane refuses it as invalid
     And the refusal suggests "refuse every take"
-    And the cap on steps in flight is 3
+    And the cap on steps in flight is 10
 
   Scenario: A cap above twenty is refused
     When the operator caps the steps in flight at 21
     Then the control plane refuses it as invalid
-    And the cap on steps in flight is 3
+    And the cap on steps in flight is 10
 
   # The cap is how much the operator reads at once. A session that could raise its own would widen
   # the fan out without anybody asking for it.
   Scenario: A session cannot set the cap
     When the driver asks to cap the steps in flight
     Then the driver is refused, told the call is the operator's to make
-    And the cap on steps in flight is 3
+    And the cap on steps in flight is 10
 
   Scenario: The tool says how many steps are in flight after a take
     Given the system listens on an address the tool can dial
@@ -1991,7 +1997,7 @@ Feature: A project holds a numbered path of steps
       """
     And the operator took step 1
     When the caller takes step "1.2"
-    Then standard output says "2 of 3 steps in flight"
+    Then standard output says "2 of 10 steps in flight"
     And the command succeeds
 
   Scenario: The tool prints the cap and what runs now, and writes nothing
@@ -2010,9 +2016,9 @@ Feature: A project holds a numbered path of steps
       """
     And the operator took step 1
     When the caller reads the cap on steps in flight
-    Then standard output says "3 steps at once, 1 in flight"
-    And standard output says "Nothing measured it"
-    And the cap on steps in flight is 3
+    Then standard output says "10 steps at once, 1 in flight"
+    And standard output says "9 September 2026"
+    And the cap on steps in flight is 10
     And the command succeeds
 
   Scenario: The tool sets the cap
@@ -2026,7 +2032,7 @@ Feature: A project holds a numbered path of steps
     Given the system listens on an address the tool can dial
     When the caller caps the steps in flight at "0"
     Then the command fails
-    And the cap on steps in flight is 3
+    And the cap on steps in flight is 10
 
   # The session reads which step it is on in the design section of its own memory file, which it
   # reads on every exec.

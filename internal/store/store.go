@@ -96,9 +96,13 @@ var ErrTooManyStepsInFlight = errors.New("store: the project already has as many
 // one time. It is the default of the column, repeated here for the stores to answer with when a
 // project carries no design row at all.
 //
-// Three is a guess about how many sessions one person reads at once. Nothing measured it. A count of
-// how often a take is refused for it is what would replace the number.
-const DefaultStepsInFlightCap int32 = 3
+// Ten is an observation rather than a target. On 9 September 2026 this project held 10 steps in state
+// taken at one moment, on feature 1, counted by grouping feature_steps through features onto the
+// project; weft and rex each held 1. The number is that count and nothing else: it is not tuned, and
+// it says nothing about how many sessions a person can read at once. It is what the system was
+// already running, so the cap refuses no work already being done. The design document records a
+// default of 3 and calls it a guess that nothing measured, and that text is stale.
+const DefaultStepsInFlightCap int32 = 10
 
 // StepInFlight is one step in state taken, and the feature it sits in. The feature travels with it
 // because the cap counts across the whole project: a refusal naming step 1 three times, in a project

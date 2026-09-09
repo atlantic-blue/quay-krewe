@@ -491,9 +491,9 @@ func sayTheCap(ctx context.Context, client quaycrewv1.ControlPlaneServiceClient,
 
 // whereTheDefaultCameFrom says what the number is, so nobody reads it as a tuned one. Printing it
 // beside the cap is what stops the number being taken for a recommendation.
-const whereTheDefaultCameFrom = "the default of three is a guess about how many sessions one person " +
-	"reads at once.\nNothing measured it. A count of how often a take is refused for it is what " +
-	"would replace\nthe number."
+const whereTheDefaultCameFrom = "the default of 10 is what this project held in state taken at one " +
+	"moment on 9 September 2026.\nIt is that count and nothing else: it is not tuned, and it says " +
+	"nothing about how many\nsessions a person can read at once."
 
 // stepsInFlightOf counts the steps of a project in state taken, across every feature of it.
 //

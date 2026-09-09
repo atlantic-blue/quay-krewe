@@ -5,8 +5,18 @@
 -- operator's reading. A second cap per feature would let a project with five features run five times
 -- this number while every number written down still read the same.
 --
--- The default of 3 is a guess about how many sessions one person reads at once. Nothing measured it.
--- A count of how often a take is refused for it is what would replace the number.
+-- The default is 10, and it is an observation rather than a target. On 9 September 2026 this project
+-- held 10 steps in state `taken` at one moment, on feature 1, counted with:
+--
+--   select p.name, count(*) filter (where fs.state='taken') as in_flight, count(*) as steps
+--   from feature_steps fs join features f on f.id=fs.feature join projects p on p.id=f.project
+--   group by p.name order by in_flight desc
+--
+-- which answered quay-krewe 10 of 11, weft 1 of 5, and rex 1 of 5. The number is that count and
+-- nothing else. It is not tuned, and it says nothing about how many sessions a person can read at
+-- once: it is what the system was already running, so the cap refuses no work already being done. The
+-- design document records a default of 3 and calls it a guess that nothing measured, and that text is
+-- stale.
 --
 -- Lowering it never stops a session that runs. It refuses the next take.
-alter table project_designs add column if not exists steps_in_flight_cap integer not null default 3;
+alter table project_designs add column if not exists steps_in_flight_cap integer not null default 10;

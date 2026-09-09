@@ -582,8 +582,11 @@ message Design {
   // counts across every feature rather than inside one, so three steps in flight is three steps
   // wherever they sit.
   //
-  // The default is 3. That number is a guess about how many sessions one person reads at once, and
-  // nothing measured it. A count of how often a take is refused for it is what would replace it.
+  // The default is 10, and it is an observation rather than a target. On 9 September 2026 this
+  // project held 10 steps in state taken at one moment, on feature 1, and 10 is that count. It is
+  // not tuned, and it says nothing about how many sessions a person can read: it is what the system
+  // was already running, so the cap refuses no work it already does. The design document records a
+  // default of 3 and calls it a guess that nothing measured, and that text is stale.
   int32 steps_in_flight_cap = 17;
   // contracts is a second body beside body: the contracts document, whole, in markdown. Writing it
   // does not clear approved, because the approval is the operator's word about the design body and

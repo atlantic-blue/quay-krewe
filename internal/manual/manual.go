@@ -202,10 +202,11 @@ commands:
                                           keep the paths they have
   path cap [<address>] [<number>]         how many steps of the project may run at once, counted
                                           across every feature. With no number it prints the cap and
-                                          what runs now and writes nothing. The default of three is
-                                          a guess about how many sessions one person reads at once,
-                                          and nothing measured it. Lowering it stops no session that
-                                          runs, it refuses the next take
+                                          what runs now and writes nothing. The default of 10 is what
+                                          this project held in state taken at one moment on 9
+                                          September 2026: it is that count and not a tuned number.
+                                          Lowering it stops no session that runs, it refuses the next
+                                          take
   step take [<address>]                   start a session on one step, and let go of it. A step is
     <feature>.<number>                    named as 2.3, which is step 3 of feature 2, and a bare
                                           number is refused. The session is given that step whole:
