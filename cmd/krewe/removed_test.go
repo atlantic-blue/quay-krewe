@@ -174,18 +174,18 @@ func TestNoRemovedWordIsAlsoACommandTheToolStillRuns(t *testing.T) {
 	}
 }
 
-// The word this rename removed, by name, because the class guard proves every entry refuses and this
+// A word this rename removed, by name, because the class guard proves every entry refuses and this
 // proves the entry says the word to type instead.
 //
 // It is driven with the flags a person actually had in their fingers, because a refusal that blames
 // one of them sends the operator to correct part of a command that is gone whole. And it is driven
 // against a real system, so the row count afterwards means something.
-func TestTheWorkCommandRefusesAndNamesRead(t *testing.T) {
+func TestTheWorkCommandRefusesAndNamesTheVolumeVerb(t *testing.T) {
 	client := aSystemToWorkIn(t)
 
 	err := refused(t, client, "work", "create", "read the electricity bill")
 
-	for _, want := range []string{"there is no work command", "krewe read"} {
+	for _, want := range []string{"there is no work command", "krewe volume list"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("krewe work create is refused with %q, want it to say %q", err, want)
 		}
@@ -210,8 +210,39 @@ func TestEveryVerbOfTheWordThatWentIsRefused(t *testing.T) {
 		if !strings.Contains(err.Error(), "there is no work command") {
 			t.Errorf("krewe work %s is refused with %q, which does not say the word is gone", verb, err)
 		}
-		if !strings.Contains(err.Error(), "krewe read") {
+		if !strings.Contains(err.Error(), "krewe volume list") {
 			t.Errorf("krewe work %s is refused with %q, which names nothing to type instead", verb, err)
+		}
+	}
+}
+
+// The two words this step removed, by name. The class guard proves every entry in the table refuses
+// and names something live; this proves the two entries name the verb that took their place, and
+// that each one is driven the way a person still has it in their fingers.
+//
+// It is driven against a real system, so a word that was left in the command switch answers rather
+// than refusing, which is the shape the refusal exists to catch.
+func TestWhereAndReadRefuseAndNameTheVolumeVerb(t *testing.T) {
+	client := aSystemToWorkIn(t)
+
+	for _, typed := range [][]string{
+		{"where", "me"},
+		{"where", "me/house-bills"},
+		{"read", "me"},
+	} {
+		err := refused(t, client, typed...)
+		word := typed[0]
+		if !strings.Contains(err.Error(), "there is no "+word+" command") {
+			t.Errorf("krewe %s is refused with %q, which does not say the word is gone",
+				strings.Join(typed, " "), err)
+		}
+		if !strings.Contains(err.Error(), "krewe volume") {
+			t.Errorf("krewe %s is refused with %q, which does not name the volume verb",
+				strings.Join(typed, " "), err)
+		}
+		// The refusal is about the word, not about the address after it, which is still a good one.
+		if strings.Contains(err.Error(), "no workspace") {
+			t.Errorf("krewe %s is refused with %q, which blames the address", strings.Join(typed, " "), err)
 		}
 	}
 }

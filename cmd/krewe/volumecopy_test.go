@@ -26,7 +26,7 @@ import (
 // that writes over the last one silently is how the work in it is lost.
 
 // theLogFile is the size of the file that started this feature, in bytes. It is over the one mebibyte
-// ceiling `krewe read` holds a file to. So a copy cannot be that call with a writer on the end of it.
+// ceiling `krewe read` held a file to. So a copy cannot be that call with a writer on the end of it.
 const theLogFile = 1_105_815
 
 // aVolumeToCopyInto stands a system up with a workspace and a project, and hands back the client and
@@ -39,7 +39,7 @@ func aVolumeToCopyInto(t *testing.T) (quaycrewv1.ControlPlaneServiceClient, stri
 	client, _, _ := aSystemOnDisk(t)
 	mustRun(t, client, "workspace", "create", "acme")
 	mustRun(t, client, "project", "create", "house-bills")
-	return client, firstLineOf(mustRun(t, client, "where", "acme/house-bills"))
+	return client, theVolumeAt(t, client, "acme/house-bills")
 }
 
 // aFileOf writes a file of that many bytes on the machine and hands back its path and its bytes.

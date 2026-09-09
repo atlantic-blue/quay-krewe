@@ -1156,20 +1156,41 @@ func initializeScenario(sc *godog.ScenarioContext) {
 		}
 		return os.WriteFile(filepath.Join(resp.GetHost(), sessionWorkFile), []byte("what it made\n"), 0o600)
 	})
-	sc.Step(`^krewe read still lists that file for the session$`, func(ctx context.Context) error {
-		current, err := worldFrom(ctx).lastExec()
+	sc.Step(`^the volume verb does not reach that session$`, func(ctx context.Context) error {
+		w := worldFrom(ctx)
+		current, err := w.lastExec()
 		if err != nil {
 			return err
 		}
-		if err := runTool(ctx, "read", current.sessionID); err != nil {
+		address := w.workspaceName + "/" + w.projectName + "/" + current.sessionID
+		if err := runTool(ctx, "volume", "list", address); err != nil {
 			return err
 		}
 		t := toolFrom(ctx)
-		if t.exitCode != 0 {
-			return fmt.Errorf("krewe read refused an archived session: %s", t.stderr)
+		if t.exitCode == 0 {
+			return fmt.Errorf("the volume of an archived session was listed:\n%s", t.stdout)
 		}
-		if !strings.Contains(t.stdout, sessionWorkFile) {
-			return fmt.Errorf("krewe read does not list %s:\n%s", sessionWorkFile, t.stdout)
+		if !strings.Contains(t.stderr, "session") {
+			return fmt.Errorf("the refusal is %q, which does not say the session is the part that is missing",
+				t.stderr)
+		}
+		return nil
+	})
+
+	// The other half of the word. The listing is hidden and the directory is untouched, so a session
+	// brought back reads what it wrote.
+	sc.Step(`^the file the session left is still on the machine$`, func(ctx context.Context) error {
+		w := worldFrom(ctx)
+		current, err := w.lastExec()
+		if err != nil {
+			return err
+		}
+		resp, err := w.client.ReadSessionWork(ctx, &quaycrewv1.ReadSessionWorkRequest{Session: current.sessionID})
+		if err != nil {
+			return err
+		}
+		if _, err := os.Stat(filepath.Join(resp.GetHost(), sessionWorkFile)); err != nil {
+			return fmt.Errorf("archiving took %s with it: %w", sessionWorkFile, err)
 		}
 		return nil
 	})

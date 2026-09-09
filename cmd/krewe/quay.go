@@ -111,9 +111,19 @@ var removedFlags = map[string]string{
 // holding an error, so the process exits non zero and a caller reading the status cannot take a
 // refusal for a success.
 var removedCommands = map[string]string{
-	"work": "work became job, and jobs are gone. What a session left in its directory is read " +
-		"directly" +
-		"\n\n  krewe read <session> [<path>]",
+	"work": "work became job, and jobs are gone. What a session left in its directory is a volume, " +
+		"and the volume verb reads it" +
+		"\n\n  krewe volume list krewe://<workspace>/<project>/<session>",
+	// The two words the volume verb replaced. Each one named a directory and stopped there, and
+	// between them they were two ways to reach one thing.
+	"where": "an address is a volume now, and the volume verb says what one holds and where it is " +
+		"on this machine. Every address also has a name under ~/.krewe/at, so a file manager reaches " +
+		"the same directory without anybody reading an identifier" +
+		"\n\n  krewe volume list krewe://<workspace>/<project>",
+	"read": "a session directory is a volume, and the volume verb reads it. Copying a file out " +
+		"brings it back at any size, which this word could not do" +
+		"\n\n  krewe volume list krewe://<workspace>/<project>/<session>" +
+		"\n  krewe volume cp krewe://<workspace>/<project>/<session>/<file> .",
 	"job": "the job subsystem is gone. A job was four stages, a controller and a gate, and it cost " +
 		"more than the work it delivered. Dispatch a session and talk to it" +
 		"\n\n  krewe exec [<address>] \"...\"",
@@ -257,12 +267,8 @@ func run(ctx context.Context, client quaycrewv1.ControlPlaneServiceClient, args 
 		return runProject(ctx, client, args[1:], out)
 	case "exec":
 		return runExec(ctx, client, args[1:], out)
-	case "read":
-		return runRead(ctx, client, args[1:], out)
 	case "answer":
 		return runAnswer(ctx, client, args[1:], out)
-	case "where":
-		return runWhere(ctx, client, args[1:], out)
 	case "volume":
 		return runVolume(ctx, client, args[1:], out)
 	case "attach":
@@ -662,7 +668,7 @@ func runWorkspace(ctx context.Context, client quaycrewv1.ControlPlaneServiceClie
 			return err
 		}
 		where := systemWide("workspaces").locatable(
-			"the shared folder of one, which every session in it reads: krewe where <workspace>")
+			"the shared folder of one, which every session in it reads: krewe volume list krewe://<workspace>")
 		if len(resp.GetWorkspaces()) == 0 {
 			where.nothing(out)
 			return nil
@@ -723,7 +729,7 @@ func runProject(ctx context.Context, client quaycrewv1.ControlPlaneServiceClient
 	case "list":
 		scope := ""
 		where := systemWide("projects").locatable(
-			"the folder one of these works in: krewe where <workspace>/<project>")
+			"the folder one of these works in: krewe volume list krewe://<workspace>/<project>")
 		if len(args) > 1 {
 			located, err := locate(ctx, client, args[1])
 			if err != nil {
@@ -732,7 +738,7 @@ func runProject(ctx context.Context, client quaycrewv1.ControlPlaneServiceClient
 			scope = located.WorkspaceID
 			where = narrowedTo("projects", located.Path.Workspace,
 				"krewe project list on its own reads every workspace").locatable(
-				"the folder one of these works in: krewe where " + located.Path.Workspace + "/<project>")
+				"the folder one of these works in: krewe volume list krewe://" + located.Path.Workspace + "/<project>")
 		}
 		resp, err := client.ListProjects(ctx, &quaycrewv1.ListProjectsRequest{Workspace: scope})
 		if err != nil {
@@ -1393,7 +1399,7 @@ func runSessions(ctx context.Context, client quaycrewv1.ControlPlaneServiceClien
 	}
 	// Said out loud, because a listing narrowed to where you are standing looks exactly like a system
 	// with fewer sessions in it, and the operator has no way to tell the two apart.
-	locations := "where the work of one is: krewe where <workspace>/<project>/<session>"
+	locations := "what the work of one is: krewe volume list krewe://<workspace>/<project>/<session>"
 	where := systemWide("sessions").locatable(locations)
 	if !path.IsZero() {
 		where = narrowedTo("sessions", path.String(),

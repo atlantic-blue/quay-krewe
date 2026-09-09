@@ -258,14 +258,16 @@ Feature: Sessions run in isolated sandboxes
     And the listing does not name the session started last
     And the listing says 1 live and hidden, naming krewe sessions system
 
-  # Archiving deletes nothing. It hides a row from one listing, and every other way of reaching the
-  # session still answers, which is why the word is safe to use.
-  Scenario: An archived session keeps its conversation, its execs and its files
+  # Archiving deletes nothing and it hides the session. Hiding it means hiding its volume too, so the
+  # address stops answering until the session comes back, and the files sit where the session left
+  # them the whole time. The conversation and the execs are what the word promises to keep.
+  Scenario: An archived session keeps its conversation and its execs, and its volume is hidden with it
     Given the system listens on an address the tool can dial
     And a session started by dispatching "remember this"
     And a file the session left in its own directory
     When the caller archives that session
-    Then krewe read still lists that file for the session
+    Then the volume verb does not reach that session
+    And the file the session left is still on the machine
     And the session still holds the conversation the first exec started
     And that session's execs still read back
 

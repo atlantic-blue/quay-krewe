@@ -133,10 +133,10 @@ func (s Storage) WorkingDirectory(cfg Config) (Directory, error) {
 // a file into a directory the session is not working in, and a listing of it would say the session
 // made nothing.
 //
-// It looks in the same two roots `krewe read` looks in, and answers a different thing inside one of
-// them. Read roots at the checkout, because it is handing a file back. This names the directory the
-// checkout is in, because the answer is somewhere to put a file, and a file dropped inside a checkout
-// is a file in somebody's git status.
+// It looks in the same two roots ReadSessionWork looks in, and answers a different thing inside one
+// of them. That call roots at the checkout, because it is handing a file back. This names the
+// directory the checkout is in, because the answer is somewhere to put a file, and a file dropped
+// inside a checkout is a file in somebody's git status.
 func (s Storage) SessionDirectory(cfg Config) (Directory, error) {
 	if tree, held := WorkingTree(s.WorkPlaces(cfg)); held {
 		return Directory{Host: tree.Host, Sandbox: tree.Sandbox, Kind: tree.Kind}, nil
