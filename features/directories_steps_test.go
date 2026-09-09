@@ -235,6 +235,22 @@ func sources(mounts []sandbox.Mount) []string {
 // reads. It answers with the path so a step that has to open the file can, and it fails where there
 // is nothing to open.
 func whatASandboxReadsAt(ctx context.Context, at string) (string, error) {
+	read, err := whereASandboxReads(ctx, at)
+	if err != nil {
+		return "", err
+	}
+	if _, err := os.Stat(read); err != nil {
+		return "", fmt.Errorf("a sandbox reads that path at %q, and there is no file there: %w", read, err)
+	}
+	return read, nil
+}
+
+// whereASandboxReads is the same walk, and it stops at the path rather than at the file.
+//
+// A step about a file that is gone needs the two halves apart. Reading "there is no file" off a
+// failure of the whole walk would pass just as well against a mount that was never made, which is the
+// one thing every scenario here is standing on.
+func whereASandboxReads(ctx context.Context, at string) (string, error) {
 	w := worldFrom(ctx)
 	mounts, err := w.storage.Prepare(sandbox.Config{
 		ID: "a-session", Workspace: w.workspaceID, Project: "a-project",
@@ -247,12 +263,7 @@ func whatASandboxReadsAt(ctx context.Context, at string) (string, error) {
 		if !inside {
 			continue
 		}
-		read := filepath.Join(one.Source, filepath.FromSlash(rest))
-		if _, err := os.Stat(read); err != nil {
-			return "", fmt.Errorf("a sandbox reads %q at %q, and there is no file at %q: %w",
-				one.Source, one.Target, read, err)
-		}
-		return read, nil
+		return filepath.Join(one.Source, filepath.FromSlash(rest)), nil
 	}
 	return "", fmt.Errorf("no sandbox mount holds %q, and a sandbox is given %v", at, sources(mounts))
 }

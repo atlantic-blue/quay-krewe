@@ -687,6 +687,7 @@ func initializeScenario(sc *godog.ScenarioContext) {
 	initializeVolumeListingSteps(sc)
 	initializeVolumeCopySteps(sc)
 	initializeVolumeCopyOutSteps(sc)
+	initializeVolumeDeleteSteps(sc)
 	initializeInfoSteps(sc)
 	initializeSessionEventsSteps(sc)
 	initializeObservabilitySteps(sc)
