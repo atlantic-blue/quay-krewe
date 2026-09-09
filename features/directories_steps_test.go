@@ -99,26 +99,8 @@ func initializeDirectorySteps(sc *godog.ScenarioContext) {
 	// walks from the mount the container runtime is given down to the file. A step that checked the
 	// printed path instead would pass against a folder nothing reads.
 	sc.Step(`^a sandbox of that workspace reads that file at "([^"]*)"$`, func(ctx context.Context, at string) error {
-		w := worldFrom(ctx)
-		mounts, err := w.storage.Prepare(sandbox.Config{
-			ID: "a-session", Workspace: w.workspaceID, Project: "a-project",
-		})
-		if err != nil {
-			return fmt.Errorf("what a sandbox is given: %w", err)
-		}
-		for _, one := range mounts {
-			rest, inside := strings.CutPrefix(at, one.Target+"/")
-			if !inside {
-				continue
-			}
-			read := filepath.Join(one.Source, filepath.FromSlash(rest))
-			if _, err := os.Stat(read); err != nil {
-				return fmt.Errorf("a sandbox reads %q at %q, and there is no file at %q: %w",
-					one.Source, one.Target, read, err)
-			}
-			return nil
-		}
-		return fmt.Errorf("no sandbox mount holds %q, and a sandbox is given %v", at, sources(mounts))
+		_, err := whatASandboxReadsAt(ctx, at)
+		return err
 	})
 
 	sc.Step(`^the directory it names holds the folder "([^"]*)"$`, func(ctx context.Context, folder string) error {
@@ -244,4 +226,33 @@ func sources(mounts []sandbox.Mount) []string {
 		out = append(out, one.Source+" -> "+one.Target)
 	}
 	return out
+}
+
+// whatASandboxReadsAt is the path on the machine behind a path inside a container.
+//
+// It walks from the mount the container runtime is given down to the file, rather than reading a path
+// the tool printed. A step that checked the printed path instead would pass against a folder nothing
+// reads. It answers with the path so a step that has to open the file can, and it fails where there
+// is nothing to open.
+func whatASandboxReadsAt(ctx context.Context, at string) (string, error) {
+	w := worldFrom(ctx)
+	mounts, err := w.storage.Prepare(sandbox.Config{
+		ID: "a-session", Workspace: w.workspaceID, Project: "a-project",
+	})
+	if err != nil {
+		return "", fmt.Errorf("what a sandbox is given: %w", err)
+	}
+	for _, one := range mounts {
+		rest, inside := strings.CutPrefix(at, one.Target+"/")
+		if !inside {
+			continue
+		}
+		read := filepath.Join(one.Source, filepath.FromSlash(rest))
+		if _, err := os.Stat(read); err != nil {
+			return "", fmt.Errorf("a sandbox reads %q at %q, and there is no file at %q: %w",
+				one.Source, one.Target, read, err)
+		}
+		return read, nil
+	}
+	return "", fmt.Errorf("no sandbox mount holds %q, and a sandbox is given %v", at, sources(mounts))
 }

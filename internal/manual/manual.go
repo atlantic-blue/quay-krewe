@@ -120,6 +120,12 @@ commands:
                                           this machine is on the first line. Under it is one line for
                                           each name, sorted by name, with a size on each file. A
                                           folder that holds nothing says so
+  volume cp <file> <address> [--replace]  put a file on this machine into a volume, where every
+                                          session that reads the address finds it. The address takes
+                                          the file's own name, or names the file itself. It prints
+                                          the one path a session reads the file at, so that path can
+                                          go straight into what you ask the session. A name that is
+                                          already there is refused unless you say --replace
   answer <session> [--all]                 what a session came back with, and nothing else, so a
                                           caller can pipe it. The most recent answer, or with --all
                                           every one of them, oldest first
