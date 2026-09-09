@@ -252,9 +252,10 @@ func TestVolumeCopyOutGoesThroughTheTransportAndNotThroughAPath(t *testing.T) {
 	}
 }
 
-// hostVolume is where a key becomes a path on disk on the road that reads, so it is where a key that
-// climbs has to be held. The parser cleans what it reads, which is why this drives the transport
-// itself: a key that reached it from anywhere else reads inside the volume or it reads nothing.
+// The control plane is where a key becomes a path on disk on the road that reads, so it is where a
+// key that climbs has to be held. The parser cleans what it reads, which is why this drives the
+// transport itself: a key that reached it from anywhere else reads inside the volume or it reads
+// nothing.
 func TestGettingAKeyThatClimbsStaysInsideTheDirectory(t *testing.T) {
 	client, folder := aVolumeToCopyInto(t)
 	// One level up is where a single .. lands, so this is the file the guard has to not read.
@@ -275,7 +276,7 @@ func TestGettingAKeyThatClimbsStaysInsideTheDirectory(t *testing.T) {
 	}
 	found.Address.Key = "../passwd"
 
-	body, err := hostVolume{client: client}.Get(context.Background(), found)
+	body, err := planeVolume{hostVolume{client: client}}.Get(context.Background(), found)
 
 	if err != nil {
 		t.Fatalf("the read was refused: %v", err)
