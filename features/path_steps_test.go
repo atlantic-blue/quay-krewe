@@ -32,6 +32,9 @@ type pathWorld struct {
 	// milestones are what the last read of the path answered with. They travel with the steps, so a
 	// scenario that asserts a grouping reads one answer rather than asking twice.
 	milestones []*quaycrewv1.Milestone
+	// next is the step the last read said may be taken now, and 0 where it said none may. It is the
+	// answer the caller got rather than a number worked out here: the rule is the control plane's.
+	next int32
 	// recorded is the path as it stood before a scenario closed the feature, so a later read is
 	// compared against what was there rather than against what the scenario meant to write. A step
 	// somebody took has already moved, and this is what says closing the feature moved nothing more.
@@ -315,6 +318,24 @@ func initializePathSteps(sc *godog.ScenarioContext) {
 		}
 		if got := step.GetAfter(); got != int32(want) {
 			return fmt.Errorf("step %d waits for step %d, want %d", number, got, want)
+		}
+		return nil
+	})
+
+	// What the read said may be taken now. The number is asserted whole, so a rule that answered with
+	// a lower step it should have skipped is a failure rather than a near miss.
+	sc.Step(`^the path says step (\d+) is next$`, func(ctx context.Context, want int) error {
+		if got := pathFrom(ctx).next; got != int32(want) {
+			return fmt.Errorf("the path says step %d is next, want step %d", got, want)
+		}
+		return nil
+	})
+
+	// Nothing is next reads as 0 on the wire, and 0 is an answer: every step is taken, or every ready
+	// step waits for a step nobody finished.
+	sc.Step(`^the path says nothing is next$`, func(ctx context.Context) error {
+		if got := pathFrom(ctx).next; got != 0 {
+			return fmt.Errorf("the path says step %d is next, and no step may be taken", got)
 		}
 		return nil
 	})
@@ -1014,7 +1035,7 @@ func readPath(ctx context.Context, feature string) error {
 	if err != nil {
 		return nil
 	}
-	p.steps, p.milestones = resp.GetSteps(), resp.GetMilestones()
+	p.steps, p.milestones, p.next = resp.GetSteps(), resp.GetMilestones(), resp.GetNext()
 	return nil
 }
 

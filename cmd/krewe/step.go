@@ -113,6 +113,26 @@ func runStepFinish(ctx context.Context, client quaycrewv1.ControlPlaneServiceCli
 	step := resp.GetStep()
 	fmt.Fprintf(out, "step %d.%d of %s is %s: %s\n",
 		held.GetNumber(), step.GetNumber(), located.Path.Project, step.GetState(), step.GetResult())
+	if word == "done" {
+		return sayWhatIsNext(ctx, client, held, out)
+	}
+	return nil
+}
+
+// sayWhatIsNext prints the step the operator may take now, under the line saying this one is done.
+//
+// It is a sentence and never a dispatch. The read starts no session and changes no row, and the step
+// it names waits for the operator to type the take.
+//
+// The number is the control plane's, read back after the write, so the line says what the path holds
+// now rather than what it held before this step closed.
+func sayWhatIsNext(ctx context.Context, client quaycrewv1.ControlPlaneServiceClient,
+	feature *quaycrewv1.Feature, out io.Writer) error {
+	resp, err := client.ListSteps(ctx, &quaycrewv1.ListStepsRequest{Feature: feature.GetId()})
+	if err != nil {
+		return fmt.Errorf("%w\n\nthe step is recorded, and what is next was not read", err)
+	}
+	fmt.Fprintf(out, "%s\n", nextLine(resp.GetNext()))
 	return nil
 }
 

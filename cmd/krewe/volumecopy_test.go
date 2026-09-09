@@ -351,6 +351,7 @@ type recordingVolume struct {
 	replace bool
 	gives   []byte
 	asked   string
+	removed string
 }
 
 func (r *recordingVolume) Put(_ context.Context, to workspace.VolumeLocation, name string, body io.Reader, replace bool) (string, error) {
@@ -365,6 +366,11 @@ func (r *recordingVolume) Put(_ context.Context, to workspace.VolumeLocation, na
 func (r *recordingVolume) Get(_ context.Context, from workspace.VolumeLocation) (io.ReadCloser, error) {
 	r.asked = from.Address.String()
 	return io.NopCloser(bytes.NewReader(r.gives)), nil
+}
+
+func (r *recordingVolume) Delete(_ context.Context, at workspace.VolumeLocation) (string, error) {
+	r.removed = at.Address.String()
+	return r.at, nil
 }
 
 // hostVolume is where a key becomes a path on disk on the road that writes. So it is where a key that

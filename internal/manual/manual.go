@@ -118,6 +118,13 @@ commands:
                                           It prints the one path on this machine the file landed at.
                                           A name that is already there is refused unless you say
                                           --replace
+  volume delete <address>                 remove one file from a volume, so a volume does not only
+                                          ever grow. The address names the file, and the command
+                                          prints the path that file was at. A folder is refused, and
+                                          so is an address with the file name left off. Deleting a
+                                          whole folder is out of scope, and there is no way back from
+                                          one. A name the directory does not hold is refused, and the
+                                          refusal says what it does hold
   answer <session> [--all]                 what a session came back with, and nothing else, so a
                                           caller can pipe it. The most recent answer, or with --all
                                           every one of them, oldest first
@@ -183,8 +190,10 @@ commands:
   feature open [<address>] <feature>      open a feature again. It is the way back from done and from
                                           stopped, and it warns nothing
   path [<address>] [<feature>]            the steps one feature was broken into, in number order,
-                                          with the state of each one and the session holding it. With
-                                          no feature number it prints the path of every open feature
+                                          with the state of each one and the session holding it. One
+                                          line under the listing names the step you may take now, and
+                                          reading it starts nothing. With no feature number it prints
+                                          the path of every open feature, and no next line
   path set [<address>] <feature>          write one feature's path from a document. Each step is a
     --file <path>                         heading reading ## 1. <title>, and the blocks under it say
                                           what changes, what it touches, what proves it and which
@@ -201,7 +210,8 @@ commands:
   step done [<address>]                   record what came of a step, and close it. The result is
     <feature>.<number> "<result>"         required: nothing can see inside a container, so what you
                                           write is what the next session reads. It touches no
-                                          session, so the step still says who took it
+                                          session, so the step still says who took it. The last line
+                                          names the step you may take now, and it starts nothing
   step stop [<address>]                   stop a step nobody will finish, and say why. It takes the
     <feature>.<number> "<reason>"         same arguments as step done, in the same order. A stopped
                                           step is not ready, and taking it again starts it clean
