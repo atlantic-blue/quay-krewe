@@ -132,6 +132,13 @@ commands:
                                           It prints the one path on this machine the file landed at.
                                           A name that is already there is refused unless you say
                                           --replace
+  volume delete <address>                 remove one file from a volume, so a volume does not only
+                                          ever grow. The address names the file, and the command
+                                          prints the path that file was at. A folder is refused, and
+                                          so is an address with the file name left off. Deleting a
+                                          whole folder is out of scope, and there is no way back from
+                                          one. A name the directory does not hold is refused, and the
+                                          refusal says what it does hold
   answer <session> [--all]                 what a session came back with, and nothing else, so a
                                           caller can pipe it. The most recent answer, or with --all
                                           every one of them, oldest first

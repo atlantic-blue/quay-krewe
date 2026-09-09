@@ -32,10 +32,12 @@ import (
 const volumeUsage = "usage: krewe volume list <address>" +
 	"\n       krewe volume cp <file> <address> [" + flagReplace + "]" +
 	"\n       krewe volume cp <address> <file> [" + flagReplace + "]" +
+	"\n       krewe volume delete <address>" +
 	"\n\nan address is krewe://<workspace>[/<project>[/<session>]], and a name after that is a file in it" +
 	"\n\n  krewe volume list krewe://itv/vast" +
 	"\n  krewe volume cp ./explore.txt krewe://itv/vast" +
-	"\n  krewe volume cp krewe://itv/vast/explore.txt ~/Downloads"
+	"\n  krewe volume cp krewe://itv/vast/explore.txt ~/Downloads" +
+	"\n  krewe volume delete krewe://itv/vast/explore.txt"
 
 // flagReplace says the caller means to write over a name that is already there.
 const flagReplace = "--replace"
@@ -57,6 +59,8 @@ func runVolume(ctx context.Context, client quaycrewv1.ControlPlaneServiceClient,
 		return runVolumeList(ctx, client, args[1:], out)
 	case "cp":
 		return runVolumeCopy(ctx, hostVolume{client: client}, client, args[1:], out)
+	case "delete":
+		return runVolumeDelete(ctx, hostVolume{client: client}, client, args[1:], out)
 	default:
 		return fmt.Errorf("there is no volume %s: %s", args[0], volumeUsage)
 	}
@@ -112,6 +116,43 @@ type volumeTransport interface {
 	// An address that names a directory is refused here. A whole directory is out of scope, and
 	// copying the first file in one loses the rest without saying so.
 	Get(ctx context.Context, from workspace.VolumeLocation) (io.ReadCloser, error)
+
+	// Delete removes the file the address names, and answers with the path it was at.
+	//
+	// One file. A directory is refused, because a recursive delete is out of scope and there is no
+	// way back from one. A name that is not there is refused too, and the refusal says what the
+	// directory does hold.
+	Delete(ctx context.Context, at workspace.VolumeLocation) (string, error)
+}
+
+// runVolumeDelete removes one file from a volume, so a volume does not only ever grow.
+//
+// It prints the path the file was at, on its own line. The levels of an address are read against what
+// the system holds, so `krewe://itv/notes` is a project or a file in the shared folder. A delete that
+// printed nothing would leave the person to work out which of the two went.
+func runVolumeDelete(ctx context.Context, carry volumeTransport, client quaycrewv1.ControlPlaneServiceClient, args []string, out io.Writer) error {
+	if len(args) != 1 {
+		return errors.New(volumeUsage)
+	}
+	address, err := workspace.ParseVolumePath(args[0])
+	if err != nil {
+		return err
+	}
+	found, err := workspace.ResolveVolume(ctx, client, address)
+	if err != nil {
+		return err
+	}
+	// An address with no name on the end of it is the volume itself. Emptying one is out of scope, and
+	// a delete of everything in a folder is not something a person can take back.
+	if !found.Address.HasKey() {
+		return fmt.Errorf("%s is a volume, and this deletes one file: name a file in it", found.Address)
+	}
+	at, err := carry.Delete(ctx, found)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(out, at)
+	return nil
 }
 
 // runVolumeCopy carries one file between this machine and a volume.
@@ -317,6 +358,63 @@ func (h hostVolume) Get(ctx context.Context, from workspace.VolumeLocation) (io.
 		return nil, fmt.Errorf("%s is a folder, and this copies one file: name a file in it", from.Address)
 	}
 	return os.Open(inside)
+}
+
+// Delete removes the file the address names, on the machine this runs on.
+//
+// The key is held inside the volume here, the way both copy roads hold it. This is the point of use,
+// and a key that reached the transport from anywhere else is cleaned here or nowhere.
+func (h hostVolume) Delete(ctx context.Context, at workspace.VolumeLocation) (string, error) {
+	found, err := h.client.LocateDirectory(ctx, &quaycrewv1.LocateDirectoryRequest{
+		Workspace: at.Where.WorkspaceID,
+		Project:   at.Where.ProjectID,
+		Session:   at.Where.SessionID,
+	})
+	if err != nil {
+		return "", err
+	}
+	key := volumeKey(at.Address.Key)
+	inside := inVolume(found.GetHost(), key)
+	info, err := os.Stat(inside)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nothingCalledThat(filepath.Dir(inside), path.Base(key))
+		}
+		return "", err
+	}
+	// A folder is refused rather than emptied. Removing one takes every file under it, and nothing
+	// here brings any of them back.
+	if info.IsDir() {
+		return "", fmt.Errorf("%s is a folder, and this deletes one file: name a file in it", at.Address)
+	}
+	if err := os.Remove(inside); err != nil {
+		return "", err
+	}
+	return path.Join(found.GetSandbox(), key), nil
+}
+
+// nothingCalledThat is the refusal for a name the directory does not hold.
+//
+// It names the directory it read and the names in it. A delete is typed from memory, so the file is
+// usually there under another name, and a message that only said the name was missing would send
+// somebody to list the directory themselves.
+func nothingCalledThat(dir, name string) error {
+	return fmt.Errorf("%s holds nothing called %q: it holds %s", dir, name, whatItHolds(dir))
+}
+
+// whatItHolds is the names in a directory, in the order a listing prints them. A directory it cannot
+// read holds nothing as far as the refusal goes: the refusal is about the missing name, and a second
+// failure inside the message answers a question nobody asked.
+func whatItHolds(dir string) string {
+	entries, err := os.ReadDir(dir)
+	if err != nil || len(entries) == 0 {
+		return "nothing"
+	}
+	names := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		names = append(names, volumeName(entry))
+	}
+	return strings.Join(names, ", ")
 }
 
 // volumeKeyFor is the name the file lands under, held inside the volume.
