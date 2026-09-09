@@ -250,7 +250,9 @@ func TestWhereAnswersWithTheMachinesPathNotItsOwn(t *testing.T) {
 }
 
 // With no address it answers for where you are standing, the way every other command that takes one
-// does. Standing in a project is standing in its workspace, and that is the shared folder.
+// does. Standing in a project is standing in that project own folder, which is where a file for it
+// goes. It used to answer with the workspace shared folder, which is the directory every project in
+// the workspace shares.
 func TestWhereWithNoAddressAnswersForWhereYouAreStanding(t *testing.T) {
 	client, _, _ := aSystemOnDisk(t)
 	mustRun(t, client, "workspace", "create", "acme")
@@ -258,7 +260,7 @@ func TestWhereWithNoAddressAnswersForWhereYouAreStanding(t *testing.T) {
 
 	said := mustRun(t, client, "where")
 
-	if !strings.Contains(said, "shared folder of acme") {
+	if !strings.Contains(said, "the house-bills folder of acme") {
 		t.Fatalf("standing in acme/house-bills, krewe where says:\n%s", said)
 	}
 }
@@ -337,4 +339,135 @@ func theOnlySession(t *testing.T, client quaycrewv1.ControlPlaneServiceClient) *
 func firstLineOf(said string) string {
 	line, _, _ := strings.Cut(said, "\n")
 	return strings.TrimSpace(line)
+}
+
+// A project address is a folder inside the shared one, which is where the file actually has to land.
+// Before this it answered with the shared folder itself, so `krewe where acme` and
+// `krewe where acme/house-bills` named one directory between them and the address said nothing.
+func TestWhereOnAProjectNamesAFolderInsideTheSharedOne(t *testing.T) {
+	client, _, _ := aSystemOnDisk(t)
+	mustRun(t, client, "workspace", "create", "acme")
+	mustRun(t, client, "project", "create", "house-bills")
+
+	shared := firstLineOf(mustRun(t, client, "where", "acme"))
+	said := mustRun(t, client, "where", "acme/house-bills")
+	project := firstLineOf(said)
+
+	if project == shared {
+		t.Fatalf("the project address answers with the shared folder %q", shared)
+	}
+	if want := filepath.Join(shared, "house-bills"); project != want {
+		t.Fatalf("krewe where says the project folder is %q, want %q", project, want)
+	}
+	info, err := os.Stat(project)
+	if err != nil {
+		t.Fatalf("krewe where printed %q, which is not on disk: %v", project, err)
+	}
+	if !info.IsDir() {
+		t.Fatalf("krewe where printed %q, which is not a directory", project)
+	}
+	if !strings.Contains(said, sandbox.SharedPath+"/house-bills") {
+		t.Fatalf("the answer does not say a session reads it at %s/house-bills:\n%s", sandbox.SharedPath, said)
+	}
+	if !strings.Contains(said, "the house-bills folder of acme") {
+		t.Fatalf("the answer does not say which folder this is:\n%s", said)
+	}
+}
+
+// The half a printed path cannot prove about itself: a file put in the project folder is inside the
+// directory a sandbox binds, at the path the answer promised a session would read it at.
+func TestAFilePutInTheProjectFolderIsWhereTheSessionWillLookForIt(t *testing.T) {
+	dir := t.TempDir()
+	storage := sandbox.Storage{Dir: dir, Host: dir}
+	client := testClientWith(t, controlplane.Config{
+		Store: store.NewMemory(), Runner: &model.FakeRunner{Reply: "ok"},
+		Provider: &sandbox.FakeProvider{}, Secrets: secrets.NewMemory(), Storage: storage,
+	})
+	mustRun(t, client, "workspace", "create", "acme")
+	mustRun(t, client, "project", "create", "house-bills")
+	mustRun(t, client, "exec", "acme/house-bills", "sort the listing by the clock it shows")
+	session := theOnlySession(t, client)
+
+	project := firstLineOf(mustRun(t, client, "where", "acme/house-bills"))
+	if err := os.WriteFile(filepath.Join(project, "screenshot.png"), []byte("a picture"), 0o666); err != nil {
+		t.Fatalf("put a file in %q: %v", project, err)
+	}
+
+	// Read through the same call the container runtime is given, rather than a path this test builds.
+	mounts, err := storage.Prepare(sandbox.Config{
+		ID: session.GetId(), Workspace: session.GetWorkspace(), Project: session.GetProject(),
+	})
+	if err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+	for _, mount := range mounts {
+		if mount.Target != sandbox.SharedPath {
+			continue
+		}
+		inside := filepath.Join(mount.Source, "house-bills", "screenshot.png")
+		if _, err := os.Stat(inside); err != nil {
+			t.Fatalf("a sandbox binds %q at %q, and the file is not at %q: %v",
+				mount.Source, mount.Target, inside, err)
+		}
+		return
+	}
+	t.Fatalf("no sandbox mount lands at %s, so nothing reads the project folder", sandbox.SharedPath)
+}
+
+// A project of another workspace is a not found rather than a folder. Answering it would make a
+// directory in a volume that workspace's sessions never read, and hand back a path that stays empty.
+func TestLocateRefusesAProjectThatIsNotInThatWorkspace(t *testing.T) {
+	client, held, _ := aSystemOnDisk(t)
+	mustRun(t, client, "workspace", "create", "acme")
+	mustRun(t, client, "workspace", "create", "other")
+	mustRun(t, client, "project", "create", "acme/house-bills")
+
+	ctx := context.Background()
+	projects, err := held.ListProjects(ctx, "")
+	if err != nil {
+		t.Fatalf("ListProjects: %v", err)
+	}
+	workspaces, err := held.ListWorkspaces(ctx)
+	if err != nil {
+		t.Fatalf("ListWorkspaces: %v", err)
+	}
+	other := ""
+	for _, one := range workspaces {
+		if one.GetName() == "other" {
+			other = one.GetId()
+		}
+	}
+	if other == "" {
+		t.Fatal("the second workspace was not created, so this proves nothing")
+	}
+	for _, project := range projects {
+		if project.GetName() != "house-bills" {
+			continue
+		}
+		_, err := client.LocateDirectory(ctx, &quaycrewv1.LocateDirectoryRequest{
+			Workspace: other, Project: project.GetId(),
+		})
+		if err == nil {
+			t.Fatal("the call answered for a project that is in another workspace")
+		}
+		return
+	}
+	t.Fatal("the project was not created, so this proves nothing")
+}
+
+// The folder is named after the project, so a name the system already writes there is refused at
+// creation. A project called worktrees would be one path naming two directories, and a file copied
+// into it would land on a session's checkout.
+func TestAProjectCannotBeCalledAFolderTheSystemAlreadyWrites(t *testing.T) {
+	client, _, _ := aSystemOnDisk(t)
+	mustRun(t, client, "workspace", "create", "acme")
+	var out bytes.Buffer
+
+	err := run(context.Background(), client, []string{"project", "create", "acme/worktrees"}, &out, "")
+	if err == nil {
+		t.Fatalf("a project called worktrees was created: %q", out.String())
+	}
+	if !strings.Contains(err.Error(), "shared folder") {
+		t.Fatalf("the refusal is %q, want it to say where the collision is", err)
+	}
 }

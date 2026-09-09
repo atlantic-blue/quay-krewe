@@ -130,3 +130,42 @@ func ValidateWorkspace(value string) error {
 	}
 	return Validate("workspace", value)
 }
+
+// Worktrees and Repos are the folders this system writes directly inside a workspace's shared
+// folder. `internal/sandbox` builds both paths from the mount point, and the git skill tells every
+// session to use them. A project folder now sits at that same level, so a project of either name
+// would be one path naming two directories.
+const (
+	Worktrees = "worktrees"
+	Repos     = "repos"
+)
+
+// ReservedProject says what this system already keeps in a folder of this name, and "" for a name no
+// folder has taken.
+//
+// It returns the reason rather than the refusal because the two callers answer different questions.
+// One is reading an address somebody typed and says what to type instead. The other is making a
+// project and says what the name would collide with.
+func ReservedProject(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case Worktrees:
+		return "the working tree a session takes"
+	case Repos:
+		return "the one clone of a repository every session in the workspace shares"
+	}
+	return ""
+}
+
+// ValidateProject is Validate plus the folder names the system has already taken.
+//
+// The reserved words are read first, and however they were capitalised, for the reason
+// ValidateWorkspace reads its own first: the general rule's advice is the typed name lowercased, and
+// "Worktrees" would be answered with advice to type the one name this refuses.
+func ValidateProject(value string) error {
+	if held := ReservedProject(value); held != "" {
+		return fmt.Errorf(
+			"a project cannot be called %q: this system writes %s in a folder of that name, inside the workspace's shared folder, and a project's own folder sits beside it",
+			strings.TrimSpace(value), held)
+	}
+	return Validate("project", value)
+}

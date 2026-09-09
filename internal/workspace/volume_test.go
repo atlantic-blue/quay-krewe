@@ -214,6 +214,8 @@ func TestParseVolumePathRefusesWhatIsNotAVolume(t *testing.T) {
 		"the retired word":      {"krewe://crew/vast", "not a word this takes any more"},
 		"the working trees":     {"krewe://itv/worktrees", "working tree"},
 		"a session under it":    {"krewe://itv/worktrees/9e8153f6", "working tree"},
+		"the shared clones":     {"krewe://itv/repos", "clone of a repository"},
+		"a repository under it": {"krewe://itv/repos/quay-krewe", "clone of a repository"},
 	}
 	for what, c := range refused {
 		got, err := workspace.ParseVolumePath(c.input)

@@ -14,10 +14,10 @@ import (
 // LocateDirectory says where an address is on the machine, so a person holding a file can put it in
 // front of a session without inspecting a container.
 //
-// Two directories and no others. The workspace's shared folder, which every session in it reads, and
-// one session's own working directory. The rest of the data directory is never named: its top holds
-// the system's own credentials, and the conversation store under a workspace is a transcript rather
-// than a place to put anything.
+// Three directories and no others. The workspace's shared folder, which every session in it reads; a
+// project's own folder inside that one; and one session's own working directory. The rest of the
+// data directory is never named: its top holds the system's own credentials, and the conversation
+// store under a workspace is a transcript rather than a place to put anything.
 //
 // It starts nothing and reads no container, which is the case that had no answer at all: a bind mount
 // can only be read off a container that is up, and the question is usually asked once they are down.
@@ -31,11 +31,14 @@ func (s *Server) LocateDirectory(ctx context.Context, req *quaycrewv1.LocateDire
 	}
 
 	if req.GetSession() == "" {
-		found, err := s.storage.SharedDirectory(req.GetWorkspace())
-		if err != nil {
-			return nil, locateError(err)
+		if req.GetProject() == "" {
+			found, err := s.storage.SharedDirectory(req.GetWorkspace())
+			if err != nil {
+				return nil, locateError(err)
+			}
+			return answerFor(found), nil
 		}
-		return answerFor(found), nil
+		return s.projectDirectory(ctx, req)
 	}
 
 	session, err := s.sessionAt(ctx, req)
@@ -46,6 +49,29 @@ func (s *Server) LocateDirectory(ctx context.Context, req *quaycrewv1.LocateDire
 	// directory that session's own sandbox binds. A session read through the wrong project would
 	// otherwise be answered with a path nothing mounts.
 	found, err := s.storage.WorkingDirectory(boxOf(session))
+	if err != nil {
+		return nil, locateError(err)
+	}
+	return answerFor(found), nil
+}
+
+// projectDirectory is a project's own folder inside its workspace's shared folder.
+//
+// The folder is named after the project, so the name comes off the stored project rather than out of
+// the request, which carries the identifier. The two are not interchangeable here: a request naming
+// the identifier would be answered with a directory no session is ever told to read.
+//
+// A project of another workspace is a not found rather than a folder. Answering it would make a
+// directory in the wrong volume, which nothing mounts, and hand back a path that stays empty.
+func (s *Server) projectDirectory(ctx context.Context, req *quaycrewv1.LocateDirectoryRequest) (*quaycrewv1.LocateDirectoryResponse, error) {
+	project, err := s.store.GetProject(ctx, req.GetProject())
+	if err != nil {
+		return nil, storeError(err, "project")
+	}
+	if project.GetWorkspace() != req.GetWorkspace() {
+		return nil, status.Error(codes.NotFound, "no such project in that workspace")
+	}
+	found, err := s.storage.ProjectDirectory(req.GetWorkspace(), project.GetName())
 	if err != nil {
 		return nil, locateError(err)
 	}
@@ -75,12 +101,19 @@ func (s *Server) sessionAt(ctx context.Context, req *quaycrewv1.LocateDirectoryR
 }
 
 // answerFor renders one directory into the wire message.
+//
+// An unmapped kind is left unspecified rather than folded into one of the three, because a caller
+// reads the kind to say what the directory is: a wrong word there sends somebody to copy a file into
+// a folder they were told belongs to something else.
 func answerFor(found sandbox.Directory) *quaycrewv1.LocateDirectoryResponse {
-	kind := quaycrewv1.DirectoryKind_DIRECTORY_KIND_WORKING
-	if found.Shared {
-		kind = quaycrewv1.DirectoryKind_DIRECTORY_KIND_SHARED
+	kinds := map[sandbox.DirectoryKind]quaycrewv1.DirectoryKind{
+		sandbox.KindShared:  quaycrewv1.DirectoryKind_DIRECTORY_KIND_SHARED,
+		sandbox.KindProject: quaycrewv1.DirectoryKind_DIRECTORY_KIND_PROJECT,
+		sandbox.KindWorking: quaycrewv1.DirectoryKind_DIRECTORY_KIND_WORKING,
 	}
-	return &quaycrewv1.LocateDirectoryResponse{Host: found.Host, Sandbox: found.Sandbox, Kind: kind}
+	return &quaycrewv1.LocateDirectoryResponse{
+		Host: found.Host, Sandbox: found.Sandbox, Kind: kinds[found.Kind],
+	}
 }
 
 // locateError separates a system that keeps nothing on disk, which is a way of running it, from a

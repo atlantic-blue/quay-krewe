@@ -160,6 +160,9 @@ const (
 	DirectoryKind_DIRECTORY_KIND_SHARED DirectoryKind = 1
 	// One session's own working directory.
 	DirectoryKind_DIRECTORY_KIND_WORKING DirectoryKind = 2
+	// A project's own folder inside the workspace's shared folder, named after the project. Every
+	// session in the workspace reads it, and the sessions of that project are the ones told to.
+	DirectoryKind_DIRECTORY_KIND_PROJECT DirectoryKind = 3
 )
 
 // Enum value maps for DirectoryKind.
@@ -168,11 +171,13 @@ var (
 		0: "DIRECTORY_KIND_UNSPECIFIED",
 		1: "DIRECTORY_KIND_SHARED",
 		2: "DIRECTORY_KIND_WORKING",
+		3: "DIRECTORY_KIND_PROJECT",
 	}
 	DirectoryKind_value = map[string]int32{
 		"DIRECTORY_KIND_UNSPECIFIED": 0,
 		"DIRECTORY_KIND_SHARED":      1,
 		"DIRECTORY_KIND_WORKING":     2,
+		"DIRECTORY_KIND_PROJECT":     3,
 	}
 )
 
@@ -5682,10 +5687,12 @@ type LocateDirectoryRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// workspace is the workspace id, and is required: every directory this answers for is inside one.
 	Workspace string `protobuf:"bytes,1,opt,name=workspace,proto3" json:"workspace,omitempty"`
-	// project is the project id, and narrows session to the project holding it.
+	// project is the project id. With no session it is the answer itself: a project's own folder
+	// inside the workspace's shared folder. With one it narrows the session to the project holding it.
 	Project string `protobuf:"bytes,2,opt,name=project,proto3" json:"project,omitempty"`
 	// session is the session handle. With one, the answer is that session's own working directory;
-	// without one, it is the workspace's shared folder.
+	// without one, it is the project's folder, or the workspace's shared folder where no project is
+	// named either.
 	Session       string `protobuf:"bytes,3,opt,name=session,proto3" json:"session,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -5750,7 +5757,7 @@ type LocateDirectoryResponse struct {
 	// sandbox is where the same directory appears inside a container, which is what a session calls the
 	// file once it is in there.
 	Sandbox string `protobuf:"bytes,2,opt,name=sandbox,proto3" json:"sandbox,omitempty"`
-	// kind says which of the two directories this is.
+	// kind says which of the three directories this is.
 	Kind          DirectoryKind `protobuf:"varint,3,opt,name=kind,proto3,enum=quaycrew.v1.DirectoryKind" json:"kind,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -8901,11 +8908,12 @@ const file_quaycrew_v1_controlplane_proto_rawDesc = "" +
 	"\x10SecretProjection\x12!\n" +
 	"\x1dSECRET_PROJECTION_UNSPECIFIED\x10\x00\x12\x19\n" +
 	"\x15SECRET_PROJECTION_ENV\x10\x01\x12\x1a\n" +
-	"\x16SECRET_PROJECTION_FILE\x10\x02*f\n" +
+	"\x16SECRET_PROJECTION_FILE\x10\x02*\x82\x01\n" +
 	"\rDirectoryKind\x12\x1e\n" +
 	"\x1aDIRECTORY_KIND_UNSPECIFIED\x10\x00\x12\x19\n" +
 	"\x15DIRECTORY_KIND_SHARED\x10\x01\x12\x1a\n" +
-	"\x16DIRECTORY_KIND_WORKING\x10\x022\xda&\n" +
+	"\x16DIRECTORY_KIND_WORKING\x10\x02\x12\x1a\n" +
+	"\x16DIRECTORY_KIND_PROJECT\x10\x032\xda&\n" +
 	"\x13ControlPlaneService\x12\\\n" +
 	"\x0fCreateWorkspace\x12#.quaycrew.v1.CreateWorkspaceRequest\x1a$.quaycrew.v1.CreateWorkspaceResponse\x12S\n" +
 	"\fGetWorkspace\x12 .quaycrew.v1.GetWorkspaceRequest\x1a!.quaycrew.v1.GetWorkspaceResponse\x12Y\n" +

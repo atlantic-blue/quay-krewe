@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"path"
 
 	quaycrewv1 "github.com/atlantic-blue/quay-krewe/gen/quaycrew/v1"
 	"github.com/atlantic-blue/quay-krewe/internal/workspace"
@@ -60,11 +61,20 @@ func runWhere(ctx context.Context, client quaycrewv1.ControlPlaneServiceClient, 
 // whatItIs is the sentence under the path: which directory this is, and what a session inside the
 // container calls it. The second half is the part that was actually hard, because a person who has
 // copied a file in still has to tell the session where to look.
-func whatItIs(kind quaycrewv1.DirectoryKind, path workspace.Path, mount string) string {
-	if kind == quaycrewv1.DirectoryKind_DIRECTORY_KIND_SHARED {
+//
+// A project folder is named off the mount rather than off the address. The address carries whichever
+// of the two the operator typed, and the folder is always the project's name, so an operator who
+// typed the identifier would otherwise be told the folder is called something it is not.
+func whatItIs(kind quaycrewv1.DirectoryKind, address workspace.Path, mount string) string {
+	switch kind {
+	case quaycrewv1.DirectoryKind_DIRECTORY_KIND_SHARED:
 		return fmt.Sprintf("the shared folder of %s. Every session in it reads this directory at %s",
-			path.Workspace, mount)
+			address.Workspace, mount)
+	case quaycrewv1.DirectoryKind_DIRECTORY_KIND_PROJECT:
+		return fmt.Sprintf("the %s folder of %s. Every session in that workspace reads this directory at %s",
+			path.Base(mount), address.Workspace, mount)
+	default:
+		return fmt.Sprintf("the working directory of session %s. That session reads this directory at %s",
+			address.Session, mount)
 	}
-	return fmt.Sprintf("the working directory of session %s. That session reads this directory at %s",
-		path.Session, mount)
 }

@@ -94,6 +94,48 @@ func initializeDirectorySteps(sc *godog.ScenarioContext) {
 		}
 		return nil
 	})
+
+	// A project folder is not a mount of its own, it is a name inside the shared one, so the proof
+	// walks from the mount the container runtime is given down to the file. A step that checked the
+	// printed path instead would pass against a folder nothing reads.
+	sc.Step(`^a sandbox of that workspace reads that file at "([^"]*)"$`, func(ctx context.Context, at string) error {
+		w := worldFrom(ctx)
+		mounts, err := w.storage.Prepare(sandbox.Config{
+			ID: "a-session", Workspace: w.workspaceID, Project: "a-project",
+		})
+		if err != nil {
+			return fmt.Errorf("what a sandbox is given: %w", err)
+		}
+		for _, one := range mounts {
+			rest, inside := strings.CutPrefix(at, one.Target+"/")
+			if !inside {
+				continue
+			}
+			read := filepath.Join(one.Source, filepath.FromSlash(rest))
+			if _, err := os.Stat(read); err != nil {
+				return fmt.Errorf("a sandbox reads %q at %q, and there is no file at %q: %w",
+					one.Source, one.Target, read, err)
+			}
+			return nil
+		}
+		return fmt.Errorf("no sandbox mount holds %q, and a sandbox is given %v", at, sources(mounts))
+	})
+
+	sc.Step(`^the directory it names holds the folder "([^"]*)"$`, func(ctx context.Context, folder string) error {
+		named := theDirectoryNamed(ctx)
+		info, err := os.Stat(filepath.Join(named, folder))
+		if err != nil {
+			return fmt.Errorf("%q does not hold %q: %w", named, folder, err)
+		}
+		if !info.IsDir() {
+			return fmt.Errorf("%q holds %q, which is not a directory", named, folder)
+		}
+		return nil
+	})
+
+	sc.Step(`^the caller makes a project called "([^"]*)"$`, func(ctx context.Context, project string) error {
+		return runTool(ctx, "project", "create", worldFrom(ctx).workspaceName+"/"+project)
+	})
 }
 
 // theDirectoryNamed is the path the command printed, which is its whole first line.

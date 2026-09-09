@@ -1018,7 +1018,7 @@ func (s *Server) CreateProject(ctx context.Context, req *quaycrewv1.CreateProjec
 	if req.GetWorkspace() == "" {
 		return nil, status.Error(codes.InvalidArgument, "workspace is required")
 	}
-	if err := name.Validate("project", req.GetName()); err != nil {
+	if err := name.ValidateProject(req.GetName()); err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 	project, err := s.store.CreateProject(ctx, req.GetWorkspace(), req.GetName())
