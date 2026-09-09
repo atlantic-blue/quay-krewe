@@ -91,35 +91,21 @@ commands:
                                           refused, because archiving takes the container away and
                                           the answer with it: end the exec with krewe stop first.
                                           Nothing is deleted. The conversation, the exec history and
-                                          the files all stay, and krewe read still answers for it
+                                          the files all stay, and krewe volume list still answers
+                                          for it
   unarchive <session>                     put a session back in the listing. It reads stopped and
                                           holds no container: the next exec builds a fresh one over
                                           the same conversation and the same files
-  read <session> [<path>]                 what a session made, out of the directory the system keeps
-                                          for it. With no path it lists what is there and names the
-                                          directory on the machine; with one it prints that file, so
-                                          it pipes. It never enters the container, so it answers for
-                                          a session whose sandbox has gone
-  where [<address>]                       the directory an address is kept in on this machine, so you
-                                          can put a file in it by hand. A workspace address answers
-                                          with its shared folder, which every session in it reads. A
-                                          project address answers with a folder inside that one,
-                                          named after the project. A session address answers with
-                                          where that session's work is: the working tree it took, or
-                                          its own working directory where it took none, and the
-                                          answer says which. The path is on the first line and
-                                          nothing shares it, so cd "$(krewe where me)"
-                                          works. Under it is where a session sees the same
-                                          directory, which is what to call the file once it is in
-                                          there. It starts nothing and reads no container, so it
-                                          answers when every sandbox is down
   volume list <address>                   what a volume holds. A volume is the directory a session
-                                          reads: krewe://<workspace> is its shared folder, and
+                                          reads: krewe://<workspace> is its shared folder,
                                           krewe://<workspace>/<project> is the folder inside that
-                                          one. A name after either is a file in it. The directory on
-                                          this machine is on the first line. Under it is one line for
-                                          each name, sorted by name, with a size on each file. A
-                                          folder that holds nothing says so
+                                          one, and krewe://<workspace>/<project>/<session> is what
+                                          that session works in, which is the working tree it took or
+                                          its own directory where it took none. A name after any of
+                                          them is a file in it. The directory on this machine is
+                                          on the first line. Under it is one line for each name,
+                                          sorted by name, with a size on each file. A folder that
+                                          holds nothing says so
   volume cp <file> <address> [--replace]  put a file on this machine into a volume, where every
                                           session that reads the address finds it. The address takes
                                           the file's own name, or names the file itself. It prints

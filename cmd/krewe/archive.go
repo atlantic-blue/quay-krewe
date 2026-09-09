@@ -112,7 +112,8 @@ func archiveOneSession(ctx context.Context, client quaycrewv1.ControlPlaneServic
 	}
 	where := display.ShortID(session.GetHandle())
 	fmt.Fprintf(out, "archived %s: its conversation, its execs and its files are all still there\n", where)
-	fmt.Fprintf(out, "read it with krewe read %s, or bring it back with krewe unarchive %s\n", where, where)
+	fmt.Fprintf(out, "what it left is a volume: krewe volume list krewe://<workspace>/<project>/%s\n", where)
+	fmt.Fprintf(out, "bring it back with krewe unarchive %s\n", where)
 	return nil
 }
 

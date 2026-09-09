@@ -20,9 +20,9 @@ import (
 // The verb for the files a volume holds.
 //
 // The problem it answers: a volume is the directory a session reads, and every level of it on disk is
-// a generated identifier. `krewe where` names the directory and stops there. `krewe read` answers for
-// a session and for nothing else. So nothing said what a workspace's shared folder held, and nothing
-// put a file in one or took one out.
+// a generated identifier. `krewe where` named the directory and stopped there. `krewe read` answered
+// for a session and for nothing else. So nothing said what a workspace's shared folder held, and
+// nothing put a file in one or took one out. Both words are gone, and each names this one instead.
 //
 // The bytes are read on the machine this runs on. The tool and the volume are on one machine today,
 // so the path the system hands back is a path this process can open. Where they are not, this call
@@ -194,7 +194,7 @@ func runVolumeCopy(ctx context.Context, carry volumeTransport, client quaycrewv1
 // copyIntoVolume puts a file on this machine in front of every session that reads the address.
 //
 // It prints one path and nothing else: the path a session reads the file at. A person types that
-// path into the message they send the session. So it goes on its own line, the way `krewe where`
+// path into the message they send the session. So it goes on its own line, the way the listing
 // prints a directory.
 func copyIntoVolume(ctx context.Context, carry volumeTransport, client quaycrewv1.ControlPlaneServiceClient, source, destination string, replace bool, out io.Writer) error {
 	address, err := workspace.ParseVolumePath(destination)

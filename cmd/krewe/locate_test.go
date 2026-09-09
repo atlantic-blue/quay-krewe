@@ -16,11 +16,15 @@ import (
 	"github.com/atlantic-blue/quay-krewe/internal/store"
 )
 
-// krewe where: a name becomes a directory.
+// An address becomes a directory, and the listing is what prints it.
 //
 // The failure it answers: somebody had a screenshot to put in front of a running session, and finding
 // where to put it meant reading three directories named in hex and then inspecting a container that
 // happened to be up. With every container down there was nothing on the machine to read at all.
+//
+// These drive krewe volume list, because the directory is its first line. They used to drive krewe
+// where, which named the directory and stopped there. The behaviour under the two words is the same
+// call, so the tests moved with the word rather than going with it.
 
 // aSystemOnDisk stands up a system whose data directory is a real one, and hands back the client, the
 // store and that directory. The store comes back because the hard case is a session that never ran,
@@ -40,48 +44,42 @@ func aSystemOnDisk(t *testing.T) (quaycrewv1.ControlPlaneServiceClient, store.St
 // A workspace nobody has worked in yet is the first case, because the shared folder is made when a
 // sandbox starts and a workspace with no sessions has never had one. Before this the answer was that
 // there was no directory, which is true and useless to somebody holding a file.
-func TestWhereOnAWorkspaceWithNoSessionsNamesAFolderThatExists(t *testing.T) {
+func TestAWorkspaceWithNoSessionsNamesAFolderThatExists(t *testing.T) {
 	client, _, _ := aSystemOnDisk(t)
 	mustRun(t, client, "workspace", "create", "acme")
 
-	said := mustRun(t, client, "where", "acme")
+	said := mustRun(t, client, "volume", "list", "acme")
 
 	path := firstLineOf(said)
 	info, err := os.Stat(path)
 	if err != nil {
-		t.Fatalf("krewe where printed %q, which is not on disk: %v", path, err)
+		t.Fatalf("the listing printed %q, which is not on disk: %v", path, err)
 	}
 	if !info.IsDir() {
-		t.Fatalf("krewe where printed %q, which is not a directory", path)
-	}
-	if !strings.Contains(said, sandbox.SharedPath) {
-		t.Fatalf("the answer does not say where a session sees it:\n%s", said)
+		t.Fatalf("the listing printed %q, which is not a directory", path)
 	}
 }
 
 // The same for a session the system has made and nothing has run in. A job that is about to be
 // dispatched is exactly when somebody wants to leave it a file to read.
-func TestWhereOnASessionThatHasNeverRunNamesADirectoryThatExists(t *testing.T) {
+func TestASessionThatHasNeverRunNamesADirectoryThatExists(t *testing.T) {
 	client, held, _ := aSystemOnDisk(t)
 	mustRun(t, client, "workspace", "create", "acme")
 	mustRun(t, client, "project", "create", "house-bills")
 	handle := aSessionNothingHasRunIn(t, held, "house-bills")
 
-	said := mustRun(t, client, "where", "acme/house-bills/"+handle)
+	said := mustRun(t, client, "volume", "list", "acme/house-bills/"+handle)
 
 	path := firstLineOf(said)
 	if _, err := os.Stat(path); err != nil {
-		t.Fatalf("krewe where printed %q, which is not on disk: %v", path, err)
-	}
-	if !strings.Contains(said, sandbox.WorkingPath) {
-		t.Fatalf("the answer does not say where the session sees it:\n%s", said)
+		t.Fatalf("the listing printed %q, which is not on disk: %v", path, err)
 	}
 }
 
 // The proof that matters: the directory the command names is the one a sandbox binds, read from the
 // same call the container runtime is given. Asserting the path was assembled correctly would pass
 // against a layout nothing mounts.
-func TestWhereNamesTheDirectoryASandboxActuallyMounts(t *testing.T) {
+func TestTheListingNamesTheDirectoryASandboxActuallyMounts(t *testing.T) {
 	dir := t.TempDir()
 	storage := sandbox.Storage{Dir: dir, Host: dir}
 	held := store.NewMemory()
@@ -94,8 +92,8 @@ func TestWhereNamesTheDirectoryASandboxActuallyMounts(t *testing.T) {
 	mustRun(t, client, "exec", "acme/house-bills", "sort the listing by the clock it shows")
 	session := theOnlySession(t, client)
 
-	shared := firstLineOf(mustRun(t, client, "where", "acme"))
-	working := firstLineOf(mustRun(t, client, "where", "acme/house-bills/"+session.GetHandle()))
+	shared := theVolumeAt(t, client, "acme")
+	working := theVolumeAt(t, client, "acme/house-bills/"+session.GetHandle())
 
 	mounts, err := storage.Prepare(sandbox.Config{
 		ID: session.GetId(), Workspace: session.GetWorkspace(), Project: session.GetProject(),
@@ -108,41 +106,48 @@ func TestWhereNamesTheDirectoryASandboxActuallyMounts(t *testing.T) {
 		bound[mount.Source] = mount.Target
 	}
 	if bound[shared] != sandbox.SharedPath {
-		t.Fatalf("krewe where says the shared folder is %q, and a sandbox binds %v", shared, bound)
+		t.Fatalf("the listing says the shared folder is %q, and a sandbox binds %v", shared, bound)
 	}
 	if bound[working] != sandbox.WorkingPath {
-		t.Fatalf("krewe where says the working directory is %q, and a sandbox binds %v", working, bound)
+		t.Fatalf("the listing says the working directory is %q, and a sandbox binds %v", working, bound)
 	}
 }
 
 // A file put in by hand is in the session's directory, which is the whole sentence this serves. The
 // path is followed rather than rebuilt, so a command that printed a plausible path fails here.
+//
+// It comes back through the copy verb, which is what replaced the word that used to print a session's
+// file. A capability removed and not replaced is the failure this end of the test guards.
 func TestAFilePutInTheDirectoryIsInTheSessionsOwnWork(t *testing.T) {
 	client, held, _ := aSystemOnDisk(t)
 	mustRun(t, client, "workspace", "create", "acme")
 	mustRun(t, client, "project", "create", "house-bills")
 	handle := aSessionNothingHasRunIn(t, held, "house-bills")
 
-	path := firstLineOf(mustRun(t, client, "where", "acme/house-bills/"+handle))
+	path := theVolumeAt(t, client, "acme/house-bills/"+handle)
 	if err := os.WriteFile(filepath.Join(path, "screenshot.png"), []byte("a picture"), 0o666); err != nil {
 		t.Fatalf("put a file in %q: %v", path, err)
 	}
 
-	// Read back through the command that reads a session's work, which finds its own directory rather
-	// than being told this one.
-	said := mustRun(t, client, "read", handle, "screenshot.png")
-	if said != "a picture" {
-		t.Fatalf("the session's work reads %q, want the file that was put in by hand", said)
+	// Read back through the verb, which resolves the address itself rather than being told this path.
+	back := filepath.Join(t.TempDir(), "screenshot.png")
+	mustRun(t, client, "volume", "cp", "krewe://acme/house-bills/"+handle+"/screenshot.png", back)
+	body, err := os.ReadFile(back)
+	if err != nil {
+		t.Fatalf("read what came back: %v", err)
+	}
+	if string(body) != "a picture" {
+		t.Fatalf("the session's work reads %q, want the file that was put in by hand", body)
 	}
 }
 
 // An address that is not there says what is, because the next move is to type one of them.
-func TestWhereOnAnAddressThatDoesNotExistSaysWhatThereIs(t *testing.T) {
+func TestAnAddressThatDoesNotExistSaysWhatThereIs(t *testing.T) {
 	client, _, _ := aSystemOnDisk(t)
 	mustRun(t, client, "workspace", "create", "acme")
 	var out bytes.Buffer
 
-	err := run(context.Background(), client, []string{"where", "nowhere"}, &out, "")
+	err := run(context.Background(), client, []string{"volume", "list", "nowhere"}, &out, "")
 
 	if err == nil {
 		t.Fatalf("an address that does not exist answered with %q", out.String())
@@ -155,7 +160,7 @@ func TestWhereOnAnAddressThatDoesNotExistSaysWhatThereIs(t *testing.T) {
 // A session in the wrong project is refused, at the command and again at the call behind it. A path
 // assembled from what was typed would name a directory nothing mounts, and somebody would leave a
 // file in it and wait for a session that never sees it.
-func TestWhereRefusesASessionThatIsNotInThatProject(t *testing.T) {
+func TestASessionThatIsNotInThatProjectIsRefused(t *testing.T) {
 	client, held, _ := aSystemOnDisk(t)
 	mustRun(t, client, "workspace", "create", "acme")
 	mustRun(t, client, "project", "create", "house-bills")
@@ -163,7 +168,7 @@ func TestWhereRefusesASessionThatIsNotInThatProject(t *testing.T) {
 	handle := aSessionNothingHasRunIn(t, held, "house-bills")
 	var out bytes.Buffer
 
-	err := run(context.Background(), client, []string{"where", "acme/holidays/" + handle}, &out, "")
+	err := run(context.Background(), client, []string{"volume", "list", "acme/holidays/" + handle}, &out, "")
 	if err == nil {
 		t.Fatalf("a session in another project answered with %q", out.String())
 	}
@@ -191,17 +196,17 @@ func TestWhereRefusesASessionThatIsNotInThatProject(t *testing.T) {
 
 // The system's own directory is where this system keeps its credentials, so the one word that would
 // name it is refused rather than answered.
-func TestWhereRefusesTheSystemsOwnDirectory(t *testing.T) {
+func TestTheSystemsOwnDirectoryIsRefused(t *testing.T) {
 	client, _, _ := aSystemOnDisk(t)
 	mustRun(t, client, "workspace", "create", "acme")
 	var out bytes.Buffer
 
-	err := run(context.Background(), client, []string{"where", "system"}, &out, "")
+	err := run(context.Background(), client, []string{"volume", "list", "system"}, &out, "")
 
 	if err == nil {
-		t.Fatalf("krewe where system answered with %q", out.String())
+		t.Fatalf("the system's own directory answered with %q", out.String())
 	}
-	if !strings.Contains(err.Error(), "credentials") {
+	if !strings.Contains(err.Error(), "the tokens and the sealing key") {
 		t.Fatalf("the refusal is %q, want it to say plainly what is in there", err)
 	}
 	if strings.Contains(out.String(), "token") || strings.Contains(err.Error(), ".token") {
@@ -209,13 +214,13 @@ func TestWhereRefusesTheSystemsOwnDirectory(t *testing.T) {
 	}
 }
 
-// The path is on its own line with nothing beside it, because cd "$(krewe where acme)" is the shape
-// this gets typed in. Anything sharing that line breaks every use of it.
+// The path is on its own line with nothing beside it, because cd "$(krewe volume list acme)" is the
+// shape this gets typed in. Anything sharing that line breaks every use of it.
 func TestThePathIsAloneOnTheFirstLine(t *testing.T) {
 	client, _, dir := aSystemOnDisk(t)
 	mustRun(t, client, "workspace", "create", "acme")
 
-	said := mustRun(t, client, "where", "acme")
+	said := mustRun(t, client, "volume", "list", "acme")
 
 	first := firstLineOf(said)
 	if strings.ContainsAny(first, " \t") {
@@ -224,15 +229,14 @@ func TestThePathIsAloneOnTheFirstLine(t *testing.T) {
 	if !strings.HasPrefix(first, dir) {
 		t.Fatalf("the first line is %q, want a path under the data directory %q", first, dir)
 	}
-	if len(strings.Split(strings.TrimSpace(said), "\n")) != 2 {
-		t.Fatalf("the answer is %d lines, want the path and one sentence:\n%s",
-			len(strings.Split(strings.TrimSpace(said), "\n")), said)
-	}
 }
 
 // The path is the machine's, not the control plane's own view of it. Those differ the moment the
 // control plane runs in a container, and the one that is any use to a person is the machine's.
-func TestWhereAnswersWithTheMachinesPathNotItsOwn(t *testing.T) {
+//
+// It asks the call rather than the listing, because the two paths differ only where the control plane
+// cannot open the machine's one, and a listing reads the directory it names.
+func TestTheAnswerIsTheMachinesPathNotTheControlPlanesOwn(t *testing.T) {
 	held := store.NewMemory()
 	client := testClientWith(t, controlplane.Config{
 		Store: held, Runner: &model.FakeRunner{Reply: "ok"},
@@ -240,39 +244,32 @@ func TestWhereAnswersWithTheMachinesPathNotItsOwn(t *testing.T) {
 		Storage: sandbox.Storage{Dir: t.TempDir(), Host: "/var/lib/krewe"},
 	})
 	mustRun(t, client, "workspace", "create", "acme")
-
-	said := mustRun(t, client, "where", "acme")
-
-	if !strings.HasPrefix(firstLineOf(said), "/var/lib/krewe/workspaces/") {
-		t.Fatalf("krewe where printed %q, want the path as the machine running the sandboxes sees it",
-			firstLineOf(said))
+	workspaces, err := held.ListWorkspaces(context.Background())
+	if err != nil || len(workspaces) != 1 {
+		t.Fatalf("ListWorkspaces: %v, %d workspaces", err, len(workspaces))
 	}
-}
 
-// With no address it answers for where you are standing, the way every other command that takes one
-// does. Standing in a project is standing in that project own folder, which is where a file for it
-// goes. It used to answer with the workspace shared folder, which is the directory every project in
-// the workspace shares.
-func TestWhereWithNoAddressAnswersForWhereYouAreStanding(t *testing.T) {
-	client, _, _ := aSystemOnDisk(t)
-	mustRun(t, client, "workspace", "create", "acme")
-	mustRun(t, client, "project", "create", "house-bills")
+	found, err := client.LocateDirectory(context.Background(), &quaycrewv1.LocateDirectoryRequest{
+		Workspace: workspaces[0].GetId(),
+	})
+	if err != nil {
+		t.Fatalf("LocateDirectory: %v", err)
+	}
 
-	said := mustRun(t, client, "where")
-
-	if !strings.Contains(said, "the house-bills folder of acme") {
-		t.Fatalf("standing in acme/house-bills, krewe where says:\n%s", said)
+	if !strings.HasPrefix(found.GetHost(), "/var/lib/krewe/workspaces/") {
+		t.Fatalf("the call answered %q, want the path as the machine running the sandboxes sees it",
+			found.GetHost())
 	}
 }
 
 // A system that keeps nothing on disk says so, rather than printing a path into a container that is
 // about to be thrown away.
-func TestWhereOnASystemThatKeepsNothingSaysSo(t *testing.T) {
+func TestASystemThatKeepsNothingSaysSo(t *testing.T) {
 	client := testClient(t)
 	mustRun(t, client, "workspace", "create", "acme")
 	var out bytes.Buffer
 
-	err := run(context.Background(), client, []string{"where", "acme"}, &out, "")
+	err := run(context.Background(), client, []string{"volume", "list", "acme"}, &out, "")
 
 	if err == nil {
 		t.Fatalf("a system with no data directory printed %q", out.String())
@@ -294,7 +291,7 @@ func TestTheListingsSayHowToReachADirectory(t *testing.T) {
 		{"workspace", "list"}, {"project", "list"}, {"sessions"},
 	} {
 		said := mustRun(t, client, listing...)
-		if !strings.Contains(said, "krewe where") {
+		if !strings.Contains(said, "krewe volume list") {
 			t.Fatalf("krewe %s does not say how to reach a directory:\n%s",
 				strings.Join(listing, " "), said)
 		}
@@ -342,35 +339,29 @@ func firstLineOf(said string) string {
 }
 
 // A project address is a folder inside the shared one, which is where the file actually has to land.
-// Before this it answered with the shared folder itself, so `krewe where acme` and
-// `krewe where acme/house-bills` named one directory between them and the address said nothing.
-func TestWhereOnAProjectNamesAFolderInsideTheSharedOne(t *testing.T) {
+// Before this it answered with the shared folder itself, so an address naming a workspace and an
+// address naming a project in it named one directory between them, and the address said nothing.
+func TestAProjectAddressNamesAFolderInsideTheSharedOne(t *testing.T) {
 	client, _, _ := aSystemOnDisk(t)
 	mustRun(t, client, "workspace", "create", "acme")
 	mustRun(t, client, "project", "create", "house-bills")
 
-	shared := firstLineOf(mustRun(t, client, "where", "acme"))
-	said := mustRun(t, client, "where", "acme/house-bills")
+	shared := theVolumeAt(t, client, "acme")
+	said := mustRun(t, client, "volume", "list", "acme/house-bills")
 	project := firstLineOf(said)
 
 	if project == shared {
 		t.Fatalf("the project address answers with the shared folder %q", shared)
 	}
 	if want := filepath.Join(shared, "house-bills"); project != want {
-		t.Fatalf("krewe where says the project folder is %q, want %q", project, want)
+		t.Fatalf("the listing says the project folder is %q, want %q", project, want)
 	}
 	info, err := os.Stat(project)
 	if err != nil {
-		t.Fatalf("krewe where printed %q, which is not on disk: %v", project, err)
+		t.Fatalf("the listing printed %q, which is not on disk: %v", project, err)
 	}
 	if !info.IsDir() {
-		t.Fatalf("krewe where printed %q, which is not a directory", project)
-	}
-	if !strings.Contains(said, sandbox.SharedPath+"/house-bills") {
-		t.Fatalf("the answer does not say a session reads it at %s/house-bills:\n%s", sandbox.SharedPath, said)
-	}
-	if !strings.Contains(said, "the house-bills folder of acme") {
-		t.Fatalf("the answer does not say which folder this is:\n%s", said)
+		t.Fatalf("the listing printed %q, which is not a directory", project)
 	}
 }
 
@@ -388,7 +379,7 @@ func TestAFilePutInTheProjectFolderIsWhereTheSessionWillLookForIt(t *testing.T) 
 	mustRun(t, client, "exec", "acme/house-bills", "sort the listing by the clock it shows")
 	session := theOnlySession(t, client)
 
-	project := firstLineOf(mustRun(t, client, "where", "acme/house-bills"))
+	project := theVolumeAt(t, client, "acme/house-bills")
 	if err := os.WriteFile(filepath.Join(project, "screenshot.png"), []byte("a picture"), 0o666); err != nil {
 		t.Fatalf("put a file in %q: %v", project, err)
 	}
@@ -481,7 +472,7 @@ func TestAProjectCannotBeCalledAFolderTheSystemAlreadyWrites(t *testing.T) {
 //
 // The answer is the tree rather than the checkout inside it. A file dropped into the checkout is a
 // file in somebody's git status, and the whole point of the address is somewhere to put a file.
-func TestWhereOnASessionThatTookAWorkingTreeNamesTheTreeAndNotItsOwnDirectory(t *testing.T) {
+func TestASessionThatTookAWorkingTreeNamesTheTreeAndNotItsOwnDirectory(t *testing.T) {
 	dir := t.TempDir()
 	storage := sandbox.Storage{Dir: dir, Host: dir}
 	held := store.NewMemory()
@@ -495,34 +486,37 @@ func TestWhereOnASessionThatTookAWorkingTreeNamesTheTreeAndNotItsOwnDirectory(t 
 	session := theOnlySession(t, client)
 	tree := aWorkingTreeTaken(t, storage, session)
 
-	said := mustRun(t, client, "where", "acme/house-bills/"+handle)
+	said := mustRun(t, client, "volume", "list", "acme/house-bills/"+handle)
 
 	if firstLineOf(said) != tree {
-		t.Fatalf("krewe where names %q, want the working tree at %q", firstLineOf(said), tree)
+		t.Fatalf("the listing names %q, want the working tree at %q", firstLineOf(said), tree)
 	}
-	if !strings.Contains(said, "working tree") {
-		t.Fatalf("the answer does not say which root it read:\n%s", said)
-	}
-	if !strings.Contains(said, sandbox.WorktreesPath+"/"+session.GetId()) {
-		t.Fatalf("the answer does not say where the session sees it:\n%s", said)
+	// And the listing under it is the checkout, which is what says the tree was read rather than the
+	// session's own directory, since that one is empty.
+	if !strings.Contains(said, "quay-krewe/") {
+		t.Fatalf("the listing does not hold the checkout:\n%s", said)
 	}
 }
 
 // The other shape, kept beside the first one so the answer for a session that cloned into its own
 // directory is proved rather than assumed to be unchanged.
-func TestWhereOnASessionThatTookNoWorkingTreeStillNamesItsOwnDirectory(t *testing.T) {
-	client, held, _ := aSystemOnDisk(t)
+func TestASessionThatTookNoWorkingTreeStillNamesItsOwnDirectory(t *testing.T) {
+	client, held, dir := aSystemOnDisk(t)
 	mustRun(t, client, "workspace", "create", "acme")
 	mustRun(t, client, "project", "create", "house-bills")
 	handle := aSessionNothingHasRunIn(t, held, "house-bills")
 
-	said := mustRun(t, client, "where", "acme/house-bills/"+handle)
+	said := mustRun(t, client, "volume", "list", "acme/house-bills/"+handle)
 
-	if !strings.Contains(said, "working directory of session") {
-		t.Fatalf("the answer does not name the session's own directory:\n%s", said)
+	session := theOnlySession(t, client)
+	own, keeps := sandbox.Storage{Dir: dir, Host: dir}.WorkingDir(sandbox.Config{
+		ID: session.GetId(), Workspace: session.GetWorkspace(), Project: session.GetProject(),
+	})
+	if !keeps {
+		t.Fatal("this storage keeps no working directory, so there is none to name")
 	}
-	if strings.Contains(said, "working tree") {
-		t.Fatalf("the answer names a working tree the session never took:\n%s", said)
+	if firstLineOf(said) != own {
+		t.Fatalf("the listing names %q, want the session's own directory %q", firstLineOf(said), own)
 	}
 }
 

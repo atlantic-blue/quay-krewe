@@ -1,7 +1,7 @@
 Feature: A file is copied out of a volume
 
   A session writes its log into the volume, and until now the only way that file came back was
-  `krewe read`, which holds a file to one mebibyte and answers for a session and for nothing else. A
+  `krewe read`, which held a file to one mebibyte and answered for a session and for nothing else. A
   file bigger than that sat in a directory named in generated identifiers.
 
   `krewe volume cp krewe://itv/vast/Explore-logs.txt .` brings it back. It is the same verb as the
