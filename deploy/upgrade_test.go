@@ -28,7 +28,9 @@ func TestUpgradeBuildsEverythingASessionRuns(t *testing.T) {
 	if !strings.Contains(recipe, "$(MAKE) --no-print-directory rebuild") {
 		t.Errorf("make upgrade never runs rebuild, so it builds none of what a session runs:\n%s", recipe)
 	}
-	if !strings.Contains(recipe, "up --build") {
+	// Through a sub make, because the stack is stamped with VERSION and this recipe moves HEAD before
+	// it gets there. See TestUpgradeNeverStampsTheBuildFromBeforeTheMerge.
+	if !strings.Contains(recipe, "$(MAKE) --no-print-directory up") {
 		t.Errorf("make upgrade never rebuilds the stack:\n%s", recipe)
 	}
 

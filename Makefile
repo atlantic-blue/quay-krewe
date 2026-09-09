@@ -180,6 +180,10 @@ env-check:
 	fi
 
 ## upgrade: fetch the latest, rebuild the tool and the stack, and restart it
+#
+# Every step runs as a sub make, and the stack is one of them. Make expands VERSION when it reads
+# this file, and this recipe moves HEAD, so a value this recipe expands itself is the commit from
+# before the merge. A sub make reads the file again and computes the commit the checkout now holds.
 upgrade:
 	@branch="$$(git rev-parse --abbrev-ref HEAD)"; \
 	if [ "$$branch" != "$(UPGRADE_BRANCH)" ]; then \
@@ -221,7 +225,7 @@ upgrade:
 		| grep -E '$(SANDBOX_PATTERN)' \
 		| xargs -r docker rm -f >/dev/null 2>&1 || true
 	@echo "rebuilding and restarting the stack. Secrets are held in memory, so set the model token again afterwards."
-	QC_VERSION=$(VERSION) $(COMPOSE) up --build -d
+	@$(MAKE) --no-print-directory up
 
 ## up-observability: retired alias for up, which now starts everything
 #
