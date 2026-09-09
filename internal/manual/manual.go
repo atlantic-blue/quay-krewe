@@ -105,8 +105,10 @@ commands:
                                           with its shared folder, which every session in it reads. A
                                           project address answers with a folder inside that one,
                                           named after the project. A session address answers with
-                                          that session's own working directory. The path is on the
-                                          first line and nothing shares it, so cd "$(krewe where me)"
+                                          where that session's work is: the working tree it took, or
+                                          its own working directory where it took none, and the
+                                          answer says which. The path is on the first line and
+                                          nothing shares it, so cd "$(krewe where me)"
                                           works. Under it is where a session sees the same
                                           directory, which is what to call the file once it is in
                                           there. It starts nothing and reads no container, so it

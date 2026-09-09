@@ -151,7 +151,7 @@ func (SecretProjection) EnumDescriptor() ([]byte, []int) {
 	return file_quaycrew_v1_controlplane_proto_rawDescGZIP(), []int{1}
 }
 
-// DirectoryKind says which of the system's two directories an answer names.
+// DirectoryKind says which of the system's directories an answer names.
 type DirectoryKind int32
 
 const (
@@ -163,6 +163,9 @@ const (
 	// A project's own folder inside the workspace's shared folder, named after the project. Every
 	// session in the workspace reads it, and the sessions of that project are the ones told to.
 	DirectoryKind_DIRECTORY_KIND_PROJECT DirectoryKind = 3
+	// The working tree one session took, in its workspace's volume and under its own identifier. A
+	// session that took one works there, so its own directory is empty and this is where the work is.
+	DirectoryKind_DIRECTORY_KIND_WORKING_TREE DirectoryKind = 4
 )
 
 // Enum value maps for DirectoryKind.
@@ -172,12 +175,14 @@ var (
 		1: "DIRECTORY_KIND_SHARED",
 		2: "DIRECTORY_KIND_WORKING",
 		3: "DIRECTORY_KIND_PROJECT",
+		4: "DIRECTORY_KIND_WORKING_TREE",
 	}
 	DirectoryKind_value = map[string]int32{
-		"DIRECTORY_KIND_UNSPECIFIED": 0,
-		"DIRECTORY_KIND_SHARED":      1,
-		"DIRECTORY_KIND_WORKING":     2,
-		"DIRECTORY_KIND_PROJECT":     3,
+		"DIRECTORY_KIND_UNSPECIFIED":  0,
+		"DIRECTORY_KIND_SHARED":       1,
+		"DIRECTORY_KIND_WORKING":      2,
+		"DIRECTORY_KIND_PROJECT":      3,
+		"DIRECTORY_KIND_WORKING_TREE": 4,
 	}
 )
 
@@ -5690,9 +5695,9 @@ type LocateDirectoryRequest struct {
 	// project is the project id. With no session it is the answer itself: a project's own folder
 	// inside the workspace's shared folder. With one it narrows the session to the project holding it.
 	Project string `protobuf:"bytes,2,opt,name=project,proto3" json:"project,omitempty"`
-	// session is the session handle. With one, the answer is that session's own working directory;
-	// without one, it is the project's folder, or the workspace's shared folder where no project is
-	// named either.
+	// session is the session handle. With one, the answer is where that session's work is: the working
+	// tree it took, or its own working directory where it took none. Without one, the answer is the
+	// project's folder, or the workspace's shared folder where no project is named either.
 	Session       string `protobuf:"bytes,3,opt,name=session,proto3" json:"session,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -5757,7 +5762,7 @@ type LocateDirectoryResponse struct {
 	// sandbox is where the same directory appears inside a container, which is what a session calls the
 	// file once it is in there.
 	Sandbox string `protobuf:"bytes,2,opt,name=sandbox,proto3" json:"sandbox,omitempty"`
-	// kind says which of the three directories this is.
+	// kind says which directory this is, which is what lets an answer name the root it read.
 	Kind          DirectoryKind `protobuf:"varint,3,opt,name=kind,proto3,enum=quaycrew.v1.DirectoryKind" json:"kind,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -8908,12 +8913,13 @@ const file_quaycrew_v1_controlplane_proto_rawDesc = "" +
 	"\x10SecretProjection\x12!\n" +
 	"\x1dSECRET_PROJECTION_UNSPECIFIED\x10\x00\x12\x19\n" +
 	"\x15SECRET_PROJECTION_ENV\x10\x01\x12\x1a\n" +
-	"\x16SECRET_PROJECTION_FILE\x10\x02*\x82\x01\n" +
+	"\x16SECRET_PROJECTION_FILE\x10\x02*\xa3\x01\n" +
 	"\rDirectoryKind\x12\x1e\n" +
 	"\x1aDIRECTORY_KIND_UNSPECIFIED\x10\x00\x12\x19\n" +
 	"\x15DIRECTORY_KIND_SHARED\x10\x01\x12\x1a\n" +
 	"\x16DIRECTORY_KIND_WORKING\x10\x02\x12\x1a\n" +
-	"\x16DIRECTORY_KIND_PROJECT\x10\x032\xda&\n" +
+	"\x16DIRECTORY_KIND_PROJECT\x10\x03\x12\x1f\n" +
+	"\x1bDIRECTORY_KIND_WORKING_TREE\x10\x042\xda&\n" +
 	"\x13ControlPlaneService\x12\\\n" +
 	"\x0fCreateWorkspace\x12#.quaycrew.v1.CreateWorkspaceRequest\x1a$.quaycrew.v1.CreateWorkspaceResponse\x12S\n" +
 	"\fGetWorkspace\x12 .quaycrew.v1.GetWorkspaceRequest\x1a!.quaycrew.v1.GetWorkspaceResponse\x12Y\n" +

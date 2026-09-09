@@ -1388,7 +1388,7 @@ func runSessions(ctx context.Context, client quaycrewv1.ControlPlaneServiceClien
 	}
 	// Said out loud, because a listing narrowed to where you are standing looks exactly like a system
 	// with fewer sessions in it, and the operator has no way to tell the two apart.
-	locations := "the working directory of one: krewe where <workspace>/<project>/<session>"
+	locations := "where the work of one is: krewe where <workspace>/<project>/<session>"
 	where := systemWide("sessions").locatable(locations)
 	if !path.IsZero() {
 		where = narrowedTo("sessions", path.String(),

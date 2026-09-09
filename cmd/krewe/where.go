@@ -73,6 +73,12 @@ func whatItIs(kind quaycrewv1.DirectoryKind, address workspace.Path, mount strin
 	case quaycrewv1.DirectoryKind_DIRECTORY_KIND_PROJECT:
 		return fmt.Sprintf("the %s folder of %s. Every session in that workspace reads this directory at %s",
 			path.Base(mount), address.Workspace, mount)
+	// The two roots a session's work can be in are named apart. A person who took the working tree
+	// answer for the session's own directory would look for the checkout in the wrong place, and the
+	// two paths are near enough on the screen that only the sentence tells them apart.
+	case quaycrewv1.DirectoryKind_DIRECTORY_KIND_WORKING_TREE:
+		return fmt.Sprintf("the working tree of session %s. That session reads this directory at %s",
+			address.Session, mount)
 	default:
 		return fmt.Sprintf("the working directory of session %s. That session reads this directory at %s",
 			address.Session, mount)

@@ -26,6 +26,9 @@ type Place struct {
 	// Sandbox is where the same directory appears inside the session's container, which is what a
 	// command run in there is pointed at.
 	Sandbox string
+	// Kind is which of the two roots this place is under, so an answer can say which one it read.
+	// A directory inside a place carries the kind of the place it is in.
+	Kind DirectoryKind
 }
 
 // under is this place's child, in all three views at once, so the three cannot drift apart.
@@ -34,6 +37,7 @@ func (p Place) under(name string) Place {
 		Dir:     filepath.Join(p.Dir, name),
 		Host:    path.Join(p.Host, name),
 		Sandbox: path.Join(p.Sandbox, name),
+		Kind:    p.Kind,
 	}
 }
 
@@ -60,6 +64,7 @@ func (s Storage) WorkPlaces(cfg Config) []Place {
 		Dir:     dir,
 		Host:    path.Join(host, "workspaces", cfg.Workspace, "projects", cfg.Project, "sessions", cfg.ID, "workspace"),
 		Sandbox: WorkingPath,
+		Kind:    KindWorking,
 	}}
 	// The working trees this session took in the workspace's volume, named after the session the way
 	// the git skill names them. Second, because a session that cloned into its own directory has
@@ -69,6 +74,7 @@ func (s Storage) WorkPlaces(cfg Config) []Place {
 			Dir:     filepath.Join(volume, "worktrees", cfg.ID),
 			Host:    path.Join(host, "workspaces", cfg.Workspace, "volume", "worktrees", cfg.ID),
 			Sandbox: path.Join(WorktreesPath, cfg.ID),
+			Kind:    KindWorkingTree,
 		})
 	}
 	return places
@@ -85,21 +91,51 @@ func (s Storage) WorkPlaces(cfg Config) []Place {
 // followed the brief.
 func Repository(places []Place) (Place, bool) {
 	for _, place := range places {
-		if isRepository(place.Dir) {
-			return place, true
+		if found, held := repositoryIn(place); held {
+			return found, true
 		}
-		entries, err := os.ReadDir(place.Dir)
-		if err != nil {
+	}
+	return Place{}, false
+}
+
+// WorkingTree is the working tree this session took, and false where it took none.
+//
+// It answers the place rather than the repository inside it, which is the difference between this and
+// Repository. An address is a directory somebody copies a file into, and a file dropped inside the
+// checkout is a file in somebody's git status.
+//
+// A tree that holds no repository does not count. The directory is made by the clone, so an empty one
+// is a clone that did not finish, and sending a person there instead of to the session's own
+// directory would hide whatever the session did write.
+func WorkingTree(places []Place) (Place, bool) {
+	for _, place := range places {
+		if place.Kind != KindWorkingTree {
 			continue
 		}
-		sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
-		for _, entry := range entries {
-			if !entry.IsDir() {
-				continue
-			}
-			if inside := place.under(entry.Name()); isRepository(inside.Dir) {
-				return inside, true
-			}
+		if _, held := repositoryIn(place); held {
+			return place, true
+		}
+	}
+	return Place{}, false
+}
+
+// repositoryIn is the repository this place holds: the place itself, or one of the directories
+// directly inside it, whichever holds a `.git`.
+func repositoryIn(place Place) (Place, bool) {
+	if isRepository(place.Dir) {
+		return place, true
+	}
+	entries, err := os.ReadDir(place.Dir)
+	if err != nil {
+		return Place{}, false
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		if inside := place.under(entry.Name()); isRepository(inside.Dir) {
+			return inside, true
 		}
 	}
 	return Place{}, false
