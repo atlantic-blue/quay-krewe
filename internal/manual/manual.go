@@ -126,6 +126,12 @@ commands:
                                           the one path a session reads the file at, so that path can
                                           go straight into what you ask the session. A name that is
                                           already there is refused unless you say --replace
+  volume cp <address> <file> [--replace]  bring a file out of a volume onto this machine, which is
+                                          how a log a session wrote comes back whatever its size. A
+                                          destination that is a directory keeps the file's own name.
+                                          It prints the one path on this machine the file landed at.
+                                          A name that is already there is refused unless you say
+                                          --replace
   answer <session> [--all]                 what a session came back with, and nothing else, so a
                                           caller can pipe it. The most recent answer, or with --all
                                           every one of them, oldest first
