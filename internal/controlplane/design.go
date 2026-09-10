@@ -1537,7 +1537,8 @@ func takeText(step *quaycrewv1.Step, inThePath int, project string, hasContracts
 	}
 	blocks = append(blocks,
 		whereToRead(hasContracts),
-		"Build this step only. Do not take work from another step.")
+		"Build this step only. Do not take work from another step.",
+		takeDelivery)
 	return strings.Join(blocks, "\n\n") + "\n"
 }
 
@@ -1545,6 +1546,21 @@ func takeText(step *quaycrewv1.Step, inThePath int, project string, hasContracts
 // contracts it builds", because there the step is one of many on a page. The session is given one
 // step, so the text says which step these contracts belong to.
 const takeContracts = "The contracts this step builds"
+
+// takeDelivery is the last block of the take text: what to do with the work once it is built.
+//
+// Without it a session builds the step and stops, because nothing else in the text says a pull
+// request is the deliverable, and the words had to be written into each dispatch by hand.
+//
+// It names the git and github skills rather than restating them. Both are already in the session's
+// context, and a second copy of a rule is a copy that can disagree with the first. Opening a pull
+// request is the session's, ending it is the operator's, so the text refuses the merge here too.
+const takeDelivery = "Deliver this step as one pull request. The git and github skills say how a " +
+	"working tree, a branch, a commit and a pull request are done here." +
+	"\n\nWatch what proves this step fail before you make it pass, because a test you did not see " +
+	"fail proves nothing. Get every check green before you report, and fix a red check rather than " +
+	"explaining it." +
+	"\n\nDo not merge it. Report the address of the pull request."
 
 // whereToRead names the files the session opens before it starts.
 //
