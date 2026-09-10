@@ -68,6 +68,9 @@ func runStepTake(ctx context.Context, client quaycrewv1.ControlPlaneServiceClien
 	fmt.Fprintf(out, "(session %s, handle %s)\n\n",
 		resp.GetSession().GetId(), resp.GetSession().GetHandle())
 	fmt.Fprintf(out, "it was asked to:\n\n%s\n", strings.TrimRight(resp.GetText(), "\n"))
+	// What the session does next, said once here, because the take text above is long and an
+	// operator who reads only the first lines of it still has to know that no code is coming yet.
+	fmt.Fprint(out, "\nit will restate the step and build nothing\n")
 	sayWarnings(out, resp.GetWarnings())
 	// Both numbers are the control plane's, read off the response. Counting the steps here would put
 	// a second count of one thing in a second place, and the two would disagree the moment a take

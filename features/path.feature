@@ -47,6 +47,13 @@ Feature: A project holds a numbered path of steps
   carries on with the rest of its path, and finishing the step that holds the file lets the refused
   take through with nothing re-planned.
 
+  A session that takes a step restates it before it builds anything. The take text tells it to write
+  no code, and to write what it understood into its own memory file under one mark, in six named
+  parts. The last part is a percentage, so the operator sees how sure the session is. The next exec
+  reads that section into the step, and every exec after it renders the text back out of the store.
+  The text is unapproved the moment it is written, and a second restatement is unapproved too: the
+  operator agrees to one text and never to the step.
+
   There is no way to empty a path. A document with no step heading is refused, so a wrong file path
   cannot take somebody's path away.
 
@@ -1605,7 +1612,9 @@ Feature: A project holds a numbered path of steps
     When the operator takes step 5
     Then the step text carries "Step 5 of 3 on the path for house-bills."
 
-  Scenario: The text tells the session to build this step only
+  # The last paragraph is always there, whole. It is what makes the session restate the step rather
+  # than build it, and the mark it names is the mark the read back looks for.
+  Scenario: The text tells the session to write no code and to restate the step
     Given the project's design is "# Bills\n"
     And the operator approved the project's design
     And the project's path is:
@@ -1614,7 +1623,11 @@ Feature: A project holds a numbered path of steps
       """
     When the operator takes step 1
     Then the step text carries "The design is in .krewe/design.md. The whole path is in .krewe/path.md. Read both."
-    And the step text carries "Build this step only. Do not take work from another step."
+    And the step text carries "Write no code. Change no file in the repository."
+    And the step text carries "<!-- quay:restatement -->"
+    And the step text carries "what this step changes, what it will not touch, what you assumed, what you do not know,"
+    And the step text carries "the scenario you will write and the value it describes, how sure you are and what lowers it."
+    And the step text carries "Then stop and say you are ready."
 
   # A label with nothing under it is text the model has to read for nothing.
   Scenario: A step with no proof produces text with no proof label in it
@@ -1679,6 +1692,118 @@ Feature: A project holds a numbered path of steps
     And the step text does not carry ".krewe/contracts.md"
 
   # One step is one session's. Two takes that both passed would put two sessions on one change.
+  # What the session understood, before any code exists. It writes the six parts under the
+  # restatement mark in its own memory file, and the next exec reads that section into the step. The
+  # text travels through a file because a model writes files and cannot make a call.
+
+  Scenario: A session that writes the mark into its memory file has that text read back into the step
+    Given the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+      """
+    When the operator takes step 1
+    And the session writes its restatement:
+      """
+      What this step changes
+      The store holds a project's brief.
+
+      How sure I am
+      90 per cent.
+      """
+    And the operator dispatches "and again" to the same session
+    Then step 1 reads back the restatement "The store holds a project's brief."
+    And step 1 reads back the restatement "90 per cent."
+    And nobody has approved step 1's restatement
+
+  # Text under a mark this build does not know is swept into the innermost level and stored as though
+  # the operator had typed it. Swept there, the restatement is context from then on, and the next
+  # render writes it underneath itself.
+  Scenario: Text under the mark is not swept into the session's own context
+    Given the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+      """
+    When the operator takes step 1
+    And the session writes its restatement:
+      """
+      What this step changes
+      The store holds a project's brief.
+      """
+    And the operator dispatches "and again" to the same session
+    Then step 1 reads back the restatement "The store holds a project's brief."
+    And the session's context does not carry "The store holds a project's brief."
+
+  # The whole inner file is written from the store on every exec, so a section it does not render is
+  # a section that disappears, and the session would be asked to restate a step it had already
+  # restated.
+  Scenario: A second exec of the same session still carries the restatement in its memory file
+    Given the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+      """
+    When the operator takes step 1
+    And the session writes its restatement:
+      """
+      What this step changes
+      The store holds a project's brief.
+      """
+    And the operator dispatches "and again" to the same session
+    And the operator dispatches "once more" to the same session
+    Then the session's memory file carries "The store holds a project's brief."
+
+  # Approval is a statement about one text and never about the step, so a text nobody has read cannot
+  # inherit the word spoken over the text before it.
+  Scenario: A second, different restatement clears the approval
+    Given the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+      """
+    When the operator takes step 1
+    And the session writes its restatement:
+      """
+      What this step changes
+      The first reading.
+      """
+    And the operator dispatches "and again" to the same session
+    And the session writes its restatement:
+      """
+      What this step changes
+      The second reading.
+      """
+    And the operator dispatches "once more" to the same session
+    Then step 1 reads back the restatement "The second reading."
+    And step 1 does not read back the restatement "The first reading."
+    And nobody has approved step 1's restatement
+
+  # Once the step is closed the work is over, and the text would otherwise be read again on every
+  # exec of a session that has moved on to something else.
+  Scenario: Marking the step done removes the section from the next exec's memory file
+    Given the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+      """
+    When the operator takes step 1
+    And the session writes its restatement:
+      """
+      What this step changes
+      The store holds a project's brief.
+      """
+    And the operator dispatches "and again" to the same session
+    And the operator finishes step 1 with "shipped as pull request 800"
+    And the operator dispatches "once more" to the same session
+    Then the session's memory file does not carry "The store holds a project's brief."
+    And step 1 reads back the restatement "The store holds a project's brief."
+
   Scenario: Taking a step somebody already holds is refused, naming the session
     Given the project's design is "# Bills\n"
     And the operator approved the project's design
@@ -2408,7 +2533,8 @@ Feature: A project holds a numbered path of steps
     When the caller takes step "1.1"
     Then standard output carries "step 1.1 of house-bills is taken: The store holds a project's brief"
     And standard output carries "Step 1 of 1 on the path for house-bills."
-    And standard output carries "Build this step only."
+    And standard output carries "Write no code. Change no file in the repository."
+    And standard output carries "it will restate the step and build nothing"
     And the command succeeds
 
   # A step is named as <feature>.<number>, so 2.3 is step 3 of feature 2 and nothing else.

@@ -279,7 +279,8 @@ func protectedSteps(held []*quaycrewv1.Step, incoming []Step) []ProtectedStep {
 }
 
 // keepTheRecord carries what the system owns from the step as it stands onto the step the document
-// declares: the state, the session that took it, the result, who closed it and the stamps.
+// declares: the state, the session that took it, the result, who closed it, the stamps and what the
+// session restated.
 //
 // The document is what a caller may set, and none of these are on it. A write that took them from
 // the document would let somebody declare work that never happened, and one that left them behind
@@ -291,6 +292,10 @@ func keepTheRecord(writing, held *quaycrewv1.Step) {
 	writing.ClosedBy = held.GetClosedBy()
 	writing.TakenAt = held.GetTakenAt()
 	writing.FinishedAt = held.GetFinishedAt()
+	writing.Restatement = held.GetRestatement()
+	writing.RestatedAt = held.GetRestatedAt()
+	writing.RestatementApproved = held.GetRestatementApproved()
+	writing.RestatementApprovedAt = held.GetRestatementApprovedAt()
 }
 
 // Step is what a caller may set about one step of a path.
@@ -652,6 +657,20 @@ type Store interface {
 	// The session and the take stamp are untouched, so the record still says who took the step. The
 	// step and the session are separate records, and nothing here reads or writes a session.
 	FinishStep(ctx context.Context, feature string, number int32, finish Finish) (*quaycrewv1.Step, error)
+
+	// SetRestatement records what the session wrote about a step before it built anything, and
+	// returns the step after the write. A feature that does not exist and a path that holds no step
+	// of that number are both ErrNotFound.
+	//
+	// The same write clears the approval and its stamp. Approval is a statement about one text, so a
+	// step whose restatement changed is a step nobody has agreed to yet.
+	//
+	// Writing the same text again is allowed, and it still clears the approval: the store cannot tell
+	// an unchanged text from a rewritten one that reads the same. The caller skips the call when the
+	// text did not change, which is where that saving belongs.
+	//
+	// No length refuses the text. A cap here would lose work that exists only in the call being made.
+	SetRestatement(ctx context.Context, feature string, number int32, text string) (*quaycrewv1.Step, error)
 
 	// ListFeatures returns a project's features in number order, or every project's when the
 	// identifier is empty, ordered by project and then by number. A project with no feature is an

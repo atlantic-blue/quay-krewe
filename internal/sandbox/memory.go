@@ -38,6 +38,24 @@ const SkillsScope = "skills"
 // under a mark the build does not know is swept into the innermost level rather than left alone.
 const DesignScope = "design"
 
+// RestatementScope is the mark the session writes its restatement of the step it holds under.
+//
+// A section like the design summary and deliberately not a level of context. The session writes it,
+// the control plane reads it back into the step, and every later exec renders it from the store, so
+// what the session understood is held in one place rather than in two that can disagree.
+//
+// It has to be named wherever a memory file is read back, for the reason SkillsScope gives: text
+// under a mark the build does not know is swept into the innermost level. Swept there, a restatement
+// is stored as though the operator had typed it and rendered again underneath itself.
+const RestatementScope = "restatement"
+
+// Mark is what one scope's section opens with, so anything that asks a model to write under a mark
+// names the same word the read back looks for. A text naming a mark of its own writes a section
+// nothing reads.
+func Mark(scope string) string {
+	return sectionOpen + scope + sectionClose
+}
+
 // Section is one level's contribution to a memory file.
 type Section struct {
 	// Scope names the level, for example "system".
@@ -75,7 +93,7 @@ func Marked(body string) bool {
 // build. What was swept is rendered state, not something somebody typed, so where it is found it is
 // dropped rather than kept.
 func WithoutSection(body, scope string) (string, bool) {
-	mark := sectionOpen + scope + sectionClose
+	mark := Mark(scope)
 	var out strings.Builder
 	dropping, found := false, false
 	for _, line := range strings.Split(body, "\n") {

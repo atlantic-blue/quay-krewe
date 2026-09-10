@@ -522,8 +522,12 @@ func (s *Server) syncContextExcept(ctx context.Context, session *quaycrewv1.Sess
 		// file, but a build that wrote it into the session's own file has been and gone, so the inner
 		// file's read back has to know the mark too. It goes first, never last: the last scope is where
 		// unmarked text belongs, and a note an agent appends is a note, not an index.
-		scopes := make([]string, 0, len(levels)+2)
-		scopes = append(scopes, sandbox.SkillsScope, sandbox.DesignScope)
+		//
+		// The design summary and the restatement are named for the same reason. The restatement is the
+		// one of the three the session itself writes, and reading it back into the step is what proves
+		// the session understood the step, so the read below picks it out of the same decomposition.
+		scopes := make([]string, 0, len(levels)+3)
+		scopes = append(scopes, sandbox.SkillsScope, sandbox.DesignScope, sandbox.RestatementScope)
 		for _, level := range levels {
 			scopes = append(scopes, string(level.scope))
 		}
@@ -552,6 +556,14 @@ func (s *Server) syncContextExcept(ctx context.Context, session *quaycrewv1.Sess
 					}
 				}
 				_ = s.store.SetContext(ctx, level.scope, level.owner, body)
+			}
+			// The restatement is the one mark the session writes for the system to read rather than
+			// for itself. It goes onto the step this session holds, and only from the inner file,
+			// which is the one the session is told to write into. Read from the outer file as well,
+			// an exec whose outer file carries no such section would answer with nothing and read as
+			// a session that had restated nothing.
+			if at == innerFile {
+				s.readRestatement(ctx, session, written[sandbox.RestatementScope])
 			}
 		}
 	}
@@ -598,6 +610,16 @@ func (s *Server) renderContext(ctx context.Context, session *quaycrewv1.Session)
 			s.renderContracts(ctx, session.GetProject(), dirs[at])
 			if summary := s.renderDesign(ctx, session, dirs[at], hasPath); summary != "" {
 				sections = append(sections, sandbox.Section{Scope: sandbox.DesignScope, Body: summary})
+			}
+			// What this session said it understood about the step it holds, from the store. The whole
+			// file is written from the store on every exec, so a section left unrendered is a section
+			// that disappears, and the session would then restate a step it had already restated.
+			//
+			// It sits above the levels rather than under them, so the last section in the file is
+			// still the session's own context, which is where a note appended to the end belongs.
+			if restated := s.renderRestatement(ctx, session); restated != "" {
+				sections = append(sections,
+					sandbox.Section{Scope: sandbox.RestatementScope, Body: restated})
 			}
 		}
 		for _, level := range levels {

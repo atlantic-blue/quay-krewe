@@ -1849,6 +1849,7 @@ func RunConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 	runDesignConformance(t, newDataset)
 	runPathConformance(t, newDataset)
 	runTakeConformance(t, newDataset)
+	runRestatementConformance(t, newDataset)
 	runFeatureConformance(t, newDataset)
 }
 
@@ -4071,6 +4072,141 @@ func runTakeConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 		}
 		if _, _, err := s.TakeStep(ctx, "no-such-feature", 1, "session-one"); !errors.Is(err, store.ErrNotFound) {
 			t.Fatalf("TakeStep on a missing feature answered %v, want ErrNotFound", err)
+		}
+	})
+}
+
+// What the session wrote about a step before it built anything. It arrives through the session's own
+// memory file rather than through a call, so the store's whole job is to keep it and to say that
+// nobody has agreed to it yet.
+func runRestatementConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
+	t.Helper()
+
+	// Line breaks and all: the six parts the session is asked for are a small document, and a store
+	// that trimmed or folded it would hand the operator something the session did not write.
+	t.Run("a restatement reads back whole, with its line breaks", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		feature := newFeature(t, s, newProject(t, s, "acme", "house-bills"), "the bills")
+		writePath(t, s, feature.GetId(), store.Step{Number: 1, Title: "the first"})
+
+		text := "What this step changes\nThe store holds a restatement.\n\nHow sure I am\n90 per cent."
+		written, err := s.SetRestatement(ctx, feature.GetId(), 1, text)
+		if err != nil {
+			t.Fatalf("SetRestatement: %v", err)
+		}
+		if written.GetRestatement() != text {
+			t.Errorf("the write answered with %q, want %q", written.GetRestatement(), text)
+		}
+		if written.GetRestatedAt() == nil {
+			t.Error("the step carries no moment, so nothing records when it was restated")
+		}
+		// Read again, because a write that answered well and stored nothing reads the same to its
+		// caller and to nobody else.
+		read, err := s.GetStep(ctx, feature.GetId(), 1)
+		if err != nil {
+			t.Fatalf("GetStep: %v", err)
+		}
+		if read.GetRestatement() != text {
+			t.Errorf("the step reads back %q, want %q", read.GetRestatement(), text)
+		}
+		if read.GetRestatedAt() == nil {
+			t.Error("the step reads back with no moment on it")
+		}
+	})
+
+	// Nobody has agreed to a text the moment it is written, whatever was agreed to before it. The
+	// operator's word is about one text and never about the step, so it is cleared here and spoken
+	// again on the text they actually read.
+	t.Run("a restatement is unapproved the moment it is written", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		feature := newFeature(t, s, newProject(t, s, "acme", "house-bills"), "the bills")
+		writePath(t, s, feature.GetId(), store.Step{Number: 1, Title: "the first"})
+
+		written, err := s.SetRestatement(ctx, feature.GetId(), 1, "the first reading")
+		if err != nil {
+			t.Fatalf("SetRestatement: %v", err)
+		}
+		if written.GetRestatementApproved() || written.GetRestatementApprovedAt() != nil {
+			t.Errorf("a text nobody read reads as approved at %v", written.GetRestatementApprovedAt())
+		}
+		second, err := s.SetRestatement(ctx, feature.GetId(), 1, "the second reading")
+		if err != nil {
+			t.Fatalf("SetRestatement again: %v", err)
+		}
+		if second.GetRestatement() != "the second reading" {
+			t.Errorf("the second write left %q on the step", second.GetRestatement())
+		}
+		if second.GetRestatementApproved() || second.GetRestatementApprovedAt() != nil {
+			t.Errorf("the second text reads as approved at %v", second.GetRestatementApprovedAt())
+		}
+	})
+
+	// The store cannot tell an unchanged text from a rewritten one that reads the same, so it takes
+	// both. Skipping the call is the caller's saving to make, and it is the caller that knows.
+	t.Run("the same restatement written again is taken", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		feature := newFeature(t, s, newProject(t, s, "acme", "house-bills"), "the bills")
+		writePath(t, s, feature.GetId(), store.Step{Number: 1, Title: "the first"})
+
+		if _, err := s.SetRestatement(ctx, feature.GetId(), 1, "one reading"); err != nil {
+			t.Fatalf("SetRestatement: %v", err)
+		}
+		again, err := s.SetRestatement(ctx, feature.GetId(), 1, "one reading")
+		if err != nil {
+			t.Fatalf("SetRestatement again: %v", err)
+		}
+		if again.GetRestatement() != "one reading" || again.GetRestatedAt() == nil {
+			t.Errorf("the step reads %q at %v", again.GetRestatement(), again.GetRestatedAt())
+		}
+	})
+
+	// A path is rewritten while its steps are being worked on, and what a session understood is the
+	// system's record rather than a line of the document. A write that dropped it would take the
+	// operator's evidence away without saying so.
+	t.Run("a path rewrite keeps what the session restated", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		feature := newFeature(t, s, newProject(t, s, "acme", "house-bills"), "the bills")
+		writePath(t, s, feature.GetId(), store.Step{Number: 1, Title: "the first"})
+		if _, _, err := s.TakeStep(ctx, feature.GetId(), 1, "session-one"); err != nil {
+			t.Fatalf("TakeStep: %v", err)
+		}
+		if _, err := s.SetRestatement(ctx, feature.GetId(), 1, "what I understood"); err != nil {
+			t.Fatalf("SetRestatement: %v", err)
+		}
+
+		writePath(t, s, feature.GetId(),
+			store.Step{Number: 1, Title: "the first", Intention: "It says more now."})
+
+		read, err := s.GetStep(ctx, feature.GetId(), 1)
+		if err != nil {
+			t.Fatalf("GetStep after the rewrite: %v", err)
+		}
+		if read.GetRestatement() != "what I understood" {
+			t.Errorf("the rewritten step reads %q, and the document never carried one",
+				read.GetRestatement())
+		}
+		if read.GetRestatedAt() == nil {
+			t.Error("the rewritten step lost the moment it was restated")
+		}
+	})
+
+	// A feature nobody made and a number nobody wrote answer the same way: neither is the step that
+	// was asked for.
+	t.Run("restating a step nothing holds is not found", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		feature := newFeature(t, s, newProject(t, s, "acme", "house-bills"), "the bills")
+		writePath(t, s, feature.GetId(), store.Step{Number: 1, Title: "the first"})
+
+		if _, err := s.SetRestatement(ctx, feature.GetId(), 7, "nothing holds this"); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("SetRestatement on a step nobody wrote answered %v, want ErrNotFound", err)
+		}
+		if _, err := s.SetRestatement(ctx, "no-such-feature", 1, "nothing holds this"); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("SetRestatement on a missing feature answered %v, want ErrNotFound", err)
 		}
 	})
 }

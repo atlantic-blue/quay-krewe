@@ -965,6 +965,29 @@ func (m *Memory) FinishStep(_ context.Context, feature string, number int32, fin
 	return proto.Clone(held).(*quaycrewv1.Step), nil
 }
 
+// SetRestatement records what the session wrote about a step before it built anything.
+//
+// The approval and its stamp are cleared in the same write, whatever the text says. Approval belongs
+// to one text, and the store cannot tell an unchanged text from a rewritten one that reads the same,
+// so it clears every time and the caller decides whether to call at all.
+func (m *Memory) SetRestatement(_ context.Context, feature string, number int32, text string) (
+	*quaycrewv1.Step, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, err := m.featureLocked(feature); err != nil {
+		return nil, err
+	}
+	held, err := m.stepLocked(feature, number)
+	if err != nil {
+		return nil, err
+	}
+	held.Restatement = text
+	held.RestatedAt = timestamppb.New(time.Now().UTC())
+	held.RestatementApproved = false
+	held.RestatementApprovedAt = nil
+	return proto.Clone(held).(*quaycrewv1.Step), nil
+}
+
 // stepLocked is one step of a feature's path, or ErrNotFound. The caller holds the lock.
 func (m *Memory) stepLocked(feature string, number int32) (*quaycrewv1.Step, error) {
 	for _, step := range m.steps[feature] {
