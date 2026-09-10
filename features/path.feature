@@ -1616,6 +1616,23 @@ Feature: A project holds a numbered path of steps
     Then the step text carries "The design is in .krewe/design.md. The whole path is in .krewe/path.md. Read both."
     And the step text carries "Build this step only. Do not take work from another step."
 
+  # A step built and nothing delivered is the state every step of feature 1 was left in, and a person
+  # wrote the delivery words into each dispatch by hand. The text carries them now. It names the two
+  # skills rather than restating them, because the session already holds both.
+  Scenario: The text tells the session to deliver the step as one pull request
+    Given the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+      """
+    When the operator takes step 1
+    Then the step text carries "Deliver this step as one pull request. The git and github skills say how a working tree, a branch, a commit and a pull request are done here."
+    And the step text carries "Watch what proves this step fail before you make it pass, because a test you did not see fail proves nothing."
+    And the step text carries "Get every check green before you report, and fix a red check rather than explaining it."
+    And the step text carries "Do not merge it. Report the address of the pull request."
+    And the step text carries "Build this step only. Do not take work from another step.\n\nDeliver this step as one pull request."
+
   # A label with nothing under it is text the model has to read for nothing.
   Scenario: A step with no proof produces text with no proof label in it
     Given the project's design is "# Bills\n"
