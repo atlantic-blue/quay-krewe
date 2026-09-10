@@ -54,6 +54,14 @@ Feature: A project holds a numbered path of steps
   The text is unapproved the moment it is written, and a second restatement is unapproved too: the
   operator agrees to one text and never to the step.
 
+  The operator reads that text on demand. Reading a step reads the session's own file first, so what
+  comes back is what the session understands now rather than what it understood at its last exec. It
+  starts no container and asks no model, which is what lets the operator read a restatement in the
+  moment it is written. A step that is done or stopped is answered from the store and its file is not
+  read: the session may be gone, and the record of work that is over does not move. A file that
+  cannot be read warns and refuses nothing, because the last text a session wrote is still the text
+  to read.
+
   There is no way to empty a path. A document with no step heading is refused, so a wrong file path
   cannot take somebody's path away.
 
@@ -1820,6 +1828,90 @@ Feature: A project holds a numbered path of steps
     Then the session's memory file does not carry "The store holds a project's brief."
     And step 1 reads back the restatement "The store holds a project's brief."
 
+  # The whole point of the read: the operator sees what the session understood in the moment it was
+  # written. The text travels through a file, so a read that only looked at the store would answer
+  # with what the session understood at its last exec, and the operator would have to dispatch one to
+  # find out. Nothing here asks the model anything: the take is the only exec in this scenario.
+  Scenario: Reading a step shows the text the session wrote, with no dispatch in between
+    Given the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+      """
+    When the operator takes step 1
+    And the session writes its restatement:
+      """
+      What this step changes
+      The store holds a project's brief.
+      """
+    And the operator reads step 1
+    Then the restatement read carries "The store holds a project's brief."
+    And the read warns about nothing
+    And the model was asked 1 thing in all
+
+  # A session that has gone still leaves the last text it wrote behind it. Refusing the read would
+  # take that away as well, so the file is a warning and never an error.
+  Scenario: Reading a step whose session is gone answers from the store, with a warning
+    Given the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+      """
+    When the operator takes step 1
+    And the session writes its restatement:
+      """
+      What this step changes
+      The store holds a project's brief.
+      """
+    And the operator reads step 1
+    And the session's own directory is gone
+    And the operator reads step 1
+    Then the restatement read carries "The store holds a project's brief."
+    And the read warns "the session's own file could not be read"
+
+  # No length refuses text a person or a session wrote. Past the length that six parts about one step
+  # take, the read says so and still hands back every character.
+  Scenario: A restatement past the length mark comes back whole, with a warning
+    Given the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+      """
+    When the operator takes step 1
+    And the session writes a restatement of 2500 characters
+    And the operator reads step 1
+    Then the restatement read is 2500 characters
+    And the read warns "2500 characters"
+
+  # A finished step is a record, and a record does not move. The session may be gone, and a session
+  # that carried on writing must not change what a step that is over was restated as.
+  Scenario: A step that is done is answered from the store, and its file is not read
+    Given the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+      """
+    When the operator takes step 1
+    And the session writes its restatement:
+      """
+      What this step changes
+      The first reading.
+      """
+    And the operator reads step 1
+    And the operator finishes step 1 with "shipped as pull request 800"
+    And the session writes its restatement:
+      """
+      What this step changes
+      The second reading.
+      """
+    And the operator reads step 1
+    Then the restatement read carries "The first reading."
+    And the restatement read does not carry "The second reading."
+
   # One step is one session's. Two takes that both passed would put two sessions on one change.
   Scenario: Taking a step somebody already holds is refused, naming the session
     Given the project's design is "# Bills\n"
@@ -2552,6 +2644,63 @@ Feature: A project holds a numbered path of steps
     And standard output carries "Step 1 of 1 on the path for house-bills."
     And standard output carries "Write no code. Change no file in the repository."
     And standard output carries "it will restate the step and build nothing"
+    And the command succeeds
+
+  # What the operator does between taking a step and agreeing to it. The six parts print whole, so
+  # the output can be piped, and the approval prints beside them because agreement is about one text.
+  Scenario: The operator reads the six parts the session wrote
+    Given the system listens on an address the tool can dial
+    And the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+      """
+    When the operator takes step 1
+    And the session writes its restatement:
+      """
+      What this step changes
+      The store holds a project's brief.
+
+      What it will not touch
+      The console.
+
+      What I assumed
+      The migration runs before the read.
+
+      What I do not know
+      Whether the brief has a length cap.
+
+      The scenario I will write
+      A project carries a brief and reads it back.
+
+      How sure I am
+      90 per cent.
+      """
+    And the caller reads the restatement of step "1.1"
+    Then standard output carries "What this step changes"
+    And standard output carries "What it will not touch"
+    And standard output carries "What I assumed"
+    And standard output carries "What I do not know"
+    And standard output carries "The scenario I will write"
+    And standard output carries "How sure I am"
+    And standard output carries "approval: not approved"
+    And the command succeeds
+
+  # A step taken a moment ago has no restatement yet, and that is the state every taken step starts
+  # in. So the line says what to do about it rather than reading as a fault.
+  Scenario: Reading a restatement before the session wrote one says so, and names what to do
+    Given the system listens on an address the tool can dial
+    And the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+      """
+    When the operator takes step 1
+    And the caller reads the restatement of step "1.1"
+    Then standard output carries "this session wrote no restatement yet"
+    And standard output carries "krewe exec"
     And the command succeeds
 
   # A step is named as <feature>.<number>, so 2.3 is step 3 of feature 2 and nothing else.

@@ -56,6 +56,7 @@ const (
 	ControlPlaneService_ApproveDesign_FullMethodName            = "/quaycrew.v1.ControlPlaneService/ApproveDesign"
 	ControlPlaneService_SetPath_FullMethodName                  = "/quaycrew.v1.ControlPlaneService/SetPath"
 	ControlPlaneService_ListSteps_FullMethodName                = "/quaycrew.v1.ControlPlaneService/ListSteps"
+	ControlPlaneService_GetStep_FullMethodName                  = "/quaycrew.v1.ControlPlaneService/GetStep"
 	ControlPlaneService_TakeStep_FullMethodName                 = "/quaycrew.v1.ControlPlaneService/TakeStep"
 	ControlPlaneService_SetStepsInFlightCap_FullMethodName      = "/quaycrew.v1.ControlPlaneService/SetStepsInFlightCap"
 	ControlPlaneService_FinishStep_FullMethodName               = "/quaycrew.v1.ControlPlaneService/FinishStep"
@@ -143,6 +144,13 @@ type ControlPlaneServiceClient interface {
 	// nothing that dispatching would not.
 	SetPath(ctx context.Context, in *SetPathRequest, opts ...grpc.CallOption) (*SetPathResponse, error)
 	ListSteps(ctx context.Context, in *ListStepsRequest, opts ...grpc.CallOption) (*ListStepsResponse, error)
+	// One step, read after the session that holds it is asked what it wrote. The read costs a file
+	// read on this machine: no container starts, no model runs, and nothing is dispatched, which is
+	// what lets the operator read a restatement the moment it is written rather than at the next exec.
+	//
+	// The driver may call it. A session reading the step it holds reaches what its own file already
+	// says.
+	GetStep(ctx context.Context, in *GetStepRequest, opts ...grpc.CallOption) (*GetStepResponse, error)
 	// Taking a step starts a session on it. The driver may call it, because a take is a dispatch and
 	// the driver already has that: it reaches nothing here it could not reach by dispatching itself.
 	// The refusal an unapproved design earns is the gate, and it is on the operator's own command as
@@ -584,6 +592,16 @@ func (c *controlPlaneServiceClient) ListSteps(ctx context.Context, in *ListSteps
 	return out, nil
 }
 
+func (c *controlPlaneServiceClient) GetStep(ctx context.Context, in *GetStepRequest, opts ...grpc.CallOption) (*GetStepResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetStepResponse)
+	err := c.cc.Invoke(ctx, ControlPlaneService_GetStep_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *controlPlaneServiceClient) TakeStep(ctx context.Context, in *TakeStepRequest, opts ...grpc.CallOption) (*TakeStepResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(TakeStepResponse)
@@ -906,6 +924,13 @@ type ControlPlaneServiceServer interface {
 	// nothing that dispatching would not.
 	SetPath(context.Context, *SetPathRequest) (*SetPathResponse, error)
 	ListSteps(context.Context, *ListStepsRequest) (*ListStepsResponse, error)
+	// One step, read after the session that holds it is asked what it wrote. The read costs a file
+	// read on this machine: no container starts, no model runs, and nothing is dispatched, which is
+	// what lets the operator read a restatement the moment it is written rather than at the next exec.
+	//
+	// The driver may call it. A session reading the step it holds reaches what its own file already
+	// says.
+	GetStep(context.Context, *GetStepRequest) (*GetStepResponse, error)
 	// Taking a step starts a session on it. The driver may call it, because a take is a dispatch and
 	// the driver already has that: it reaches nothing here it could not reach by dispatching itself.
 	// The refusal an unapproved design earns is the gate, and it is on the operator's own command as
@@ -1087,6 +1112,9 @@ func (UnimplementedControlPlaneServiceServer) SetPath(context.Context, *SetPathR
 }
 func (UnimplementedControlPlaneServiceServer) ListSteps(context.Context, *ListStepsRequest) (*ListStepsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListSteps not implemented")
+}
+func (UnimplementedControlPlaneServiceServer) GetStep(context.Context, *GetStepRequest) (*GetStepResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetStep not implemented")
 }
 func (UnimplementedControlPlaneServiceServer) TakeStep(context.Context, *TakeStepRequest) (*TakeStepResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method TakeStep not implemented")
@@ -1850,6 +1878,24 @@ func _ControlPlaneService_ListSteps_Handler(srv interface{}, ctx context.Context
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ControlPlaneService_GetStep_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetStepRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ControlPlaneServiceServer).GetStep(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ControlPlaneService_GetStep_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ControlPlaneServiceServer).GetStep(ctx, req.(*GetStepRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _ControlPlaneService_TakeStep_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(TakeStepRequest)
 	if err := dec(in); err != nil {
@@ -2436,6 +2482,10 @@ var ControlPlaneService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListSteps",
 			Handler:    _ControlPlaneService_ListSteps_Handler,
+		},
+		{
+			MethodName: "GetStep",
+			Handler:    _ControlPlaneService_GetStep_Handler,
 		},
 		{
 			MethodName: "TakeStep",

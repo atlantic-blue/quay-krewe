@@ -1280,6 +1280,39 @@ func nextStep(steps []*quaycrewv1.Step) int32 {
 	return next
 }
 
+// GetStep reads one step, whole, after the session that holds it is asked what it wrote.
+//
+// One call refreshes and answers. The session writes its restatement into its own memory file and
+// makes no call, so a read that only looked at the store would answer with what the session
+// understood at its last exec. Reading the file here is what lets the operator read the text the
+// moment it is written, with no dispatch in between, which matters because the operator reads the
+// restatement before agreeing to it.
+//
+// Nothing about the refresh can fail the read. A file that cannot be read, and a restatement long
+// enough to say so, both come back as warnings beside the step rather than in place of it.
+func (s *Server) GetStep(ctx context.Context, req *quaycrewv1.GetStepRequest) (*quaycrewv1.GetStepResponse, error) {
+	if req.GetFeature() == "" {
+		return nil, status.Error(codes.InvalidArgument, "which feature: a step belongs to one, so say its number")
+	}
+	if req.GetNumber() < 1 {
+		return nil, status.Error(codes.InvalidArgument, "a step number counts from one")
+	}
+	// The whole path, so a number nobody wrote is refused with how many steps there are rather than
+	// with a bare not found. It is the read the take already does, for the same reason.
+	steps, err := s.store.ListSteps(ctx, req.GetFeature())
+	if err != nil {
+		return nil, storeError(err, "feature")
+	}
+	held := stepNumbered(steps, req.GetNumber())
+	if held == nil {
+		return nil, noSuchStep(req.GetNumber(), len(steps))
+	}
+	fresh, warnings := s.refreshRestatement(ctx, held)
+	return &quaycrewv1.GetStepResponse{
+		Step: fresh, Warnings: append(warnings, tooLongToBeSix(fresh)...),
+	}, nil
+}
+
 // Taking a step: the gate the operator's own command is refused by, the write that records who holds
 // it, and the text the session is dispatched with.
 //
