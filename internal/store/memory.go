@@ -851,12 +851,13 @@ func (m *Memory) GetStep(_ context.Context, feature string, number int32) (*quay
 // TakeStep gives a ready step to a session, and says how many steps of the project run once it lands.
 //
 // The step is addressed by its feature, and step 3 of one feature is a different step from step 3 of
-// another, so taking one leaves the other ready. The cap is not addressed that way: it belongs to the
-// project, and the count reads every feature of it.
+// another, so taking one leaves the other ready. Neither limit is addressed that way: the cap and the
+// files both belong to the project, and both read every feature of it.
 //
-// The whole read and write happen under the one lock, because Postgres does the count and the write
-// in one transaction and the two stores have to answer the same thing to two callers racing for one
-// step, and to two callers racing for the last place under the cap.
+// The whole read and write happen under the one lock, because Postgres does the count, the file check
+// and the write in one transaction and the two stores have to answer the same thing to two callers
+// racing for one step, to two callers racing for the last place under the cap, and to two callers
+// racing for one file.
 func (m *Memory) TakeStep(_ context.Context, feature string, number int32, session string) (
 	*quaycrewv1.Step, int32, error) {
 	m.mu.Lock()
@@ -877,17 +878,21 @@ func (m *Memory) TakeStep(_ context.Context, feature string, number int32, sessi
 	if int32(len(flying)) >= atOnce {
 		return nil, 0, &StepsInFlightError{Steps: flying, Cap: atOnce}
 	}
+	if shared := SharesAFile(step.GetTouches(), flying); shared != nil {
+		return nil, 0, shared
+	}
 	step.State = StepTaken
 	step.Session = session
 	step.TakenAt = timestamppb.New(time.Now().UTC())
 	return proto.Clone(step).(*quaycrewv1.Step), int32(len(flying)) + 1, nil
 }
 
-// stepsInFlightLocked is every step of one project in state taken, with the feature each one sits in,
-// by feature number and then step number. The caller holds the lock.
+// stepsInFlightLocked is every step of one project in state taken, with the feature each one sits in
+// and what each one says it writes, by feature number and then step number. The caller holds the lock.
 //
 // The order is the store's rather than the caller's, so the refusal a person reads names the same
-// steps in the same order however the maps happen to be walked.
+// steps in the same order however the maps happen to be walked. The file check reads this walk too, so
+// the order decides which collision a refused take names.
 func (m *Memory) stepsInFlightLocked(project string) []StepInFlight {
 	flying := make([]StepInFlight, 0)
 	for _, feature := range m.features[project] {
@@ -899,6 +904,7 @@ func (m *Memory) stepsInFlightLocked(project string) []StepInFlight {
 				Number:        step.GetNumber(),
 				FeatureNumber: feature.GetNumber(),
 				FeatureTitle:  feature.GetTitle(),
+				Touches:       step.GetTouches(),
 			})
 		}
 	}

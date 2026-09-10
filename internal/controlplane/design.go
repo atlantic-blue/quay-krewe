@@ -933,6 +933,14 @@ func pathWarnings(milestones []store.Milestone, steps []store.Step) []string {
 			warnings = append(warnings, fmt.Sprintf(
 				"step %d names no scenario, so krewe step check will refuse this step.", step.Number))
 		}
+		// The take reads this block to refuse a step that writes a file a step in flight writes. A
+		// step that names no file matches nothing, so it passes that check whatever it goes on to
+		// write, and a second session may be given the same file.
+		if step.Touches == "" {
+			warnings = append(warnings, fmt.Sprintf(
+				"step %d names no file under %s, so it collides with nothing and a second step may "+
+					"be taken on the same file.", step.Number, labelTouches))
+		}
 		warnings = append(warnings, whatTheStepSaysAboutContracts(step)...)
 	}
 	return warnings
@@ -1333,6 +1341,13 @@ func (s *Server) TakeStep(ctx context.Context, req *quaycrewv1.TakeStepRequest) 
 	if errors.As(err, &full) {
 		return nil, status.Error(codes.ResourceExhausted, noRoomForIt(full))
 	}
+	// A state the take cannot be given yet, so it reads as the wrong state rather than as a full
+	// machine. The step is refused and the feature is not: every other step of this path that names
+	// another file is still there to take.
+	var shared *store.SharedFileError
+	if errors.As(err, &shared) {
+		return nil, status.Error(codes.FailedPrecondition, somebodyElseWritesIt(shared))
+	}
 	if err != nil {
 		return nil, storeError(err, "step")
 	}
@@ -1472,6 +1487,23 @@ func noRoomForIt(full *store.StepsInFlightError) string {
 			"Finish one with krewe step done [<address>] <feature>.<number> \"<result>\", "+
 			"or raise the cap with krewe path cap [<address>] <number>",
 		len(full.Steps), full.Cap, strings.Join(said, ", "))
+}
+
+// somebodyElseWritesIt is the refusal for a take that names a file a step in flight already names.
+//
+// It names the file, the step and that step's feature, because the two steps sit in two paths and a
+// refusal naming a number alone reads as a step of the path the operator is looking at. The way past
+// it is to wait for that step or to finish it, and finishing it lets this take through with nothing
+// re-planned.
+//
+// It reads what each step says it writes and never a diff, so a step that writes a file it did not
+// name is not caught here. Section 14 of the design defers that check.
+func somebodyElseWritesIt(shared *store.SharedFileError) string {
+	return fmt.Sprintf(
+		"step %d.%d %s writes %s too, and it is in flight. Two sessions on one file write over each "+
+			"other. Wait for that step, or finish it with krewe step done [<address>] "+
+			"<feature>.<number> \"<result>\"",
+		shared.Step.FeatureNumber, shared.Step.Number, shared.Step.FeatureTitle, shared.File)
 }
 
 // takeText is what the session is given: the step whole, where it sits in the path, and what to do

@@ -1167,14 +1167,15 @@ func (p *Postgres) GetStep(ctx context.Context, feature string, number int32) (*
 // TakeStep gives a ready step to a session, and says how many steps of the project run once it lands.
 //
 // The step is addressed by its feature, and step 3 of one feature is a different step from step 3 of
-// another, so taking one leaves the other ready. The cap is not addressed that way: it belongs to the
-// project, and the count joins the steps to the features on it. A count filtered by feature would let
-// a project with five features run five times the number the operator set.
+// another, so taking one leaves the other ready. Neither limit is addressed that way: the cap and the
+// files both belong to the project, and both join the steps to the features on it. A query filtered by
+// feature would let a project with five features run five times the number the operator set, and would
+// let two features write one file at the same moment.
 //
 // The whole thing is one transaction that first locks the project row, so two takes at one moment are
-// done one after the other and cannot both pass a cap with room for one of them. The lock is on the
-// project because that is what the cap is about: two projects each take their own steps and never
-// wait for each other.
+// done one after the other and cannot both pass a cap with room for one of them, or both pass a file
+// only one of them may write. The lock is on the project because that is what both limits are about:
+// two projects each take their own steps and never wait for each other.
 //
 // The state is read in the statement that writes it, so two callers racing for one step cannot both
 // be told they have it. A write that matched no row is then read back to say which of the two things
@@ -1205,10 +1206,10 @@ func (p *Postgres) TakeStep(ctx context.Context, feature string, number int32, s
 	// The step is read and locked before anything is counted, so a step somebody already holds is
 	// refused for that and never for the cap. A full project would otherwise answer a second take on
 	// one step with "finish one to make room", which sends the operator to fix the wrong thing.
-	var state string
+	var state, touches string
 	err = transaction.QueryRow(ctx,
-		`select s.state from feature_steps s where s.feature = $1 and s.number = $2 for update of s`,
-		feature, number).Scan(&state)
+		`select s.state, s.touches from feature_steps s where s.feature = $1 and s.number = $2 for update of s`,
+		feature, number).Scan(&state, &touches)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, 0, ErrNotFound
 	}
@@ -1230,6 +1231,11 @@ func (p *Postgres) TakeStep(ctx context.Context, feature string, number int32, s
 	if int32(len(flying)) >= atOnce {
 		return nil, 0, &StepsInFlightError{Steps: flying, Cap: atOnce}
 	}
+	// The same rows the cap counted, read for what each one writes. The project row is locked above,
+	// so a take that would share a file cannot land between this read and the write below.
+	if shared := SharesAFile(touches, flying); shared != nil {
+		return nil, 0, shared
+	}
 
 	step, err := scanStep(transaction.QueryRow(ctx, `
 		update feature_steps s
@@ -1248,14 +1254,15 @@ func (p *Postgres) TakeStep(ctx context.Context, feature string, number int32, s
 	return step, int32(len(flying)) + 1, nil
 }
 
-// stepsInFlight is every step of one project in state taken, with the feature each one sits in, by
-// feature number and then step number.
+// stepsInFlight is every step of one project in state taken, with the feature each one sits in and
+// what each one says it writes, by feature number and then step number.
 //
 // The order is the store's rather than the caller's, so the refusal a person reads names the same
-// three steps in the same order however the rows happen to be laid out.
+// three steps in the same order however the rows happen to be laid out. The file check reads this list
+// too, so the order decides which collision a refused take names.
 func stepsInFlight(ctx context.Context, transaction pgx.Tx, project string) ([]StepInFlight, error) {
 	rows, err := transaction.Query(ctx, `
-		select s.number, f.number, f.title
+		select s.number, f.number, f.title, s.touches
 		from feature_steps s
 		join features f on f.id = s.feature
 		where f.project = $1 and s.state = $2
@@ -1268,7 +1275,7 @@ func stepsInFlight(ctx context.Context, transaction pgx.Tx, project string) ([]S
 	flying := make([]StepInFlight, 0)
 	for rows.Next() {
 		var held StepInFlight
-		if err := rows.Scan(&held.Number, &held.FeatureNumber, &held.FeatureTitle); err != nil {
+		if err := rows.Scan(&held.Number, &held.FeatureNumber, &held.FeatureTitle, &held.Touches); err != nil {
 			return nil, fmt.Errorf("read a step in flight: %w", err)
 		}
 		flying = append(flying, held)

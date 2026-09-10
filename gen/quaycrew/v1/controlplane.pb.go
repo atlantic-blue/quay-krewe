@@ -4365,6 +4365,13 @@ type Step struct {
 	// intention is what changes and why, in the words a stranger needs.
 	Intention string `protobuf:"bytes,4,opt,name=intention,proto3" json:"intention,omitempty"`
 	// touches is the files this step writes, one per line.
+	//
+	// The take reads it line by line. A step naming a file that a step in state taken anywhere in this
+	// project also names is refused, so two sessions are never given one file. Each line is trimmed of
+	// the spaces at each end, and the comparison is exact and case sensitive: ./internal/store.go and
+	// internal/store.go are two files to it.
+	//
+	// A step that names nothing here matches nothing, so it is taken whatever it goes on to write.
 	Touches string `protobuf:"bytes,5,opt,name=touches,proto3" json:"touches,omitempty"`
 	// proof is what proves it, and the value it delivers, in prose.
 	Proof string `protobuf:"bytes,6,opt,name=proof,proto3" json:"proof,omitempty"`

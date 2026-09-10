@@ -675,6 +675,13 @@ message Step {
   // intention is what changes and why, in the words a stranger needs.
   string intention = 4;
   // touches is the files this step writes, one per line.
+  //
+  // The take reads it line by line. A step naming a file that a step in state taken anywhere in this
+  // project also names is refused, so two sessions are never given one file. Each line is trimmed of
+  // the spaces at each end, and the comparison is exact and case sensitive: ./internal/store.go and
+  // internal/store.go are two files to it.
+  //
+  // A step that names nothing here matches nothing, so it is taken whatever it goes on to write.
   string touches = 5;
   // proof is what proves it, and the value it delivers, in prose.
   string proof = 6;
@@ -1438,6 +1445,10 @@ service ControlPlaneService {
   // the driver already has that: it reaches nothing here it could not reach by dispatching itself.
   // The refusal an unapproved design earns is the gate, and it is on the operator's own command as
   // much as on this one.
+  //
+  // Two limits refuse a take: the cap on the steps of this project in flight, and a file that a step
+  // in flight already writes. Both read every feature of the project, so two features never write one
+  // file at the same moment. A refusal lands on the step and never on the feature.
   rpc TakeStep(TakeStepRequest) returns (TakeStepResponse);
 
   // How many steps of one project may run at once. The driver is refused it: the cap is what the

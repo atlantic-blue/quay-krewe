@@ -146,6 +146,10 @@ type ControlPlaneServiceClient interface {
 	// the driver already has that: it reaches nothing here it could not reach by dispatching itself.
 	// The refusal an unapproved design earns is the gate, and it is on the operator's own command as
 	// much as on this one.
+	//
+	// Two limits refuse a take: the cap on the steps of this project in flight, and a file that a step
+	// in flight already writes. Both read every feature of the project, so two features never write one
+	// file at the same moment. A refusal lands on the step and never on the feature.
 	TakeStep(ctx context.Context, in *TakeStepRequest, opts ...grpc.CallOption) (*TakeStepResponse, error)
 	// How many steps of one project may run at once. The driver is refused it: the cap is what the
 	// operator reads at once, so a session that could raise its own would widen the fan out nobody
@@ -890,6 +894,10 @@ type ControlPlaneServiceServer interface {
 	// the driver already has that: it reaches nothing here it could not reach by dispatching itself.
 	// The refusal an unapproved design earns is the gate, and it is on the operator's own command as
 	// much as on this one.
+	//
+	// Two limits refuse a take: the cap on the steps of this project in flight, and a file that a step
+	// in flight already writes. Both read every feature of the project, so two features never write one
+	// file at the same moment. A refusal lands on the step and never on the feature.
 	TakeStep(context.Context, *TakeStepRequest) (*TakeStepResponse, error)
 	// How many steps of one project may run at once. The driver is refused it: the cap is what the
 	// operator reads at once, so a session that could raise its own would widen the fan out nobody
