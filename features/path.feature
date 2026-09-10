@@ -1708,7 +1708,6 @@ Feature: A project holds a numbered path of steps
     And the step text does not carry "The scope of each contract"
     And the step text does not carry ".krewe/contracts.md"
 
-  # One step is one session's. Two takes that both passed would put two sessions on one change.
   # What the session understood, before any code exists. It writes the six parts under the
   # restatement mark in its own memory file, and the next exec reads that section into the step. The
   # text travels through a file because a model writes files and cannot make a call.
@@ -1821,6 +1820,7 @@ Feature: A project holds a numbered path of steps
     Then the session's memory file does not carry "The store holds a project's brief."
     And step 1 reads back the restatement "The store holds a project's brief."
 
+  # One step is one session's. Two takes that both passed would put two sessions on one change.
   Scenario: Taking a step somebody already holds is refused, naming the session
     Given the project's design is "# Bills\n"
     And the operator approved the project's design

@@ -50,7 +50,7 @@ func (s *Server) readRestatement(ctx context.Context, session *quaycrewv1.Sessio
 	if len(text) > restatementMark {
 		slog.Warn("a session restated its step at length",
 			"session", session.GetId(), "step", held.GetNumber(),
-			"characters", len(text), "long enough to say so past", restatementMark)
+			"characters", len(text), "mark", restatementMark)
 	}
 	if _, err := s.store.SetRestatement(ctx, held.GetFeature(), held.GetNumber(), text); err != nil {
 		slog.Warn("what the session restated was not recorded on its step",
