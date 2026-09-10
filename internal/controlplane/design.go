@@ -142,6 +142,49 @@ func (s *Server) ApproveDesign(ctx context.Context, req *quaycrewv1.ApproveDesig
 	return &quaycrewv1.ApproveDesignResponse{Design: design}, nil
 }
 
+// stepsInFlightBounds are the smallest and largest cap a person may set.
+//
+// A cap of zero would refuse every take, which is a project nobody can work on rather than a project
+// that runs nothing. Twenty is more sessions than one operator reads, and a number typed by accident
+// is far more likely than a machine that genuinely wants a hundred.
+const (
+	leastStepsInFlight = 1
+	mostStepsInFlight  = 20
+)
+
+// SetStepsInFlightCap records how many steps of one project may be in state taken at one time.
+//
+// The bounds are checked here rather than in the store, the way the two words a step ends with are:
+// one layer owns what a person may type, and the store keeps what it is given.
+//
+// It is one number on the project, counting across every feature. There is no second cap per feature
+// and none is added: nothing can collide across features, because the take reads the whole project,
+// so one number protects the machine and the operator's reading. A per feature cap would let a
+// project with five features run five times its number while every number written down still read
+// the same.
+//
+// DeniedToDriver refuses this call to a session. The cap is how much the operator reads at once, so a
+// session that could raise its own would widen the fan out without anybody asking for it.
+func (s *Server) SetStepsInFlightCap(ctx context.Context, req *quaycrewv1.SetStepsInFlightCapRequest) (
+	*quaycrewv1.SetStepsInFlightCapResponse, error) {
+	if req.GetProject() == "" {
+		return nil, status.Error(codes.InvalidArgument, "which project: say where with an address")
+	}
+	if req.GetStepsInFlightCap() < leastStepsInFlight {
+		return nil, status.Errorf(codes.InvalidArgument,
+			"a cap of zero would refuse every take: say %d or more", leastStepsInFlight)
+	}
+	if req.GetStepsInFlightCap() > mostStepsInFlight {
+		return nil, status.Errorf(codes.InvalidArgument,
+			"a cap above %d is more sessions than one operator reads", mostStepsInFlight)
+	}
+	design, err := s.store.SetStepsInFlightCap(ctx, req.GetProject(), req.GetStepsInFlightCap())
+	if err != nil {
+		return nil, storeError(err, "project")
+	}
+	return &quaycrewv1.SetStepsInFlightCapResponse{Design: design}, nil
+}
+
 // overMark says how long the text is when it is past the mark, and says nothing at all when it is
 // not. It is a warning and never a refusal: the text is already kept.
 func overMark(what string, length, mark int, expected string) []string {
@@ -1280,9 +1323,15 @@ func (s *Server) TakeStep(ctx context.Context, req *quaycrewv1.TakeStepRequest) 
 	// write that moves the state. The name is a handle, which is what a dispatch is addressed by, so
 	// the session the store names is the session the dispatch continues.
 	handle := store.NewID()
-	taken, err := s.store.TakeStep(ctx, req.GetFeature(), req.GetNumber(), handle)
+	taken, flying, err := s.store.TakeStep(ctx, req.GetFeature(), req.GetNumber(), handle)
 	if errors.Is(err, store.ErrStepNotReady) {
 		return nil, status.Error(codes.FailedPrecondition, whoHoldsIt(held))
+	}
+	// Not a state the caller got wrong. The take is allowed and there is no room for it yet, so the
+	// refusal says what runs and what to do about it rather than what is wrong with the request.
+	var full *store.StepsInFlightError
+	if errors.As(err, &full) {
+		return nil, status.Error(codes.ResourceExhausted, noRoomForIt(full))
 	}
 	if err != nil {
 		return nil, storeError(err, "step")
@@ -1302,7 +1351,12 @@ func (s *Server) TakeStep(ctx context.Context, req *quaycrewv1.TakeStepRequest) 
 	if err != nil {
 		return nil, storeError(err, "session")
 	}
-	return &quaycrewv1.TakeStepResponse{Step: taken, Session: started, Text: text}, nil
+	// The count is the one the write made, and the cap is the number it was counted against, so a
+	// caller prints what runs now without asking again.
+	return &quaycrewv1.TakeStepResponse{
+		Step: taken, Session: started, Text: text,
+		InFlight: flying, StepsInFlightCap: design.GetStepsInFlightCap(),
+	}, nil
 }
 
 // closedByOperator is who spoke the word on this call. Krewe closes a step through its own check, and
@@ -1399,6 +1453,25 @@ func whoHoldsIt(step *quaycrewv1.Step) string {
 		return said
 	}
 	return said + ", and session " + display.ShortID(step.GetSession()) + " holds it"
+}
+
+// noRoomForIt is the refusal for a take at the cap. It names every step in flight with the feature
+// each one sits in, the cap, and the two ways past it.
+//
+// Every step rather than the count, because the operator's next move is to finish one, and a refusal
+// saying only how many sends them to the listing to work out which. The feature is on each line
+// because the cap counts across the whole project: three steps numbered 1, in three features, read as
+// one step named three times without it.
+func noRoomForIt(full *store.StepsInFlightError) string {
+	said := make([]string, 0, len(full.Steps))
+	for _, step := range full.Steps {
+		said = append(said, fmt.Sprintf("step %d.%d %s", step.FeatureNumber, step.Number, step.FeatureTitle))
+	}
+	return fmt.Sprintf(
+		"%d steps of this project are already in flight, and its cap is %d: %s. "+
+			"Finish one with krewe step done [<address>] <feature>.<number> \"<result>\", "+
+			"or raise the cap with krewe path cap [<address>] <number>",
+		len(full.Steps), full.Cap, strings.Join(said, ", "))
 }
 
 // takeText is what the session is given: the step whole, where it sits in the path, and what to do

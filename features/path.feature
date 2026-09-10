@@ -31,6 +31,15 @@ Feature: A project holds a numbered path of steps
   wrote is what the next session reads. Finishing a step touches no session, so the step still says
   who took it, and a stopped step is not ready.
 
+  Several steps run at once. The operator takes each one, so every session starts because somebody
+  typed a command: no command reads the path and dispatches, and a step that finishes starts nothing.
+  A cap on the project says how many steps may be in state taken at one time, and the default is ten.
+  Ten is an observation: this project held ten steps in state taken at one moment on 9 September
+  2026, and the default is that count, so the cap refuses no work the system was already doing. It is
+  not a tuned number. The cap counts across every feature of the project rather than inside one, so
+  three steps in flight is three steps wherever they sit, and the refusal names the feature each one
+  is in.
+
   There is no way to empty a path. A document with no step heading is refused, so a wrong file path
   cannot take somebody's path away.
 
@@ -1722,6 +1731,308 @@ Feature: A project holds a numbered path of steps
     When the operator takes step 0
     Then the control plane refuses it as invalid
     And the refusal suggests "counts from one"
+
+  # Milestone 7. Several steps run at once, capped per project.
+  #
+  # The operator takes each step, so a second take is a second command somebody typed. No command
+  # reads the path and dispatches, and no step starts because another one ended.
+  Scenario: Taking a second step while the first runs leaves both taken, each with its own session
+    Given the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And the project's path is:
+      """
+      ## 4. The store holds a project's brief
+
+      After
+
+      ## 6. The command line reads it back
+
+      After
+      """
+    And the operator took step 6
+    When the operator takes step 4
+    Then step 4 is held by that session
+    And the operator reads the path
+    And step 4 is still taken
+    And step 6 is still taken
+    And step 4 and step 6 name different sessions
+    And 2 sessions were started
+
+  # The cap is lowered to 3 first, so the refusal is reached in three takes rather than in ten. What
+  # is proved is the rule, and the rule reads the project's own number.
+  Scenario: A fourth take is refused, naming the cap and the three steps in flight
+    Given the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+
+      After
+
+      ## 2. The store holds a project's design
+
+      After
+
+      ## 3. The command line reads it back
+
+      After
+
+      ## 4. The session reads the design
+
+      After
+      """
+    And the operator caps the steps in flight at 3
+    And the operator took step 1
+    And the operator took step 2
+    And the operator took step 3
+    When the operator takes step 4
+    Then the control plane refuses it as too many steps at once
+    And the refusal suggests "cap is 3"
+    And the refusal names the steps in flight with the feature each one sits in
+    And the refusal suggests "krewe path cap"
+    And 3 sessions were started
+    And the operator reads the path
+    And step 4 is ready
+
+  # The count joins the steps to the features on the project. Counted inside one feature, a project
+  # with three features could run three times its cap while every number still read the same.
+  Scenario: Three steps taken in three different features refuse a fourth take in any feature
+    Given the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And the project's feature "authentication"
+    And the project's feature "payment"
+    And the project's feature "delivery"
+    And the operator sets the path of feature 1 to:
+      """
+      ## 1. Sign up
+
+      After
+
+      ## 2. Sign in
+
+      After
+      """
+    And the operator sets the path of feature 2 to:
+      """
+      ## 1. Checkout
+      """
+    And the operator sets the path of feature 3 to:
+      """
+      ## 1. Post it
+      """
+    And the operator caps the steps in flight at 3
+    And the operator took step 1 of feature 1
+    And the operator took step 1 of feature 2
+    And the operator took step 1 of feature 3
+    When the operator takes step 2 of feature 1
+    Then the control plane refuses it as too many steps at once
+    And the refusal suggests "step 1.1 authentication"
+    And the refusal suggests "step 2.1 payment"
+    And the refusal suggests "step 3.1 delivery"
+    And 3 sessions were started
+
+  Scenario: Raising the cap lets the fourth take through
+    Given the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+
+      After
+
+      ## 2. The store holds a project's design
+
+      After
+
+      ## 3. The command line reads it back
+
+      After
+
+      ## 4. The session reads the design
+
+      After
+      """
+    And the operator caps the steps in flight at 3
+    And the operator took step 1
+    And the operator took step 2
+    And the operator took step 3
+    And the operator caps the steps in flight at 4
+    When the operator takes step 4
+    Then step 4 is held by that session
+    And the take says 4 of 4 steps are in flight
+    And 4 sessions were started
+
+  Scenario: Finishing one of three steps lets the next take pass
+    Given the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+
+      After
+
+      ## 2. The store holds a project's design
+
+      After
+
+      ## 3. The command line reads it back
+
+      After
+
+      ## 4. The session reads the design
+
+      After
+      """
+    And the operator caps the steps in flight at 3
+    And the operator took step 1
+    And the operator took step 2
+    And the operator took step 3
+    And the operator finishes step 1 with "the brief is kept"
+    When the operator takes step 4
+    Then step 4 is held by that session
+    And the take says 3 of 3 steps are in flight
+
+  # The guard on the fan out. A step that finishes starts nothing: krewe moves one row and writes one
+  # line, and the next take waits for the operator to type it.
+  Scenario: Finishing a step starts no session and takes no step
+    Given the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+
+      After
+
+      ## 2. The store holds a project's design
+
+      After
+      """
+    And the operator took step 1
+    When the operator finishes step 1 with "the brief is kept"
+    Then 1 session was started
+    And step 1 is still done
+    And step 2 is still ready
+    And no step but step 1 names a session
+
+  Scenario: The take says how many steps are in flight and what the cap is
+    Given the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+
+      After
+
+      ## 2. The store holds a project's design
+
+      After
+      """
+    And the operator took step 1
+    When the operator takes step 2
+    Then the take says 2 of 10 steps are in flight
+
+  # Ten is what this project had in state taken at one moment on 9 September 2026. It is the number
+  # the system was already running, taken as the default so the cap refuses no work it already does.
+  Scenario: A project nobody configured caps the steps in flight at ten
+    Then the cap on steps in flight is 10
+
+  # Lowering it refuses the next take. It never stops a session that already runs.
+  Scenario: Lowering the cap below what runs now leaves both sessions running
+    Given the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+
+      After
+
+      ## 2. The store holds a project's design
+
+      After
+
+      ## 3. The command line reads it back
+
+      After
+      """
+    And the operator took step 1
+    And the operator took step 2
+    When the operator caps the steps in flight at 1
+    Then step 1 is still taken
+    And step 2 is still taken
+    And 2 sessions were started
+    And the operator takes step 3
+    And the control plane refuses it as too many steps at once
+
+  Scenario: A cap of zero is refused, saying why zero is wrong
+    When the operator caps the steps in flight at 0
+    Then the control plane refuses it as invalid
+    And the refusal suggests "refuse every take"
+    And the cap on steps in flight is 10
+
+  Scenario: A cap above twenty is refused
+    When the operator caps the steps in flight at 21
+    Then the control plane refuses it as invalid
+    And the cap on steps in flight is 10
+
+  # The cap is how much the operator reads at once. A session that could raise its own would widen
+  # the fan out without anybody asking for it.
+  Scenario: A session cannot set the cap
+    When the driver asks to cap the steps in flight
+    Then the driver is refused, told the call is the operator's to make
+    And the cap on steps in flight is 10
+
+  Scenario: The tool says how many steps are in flight after a take
+    Given the system listens on an address the tool can dial
+    And the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+
+      After
+
+      ## 2. The store holds a project's design
+
+      After
+      """
+    And the operator took step 1
+    When the caller takes step "1.2"
+    Then standard output says "2 of 10 steps in flight"
+    And the command succeeds
+
+  Scenario: The tool prints the cap and what runs now, and writes nothing
+    Given the system listens on an address the tool can dial
+    And the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+
+      After
+
+      ## 2. The store holds a project's design
+
+      After
+      """
+    And the operator took step 1
+    When the caller reads the cap on steps in flight
+    Then standard output says "10 steps at once, 1 in flight"
+    And standard output says "9 September 2026"
+    And the cap on steps in flight is 10
+    And the command succeeds
+
+  Scenario: The tool sets the cap
+    Given the system listens on an address the tool can dial
+    When the caller caps the steps in flight at "5"
+    Then standard output says "5 steps at once"
+    And the cap on steps in flight is 5
+    And the command succeeds
+
+  Scenario: The tool prints one line of refusal for a cap of zero
+    Given the system listens on an address the tool can dial
+    When the caller caps the steps in flight at "0"
+    Then the command fails
+    And the cap on steps in flight is 10
 
   # The session reads which step it is on in the design section of its own memory file, which it
   # reads on every exec.

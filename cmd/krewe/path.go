@@ -11,6 +11,7 @@ import (
 
 	quaycrewv1 "github.com/atlantic-blue/quay-krewe/gen/quaycrew/v1"
 	"github.com/atlantic-blue/quay-krewe/internal/display"
+	"github.com/atlantic-blue/quay-krewe/internal/workspace"
 )
 
 // The path a design was broken into: reading it, and writing it from a file.
@@ -19,7 +20,12 @@ import (
 // command line cannot drift on what a step heading looks like.
 
 const pathUsage = "usage: krewe path [<address>] [<feature>]" +
-	"\n       krewe path set [<address>] <feature> --file <path>"
+	"\n       krewe path set [<address>] <feature> --file <path>" +
+	"\n       krewe path cap [<address>] [<number>]"
+
+// pathCapUsage is its own line, because the cap takes a number where the rest of the word takes a
+// feature, and a refusal that printed all three forms would not say which one was typed wrong.
+const pathCapUsage = "usage: krewe path cap [<address>] [<number>]"
 
 // runPath prints one feature's path, or the path of every open feature of the project.
 //
@@ -31,6 +37,9 @@ const pathUsage = "usage: krewe path [<address>] [<feature>]" +
 func runPath(ctx context.Context, client quaycrewv1.ControlPlaneServiceClient, args []string, out io.Writer) error {
 	if len(args) > 0 && args[0] == "set" {
 		return runPathSet(ctx, client, args[1:], out)
+	}
+	if len(args) > 0 && args[0] == "cap" {
+		return runPathCap(ctx, client, args[1:], out)
 	}
 	if len(args) > 2 {
 		return fmt.Errorf("%s", pathUsage)
@@ -402,4 +411,111 @@ func fileOutOf(args []string, usage string) (rest []string, path string, err err
 		at++
 	}
 	return rest, path, nil
+}
+
+// runPathCap reads or sets how many steps of a project may run at once.
+//
+// With no number it prints and writes nothing, which is what makes it safe to type when you are not
+// sure. With one argument the argument is the number, and with two the first is the address, which is
+// the shape krewe path already has.
+//
+// The count in flight is read across every feature, because the cap counts that way. A count of one
+// feature would print a number the next take disagrees with.
+func runPathCap(ctx context.Context, client quaycrewv1.ControlPlaneServiceClient,
+	args []string, out io.Writer) error {
+	if len(args) > 2 {
+		return fmt.Errorf("%s", pathCapUsage)
+	}
+	typed, said := "", ""
+	switch len(args) {
+	case 1:
+		// One argument is the number when it reads as one, and the address otherwise, which then asks
+		// for the cap rather than setting it.
+		if _, err := strconv.Atoi(args[0]); err == nil {
+			said = args[0]
+		} else {
+			typed = args[0]
+		}
+	case 2:
+		typed, said = args[0], args[1]
+	}
+	located, err := designProject(ctx, client, typed)
+	if err != nil {
+		return err
+	}
+	if said == "" {
+		return sayTheCap(ctx, client, located, out)
+	}
+	atOnce, err := strconv.Atoi(said)
+	if err != nil {
+		return fmt.Errorf("%s", pathCapUsage)
+	}
+	resp, err := client.SetStepsInFlightCap(ctx, &quaycrewv1.SetStepsInFlightCapRequest{
+		Project: located.ProjectID, StepsInFlightCap: int32(atOnce),
+	})
+	if err != nil {
+		return fmt.Errorf("%w\n\nnothing was written", err)
+	}
+	flying, err := stepsInFlightOf(ctx, client, located.ProjectID)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "%s runs %d steps at once\n",
+		located.Path.Project, resp.GetDesign().GetStepsInFlightCap())
+	// Said only when it is true, because a line about what runs now is noise under a cap nothing has
+	// reached. Lowering it stops none of them: the cap is read at the moment of a take.
+	if flying > int(resp.GetDesign().GetStepsInFlightCap()) {
+		fmt.Fprintf(out, "\n%d steps run now, and none of them stops. The cap refuses the next take\n", flying)
+	}
+	return nil
+}
+
+// sayTheCap prints the cap, what runs against it now, and where the number came from. It writes
+// nothing.
+func sayTheCap(ctx context.Context, client quaycrewv1.ControlPlaneServiceClient,
+	located workspace.Location, out io.Writer) error {
+	design, err := client.GetDesign(ctx, &quaycrewv1.GetDesignRequest{Project: located.ProjectID})
+	if err != nil {
+		return err
+	}
+	flying, err := stepsInFlightOf(ctx, client, located.ProjectID)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "%s runs %d steps at once, %d in flight\n\n",
+		located.Path.Project, design.GetDesign().GetStepsInFlightCap(), flying)
+	fmt.Fprintf(out, "%s\n", whereTheDefaultCameFrom)
+	fmt.Fprintf(out, "\nset it: krewe path cap [<address>] <number>\n")
+	return nil
+}
+
+// whereTheDefaultCameFrom says what the number is, so nobody reads it as a tuned one. Printing it
+// beside the cap is what stops the number being taken for a recommendation.
+const whereTheDefaultCameFrom = "the default of 10 is what this project held in state taken at one " +
+	"moment on 9 September 2026.\nIt is that count and nothing else: it is not tuned, and it says " +
+	"nothing about how many\nsessions a person can read at once."
+
+// stepsInFlightOf counts the steps of a project in state taken, across every feature of it.
+//
+// Every feature, because the cap counts that way. A closed feature is counted too: a step somebody
+// still holds is a session that still runs, whatever became of the feature around it.
+func stepsInFlightOf(ctx context.Context, client quaycrewv1.ControlPlaneServiceClient,
+	project string) (int, error) {
+	features, err := featuresOf(ctx, client, project)
+	if err != nil {
+		return 0, err
+	}
+	flying := 0
+	for _, feature := range features {
+		resp, err := client.ListSteps(ctx, &quaycrewv1.ListStepsRequest{Feature: feature.GetId()})
+		if err != nil {
+			return 0, err
+		}
+		for _, step := range resp.GetSteps() {
+			if step.GetState() == stepTaken {
+				flying++
+			}
+		}
+	}
+	return flying, nil
 }

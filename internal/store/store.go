@@ -80,6 +80,63 @@ var ErrStepNotReady = errors.New("store: the step is not ready to be taken")
 // the record of the work would go with it.
 var ErrPathHoldsTakenSteps = errors.New("store: the path drops or renames a step somebody took")
 
+// ErrTooManyStepsInFlight is returned when a project already holds as many steps in state taken as
+// its cap allows. A StepsInFlightError carries the steps and the cap, and answers errors.Is for this.
+//
+// The count and the write are one transaction, for the reason ErrNothingToApprove is one statement: a
+// count read in the control plane, then a write, would let two takes at one moment both pass a cap
+// that has room for one of them.
+//
+// The count reads the whole project rather than one feature. Two features are two paths and one
+// machine, so a cap read inside a feature would let a project with five features run five times the
+// number the operator set.
+var ErrTooManyStepsInFlight = errors.New("store: the project already has as many steps in flight as its cap allows")
+
+// DefaultStepsInFlightCap is how many steps a project nobody configured may hold in state taken at
+// one time. It is the default of the column, repeated here for the stores to answer with when a
+// project carries no design row at all.
+//
+// Ten is an observation rather than a target. On 9 September 2026 this project held 10 steps in state
+// taken at one moment, on feature 1, counted by grouping feature_steps through features onto the
+// project; weft and rex each held 1. The number is that count and nothing else: it is not tuned, and
+// it says nothing about how many sessions a person can read at once. It is what the system was
+// already running, so the cap refuses no work already being done. The design document records a
+// default of 3 and calls it a guess that nothing measured, and that text is stale.
+const DefaultStepsInFlightCap int32 = 10
+
+// StepInFlight is one step in state taken, and the feature it sits in. The feature travels with it
+// because the cap counts across the whole project: a refusal naming step 1 three times, in a project
+// where three features each hold one, tells the operator nothing about which to finish.
+type StepInFlight struct {
+	Number        int32
+	FeatureNumber int32
+	FeatureTitle  string
+}
+
+// StepsInFlightError names every step in flight and the cap they were counted against.
+//
+// All of them rather than a count, because the operator's next move is to finish one, and a refusal
+// that says only how many sends them to the listing to work out which.
+type StepsInFlightError struct {
+	// Steps are the steps in state taken, by feature number and then step number.
+	Steps []StepInFlight
+	// Cap is the number they were counted against.
+	Cap int32
+}
+
+func (e *StepsInFlightError) Error() string {
+	said := make([]string, 0, len(e.Steps))
+	for _, step := range e.Steps {
+		said = append(said, fmt.Sprintf("step %d.%d %s", step.FeatureNumber, step.Number, step.FeatureTitle))
+	}
+	return fmt.Sprintf("%s: %d in flight against a cap of %d: %s",
+		ErrTooManyStepsInFlight.Error(), len(e.Steps), e.Cap, strings.Join(said, ", "))
+}
+
+// Is makes errors.Is(err, ErrTooManyStepsInFlight) answer, so a caller that only wants to know which
+// rule refused the take does not have to unwrap the steps.
+func (e *StepsInFlightError) Is(target error) bool { return target == ErrTooManyStepsInFlight }
+
 // StepDone is the state a step moves to when the work in it is finished, and StepStopped the state
 // it moves to when somebody abandons it. They are here for the reason StepReady is: a path write
 // reads the word to decide whether the step is protected, so both stores must read the same word.
@@ -449,6 +506,15 @@ type Store interface {
 	// design with no body as ErrNothingToApprove. Approving one that is already approved is allowed
 	// and moves the moment.
 	ApproveProjectDesign(ctx context.Context, project string) (*quaycrewv1.Design, error)
+	// SetStepsInFlightCap records how many steps of one project may be in state taken at one time,
+	// and creates the design row on first use.
+	//
+	// The store keeps what it is given. Whether a number is one a person should have typed is the
+	// control plane's question, the way a permission mode already is.
+	//
+	// Lowering it below what runs now is allowed and stops nothing: it refuses the next take. A cap
+	// that reached into running sessions would end work nobody asked it to end.
+	SetStepsInFlightCap(ctx context.Context, project string, atOnce int32) (*quaycrewv1.Design, error)
 
 	// SetPath replaces one feature's path and returns the whole path after the write, in number
 	// order. The steps are what a caller may set; the rest of each row belongs to the system.
@@ -482,13 +548,21 @@ type Store interface {
 	// GetStep returns one step of a feature's path, whole. A feature that does not exist and a path
 	// that holds no step of that number are both ErrNotFound: neither answers the question asked.
 	GetStep(ctx context.Context, feature string, number int32) (*quaycrewv1.Step, error)
-	// TakeStep gives a ready step to a session and returns the step after the write. A step that is
-	// not ready is ErrStepNotReady, and the caller reads the step to say who holds it.
+	// TakeStep gives a ready step to a session and returns the step after the write, with how many
+	// steps of the project are in state taken once it lands. A step that is not ready is
+	// ErrStepNotReady, and the caller reads the step to say who holds it.
 	//
-	// The state check and the write are one statement, so two callers cannot both take one step.
-	// Several steps may be taken at once, in one feature or across the features of one project:
-	// nothing here refuses a second take on a different step.
-	TakeStep(ctx context.Context, feature string, number int32, session string) (*quaycrewv1.Step, error)
+	// The count is the write's own, so a caller that prints it prints what the take made rather than
+	// what a second read a moment later says.
+	//
+	// Several steps may be taken at once, in one feature or across the features of one project.
+	// ErrTooManyStepsInFlight is the only limit, and it counts every step in state taken in the whole
+	// project against the design's cap. Counted inside the feature, two features could each run the
+	// whole cap.
+	//
+	// The count, the state check and the write are one transaction, so two callers cannot both take
+	// one step, and two takes at one moment cannot both pass a cap with room for one of them.
+	TakeStep(ctx context.Context, feature string, number int32, session string) (*quaycrewv1.Step, int32, error)
 	// FinishStep records what came of a step: the word that closes it, what somebody wrote, who spoke
 	// the word, and the stamp. A feature that does not exist and a path that holds no step of that
 	// number are both ErrNotFound.

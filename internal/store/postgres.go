@@ -688,7 +688,8 @@ func (p *Postgres) SetContext(ctx context.Context, scope ContextScope, owner, bo
 // designColumns is what every design read selects, in the order scanDesign reads them. The two are
 // written next to each other because a column added to one and not the other reads as a zero rather
 // than as a failure.
-const designColumns = `project, brief, body, approved, approved_at, written_by, updated_at, contracts`
+const designColumns = `project, brief, body, approved, approved_at, written_by, updated_at, contracts, ` +
+	`steps_in_flight_cap`
 
 // scanDesign reads one design row.
 func scanDesign(row pgx.Row) (*quaycrewv1.Design, error) {
@@ -697,18 +698,21 @@ func scanDesign(row pgx.Row) (*quaycrewv1.Design, error) {
 		approved                                   bool
 		approvedAt                                 *time.Time
 		updatedAt                                  time.Time
+		stepsInFlightCap                           int32
 	)
-	if err := row.Scan(&project, &brief, &body, &approved, &approvedAt, &writtenBy, &updatedAt, &contracts); err != nil {
+	if err := row.Scan(&project, &brief, &body, &approved, &approvedAt, &writtenBy, &updatedAt,
+		&contracts, &stepsInFlightCap); err != nil {
 		return nil, err
 	}
 	design := &quaycrewv1.Design{
-		Project:   project,
-		Brief:     brief,
-		Body:      body,
-		Approved:  approved,
-		WrittenBy: writtenBy,
-		UpdatedAt: timestamppb.New(updatedAt),
-		Contracts: contracts,
+		Project:          project,
+		Brief:            brief,
+		Body:             body,
+		Approved:         approved,
+		WrittenBy:        writtenBy,
+		UpdatedAt:        timestamppb.New(updatedAt),
+		Contracts:        contracts,
+		StepsInFlightCap: stepsInFlightCap,
 	}
 	if approvedAt != nil {
 		design.ApprovedAt = timestamppb.New(*approvedAt)
@@ -738,7 +742,10 @@ func (p *Postgres) projectExists(ctx context.Context, project string) error {
 }
 
 // GetDesign returns the project's design. A project with no design row is the normal state and
-// answers with a Design carrying only its identifier.
+// answers with a Design carrying its identifier and the cap the column would have given it.
+//
+// The cap is answered rather than left at zero, because zero is a number that refuses every take and
+// a project nobody configured refuses nothing.
 func (p *Postgres) GetDesign(ctx context.Context, project string) (*quaycrewv1.Design, error) {
 	if err := p.projectExists(ctx, project); err != nil {
 		return nil, err
@@ -746,7 +753,7 @@ func (p *Postgres) GetDesign(ctx context.Context, project string) (*quaycrewv1.D
 	design, err := scanDesign(p.pool.QueryRow(ctx,
 		`select `+designColumns+` from project_designs where project = $1`, project))
 	if errors.Is(err, pgx.ErrNoRows) {
-		return &quaycrewv1.Design{Project: project}, nil
+		return &quaycrewv1.Design{Project: project, StepsInFlightCap: DefaultStepsInFlightCap}, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get design: %w", err)
@@ -834,6 +841,31 @@ func (p *Postgres) ApproveProjectDesign(ctx context.Context, project string) (*q
 	}
 	if err != nil {
 		return nil, fmt.Errorf("approve design: %w", err)
+	}
+	return design, nil
+}
+
+// SetStepsInFlightCap records how many steps of one project may be in state taken at one time, and
+// creates the row on first use the way every other design write does.
+//
+// The number is kept as it is given, for the reason FinishStep keeps the word it is given: the
+// control plane refuses one outside the bounds, and a second check here is a second place for the
+// bounds to drift.
+//
+// No approval and no trust column moves. The cap governs how much runs at once, and says nothing
+// about what the design body means.
+func (p *Postgres) SetStepsInFlightCap(ctx context.Context, project string, atOnce int32) (
+	*quaycrewv1.Design, error) {
+	if err := p.projectExists(ctx, project); err != nil {
+		return nil, err
+	}
+	design, err := scanDesign(p.pool.QueryRow(ctx, `
+		insert into project_designs (project, steps_in_flight_cap) values ($1, $2)
+		on conflict (project) do update set steps_in_flight_cap = excluded.steps_in_flight_cap,
+			updated_at = now()
+		returning `+designColumns, project, atOnce))
+	if err != nil {
+		return nil, fmt.Errorf("set the cap: %w", err)
 	}
 	return design, nil
 }
@@ -1132,33 +1164,134 @@ func (p *Postgres) GetStep(ctx context.Context, feature string, number int32) (*
 	return step, nil
 }
 
-// TakeStep gives a ready step to a session.
+// TakeStep gives a ready step to a session, and says how many steps of the project run once it lands.
 //
 // The step is addressed by its feature, and step 3 of one feature is a different step from step 3 of
-// another, so taking one leaves the other ready.
+// another, so taking one leaves the other ready. The cap is not addressed that way: it belongs to the
+// project, and the count joins the steps to the features on it. A count filtered by feature would let
+// a project with five features run five times the number the operator set.
+//
+// The whole thing is one transaction that first locks the project row, so two takes at one moment are
+// done one after the other and cannot both pass a cap with room for one of them. The lock is on the
+// project because that is what the cap is about: two projects each take their own steps and never
+// wait for each other.
 //
 // The state is read in the statement that writes it, so two callers racing for one step cannot both
 // be told they have it. A write that matched no row is then read back to say which of the two things
 // happened: there is no such step, or somebody already holds it.
-func (p *Postgres) TakeStep(ctx context.Context, feature string, number int32, session string) (*quaycrewv1.Step, error) {
+func (p *Postgres) TakeStep(ctx context.Context, feature string, number int32, session string) (
+	*quaycrewv1.Step, int32, error) {
 	if err := p.featureExists(ctx, feature); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	step, err := scanStep(p.pool.QueryRow(ctx, `
+	transaction, err := p.pool.Begin(ctx)
+	if err != nil {
+		return nil, 0, fmt.Errorf("begin the take: %w", err)
+	}
+	defer func() { _ = transaction.Rollback(ctx) }()
+
+	var project string
+	if err := transaction.QueryRow(ctx, `
+		select p.id from features f
+		join projects p on p.id = f.project
+		where f.id = $1
+		for update of p`, feature).Scan(&project); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, 0, ErrNotFound
+		}
+		return nil, 0, fmt.Errorf("hold the project: %w", err)
+	}
+
+	// The step is read and locked before anything is counted, so a step somebody already holds is
+	// refused for that and never for the cap. A full project would otherwise answer a second take on
+	// one step with "finish one to make room", which sends the operator to fix the wrong thing.
+	var state string
+	err = transaction.QueryRow(ctx,
+		`select s.state from feature_steps s where s.feature = $1 and s.number = $2 for update of s`,
+		feature, number).Scan(&state)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, 0, ErrNotFound
+	}
+	if err != nil {
+		return nil, 0, fmt.Errorf("read the step: %w", err)
+	}
+	if state != StepReady {
+		return nil, 0, ErrStepNotReady
+	}
+
+	flying, err := stepsInFlight(ctx, transaction, project)
+	if err != nil {
+		return nil, 0, err
+	}
+	atOnce, err := stepsInFlightCap(ctx, transaction, project)
+	if err != nil {
+		return nil, 0, err
+	}
+	if int32(len(flying)) >= atOnce {
+		return nil, 0, &StepsInFlightError{Steps: flying, Cap: atOnce}
+	}
+
+	step, err := scanStep(transaction.QueryRow(ctx, `
 		update feature_steps s
 		set state = $4, session = $3, taken_at = now(), updated_at = now()
 		where s.feature = $1 and s.number = $2 and s.state = $5
 		returning `+stepColumns, feature, number, session, StepTaken, StepReady))
 	if errors.Is(err, pgx.ErrNoRows) {
-		if _, missing := p.GetStep(ctx, feature, number); missing != nil {
-			return nil, missing
-		}
-		return nil, ErrStepNotReady
+		return nil, 0, ErrStepNotReady
 	}
 	if err != nil {
-		return nil, fmt.Errorf("take step: %w", err)
+		return nil, 0, fmt.Errorf("take step: %w", err)
 	}
-	return step, nil
+	if err := transaction.Commit(ctx); err != nil {
+		return nil, 0, fmt.Errorf("commit the take: %w", err)
+	}
+	return step, int32(len(flying)) + 1, nil
+}
+
+// stepsInFlight is every step of one project in state taken, with the feature each one sits in, by
+// feature number and then step number.
+//
+// The order is the store's rather than the caller's, so the refusal a person reads names the same
+// three steps in the same order however the rows happen to be laid out.
+func stepsInFlight(ctx context.Context, transaction pgx.Tx, project string) ([]StepInFlight, error) {
+	rows, err := transaction.Query(ctx, `
+		select s.number, f.number, f.title
+		from feature_steps s
+		join features f on f.id = s.feature
+		where f.project = $1 and s.state = $2
+		order by f.number, s.number`, project, StepTaken)
+	if err != nil {
+		return nil, fmt.Errorf("count the steps in flight: %w", err)
+	}
+	defer rows.Close()
+
+	flying := make([]StepInFlight, 0)
+	for rows.Next() {
+		var held StepInFlight
+		if err := rows.Scan(&held.Number, &held.FeatureNumber, &held.FeatureTitle); err != nil {
+			return nil, fmt.Errorf("read a step in flight: %w", err)
+		}
+		flying = append(flying, held)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read the steps in flight: %w", err)
+	}
+	return flying, nil
+}
+
+// stepsInFlightCap is how many steps this project may hold in state taken at one time. A project with
+// no design row has set no cap and reads the default, which is what the column would have given it.
+func stepsInFlightCap(ctx context.Context, transaction pgx.Tx, project string) (int32, error) {
+	var atOnce int32
+	err := transaction.QueryRow(ctx,
+		`select steps_in_flight_cap from project_designs where project = $1`, project).Scan(&atOnce)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return DefaultStepsInFlightCap, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("read the cap: %w", err)
+	}
+	return atOnce, nil
 }
 
 // FinishStep records what came of a step: the word that closes it, what somebody wrote, who spoke
