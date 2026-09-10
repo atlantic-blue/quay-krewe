@@ -698,17 +698,27 @@ message Step {
   // proof_scenario is the exact name of the scenario that proves it, as the feature file writes it.
   // This is what krewe runs.
   string proof_scenario = 13;
+  // restatement is what the session wrote about this step, before it built anything. It is empty
+  // until the session writes one, which is the state every taken step starts in.
+  string restatement = 14;
+  // restated_at is when the session last wrote one, unset while restatement is empty.
+  google.protobuf.Timestamp restated_at = 15;
+  // restatement_approved is the operator's word about this exact text. A second restatement clears
+  // it, because approval is a statement about one text and never about the step.
+  bool restatement_approved = 16;
+  // restatement_approved_at is when that word was spoken, unset while restatement_approved is false.
+  google.protobuf.Timestamp restatement_approved_at = 17;
   // closed_by is who spoke the word that finished the step: operator, or krewe. It is empty while the
   // step is ready or taken.
   //
-  // The number is 22 rather than 14 because the fields between them belong to the restatement and to
-  // the proof result, which reach the wire later.
+  // The number is 22 rather than 18 because the fields between them belong to the proof result,
+  // which reaches the wire later.
   string closed_by = 22;
   // milestone is which milestone of the feature this step belongs to. Zero means the step belongs to
   // no milestone, and zero is never a milestone row.
   //
-  // The number is 24 rather than 14 because the fields between them belong to the restatement and to
-  // the proof state, which are written in the same revision as this one and reach the wire later.
+  // The number is 24 rather than 18 because the fields between them belong to the proof result,
+  // which reaches the wire later.
   int32 milestone = 24;
   // contracts is the contracts this step builds, one identifier per line. It is empty for a step
   // that names none, and krewe then hands that step no contract.

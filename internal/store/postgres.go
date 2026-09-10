@@ -879,7 +879,8 @@ func (p *Postgres) SetStepsInFlightCap(ctx context.Context, project string, atOn
 // later.
 const stepColumns = `s.feature, s.number, s.title, s.intention, s.touches, s.proof, ` +
 	`s.proof_scenario, s.after, s.milestone, s.contracts, s.contract_scope, ` +
-	`s.state, s.session, s.result, s.closed_by, s.taken_at, s.finished_at`
+	`s.state, s.session, s.result, s.closed_by, s.taken_at, s.finished_at, ` +
+	`s.restatement, s.restated_at, s.restatement_approved, s.restatement_approved_at`
 
 // stepJoins is the join every path read goes through: a step to its feature, that feature to its
 // project, and that project to its workspace.
@@ -897,12 +898,16 @@ func scanStep(row pgx.Row) (*quaycrewv1.Step, error) {
 		feature, title, intention, touches, proof string
 		scenario, state, session, result          string
 		contracts, contractScope, closedBy        string
+		restatement                               string
 		number, after, milestone                  int32
+		approved                                  bool
 		takenAt, finishedAt                       *time.Time
+		restatedAt, approvedAt                    *time.Time
 	)
 	if err := row.Scan(&feature, &number, &title, &intention, &touches, &proof,
 		&scenario, &after, &milestone, &contracts, &contractScope,
-		&state, &session, &result, &closedBy, &takenAt, &finishedAt); err != nil {
+		&state, &session, &result, &closedBy, &takenAt, &finishedAt,
+		&restatement, &restatedAt, &approved, &approvedAt); err != nil {
 		return nil, err
 	}
 	step := &quaycrewv1.Step{
@@ -921,12 +926,21 @@ func scanStep(row pgx.Row) (*quaycrewv1.Step, error) {
 		Session:       session,
 		Result:        result,
 		ClosedBy:      closedBy,
+
+		Restatement:         restatement,
+		RestatementApproved: approved,
 	}
 	if takenAt != nil {
 		step.TakenAt = timestamppb.New(*takenAt)
 	}
 	if finishedAt != nil {
 		step.FinishedAt = timestamppb.New(*finishedAt)
+	}
+	if restatedAt != nil {
+		step.RestatedAt = timestamppb.New(*restatedAt)
+	}
+	if approvedAt != nil {
+		step.RestatementApprovedAt = timestamppb.New(*approvedAt)
 	}
 	return step, nil
 }
@@ -1325,6 +1339,34 @@ func (p *Postgres) FinishStep(ctx context.Context, feature string, number int32,
 	}
 	if err != nil {
 		return nil, fmt.Errorf("finish step: %w", err)
+	}
+	return step, nil
+}
+
+// SetRestatement records what the session wrote about a step before it built anything.
+//
+// The text, its stamp and the cleared approval move in one statement, so no reader ever sees a step
+// carrying a new restatement under the approval of the text before it.
+//
+// The approval is cleared whatever the text says. The store cannot tell an unchanged text from a
+// rewritten one that reads the same, so the caller skips the call when nothing changed and this
+// clears every time it is called.
+func (p *Postgres) SetRestatement(ctx context.Context, feature string, number int32, text string) (
+	*quaycrewv1.Step, error) {
+	if err := p.featureExists(ctx, feature); err != nil {
+		return nil, err
+	}
+	step, err := scanStep(p.pool.QueryRow(ctx, `
+		update feature_steps s
+		set restatement = $3, restated_at = now(),
+			restatement_approved = false, restatement_approved_at = null, updated_at = now()
+		where s.feature = $1 and s.number = $2
+		returning `+stepColumns, feature, number, text))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("set the restatement: %w", err)
 	}
 	return step, nil
 }

@@ -17,6 +17,7 @@ import (
 	quaycrewv1 "github.com/atlantic-blue/quay-krewe/gen/quaycrew/v1"
 	"github.com/atlantic-blue/quay-krewe/internal/contextsize"
 	"github.com/atlantic-blue/quay-krewe/internal/display"
+	"github.com/atlantic-blue/quay-krewe/internal/sandbox"
 	"github.com/atlantic-blue/quay-krewe/internal/store"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -1535,11 +1536,29 @@ func takeText(step *quaycrewv1.Step, inThePath int, project string, hasContracts
 	if step.GetContractScope() != "" {
 		blocks = append(blocks, labelScope+"\n"+step.GetContractScope())
 	}
-	blocks = append(blocks,
-		whereToRead(hasContracts),
-		"Build this step only. Do not take work from another step.",
-		takeDelivery)
+	blocks = append(blocks, whereToRead(hasContracts), takeDelivery, restateFirst())
 	return strings.Join(blocks, "\n\n") + "\n"
+}
+
+// restateFirst is the last paragraph of the take text, and it is always there, whole. It is what
+// makes the session restate the step rather than build it.
+//
+// It goes after the paragraph about delivering the work, because the last thing the text says is the
+// thing the session does next, and the session that has just read this delivers nothing yet.
+//
+// The mark is read from the package that reads it back, so the section the session is asked to write
+// and the section the system looks for cannot come to be two different words.
+//
+// The six parts are what the operator reads to decide whether the session understood the step. The
+// last of them is a percentage, because a number below about 80 is the signal to answer the session
+// rather than to approve it.
+func restateFirst() string {
+	return "Write no code. Change no file in the repository. Write what you understood into your own\n" +
+		"CLAUDE.md, inside a section marked " + sandbox.Mark(sandbox.RestatementScope) +
+		", with these six headings:\n" +
+		"what this step changes, what it will not touch, what you assumed, what you do not know,\n" +
+		"the scenario you will write and the value it describes, how sure you are and what lowers it.\n" +
+		"Then stop and say you are ready."
 }
 
 // takeContracts is what the contracts block is called in the take text. The document calls it "The

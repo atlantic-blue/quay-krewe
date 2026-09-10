@@ -12,6 +12,8 @@ import (
 
 	quaycrewv1 "github.com/atlantic-blue/quay-krewe/gen/quaycrew/v1"
 	"github.com/atlantic-blue/quay-krewe/internal/display"
+	"github.com/atlantic-blue/quay-krewe/internal/sandbox"
+	"github.com/atlantic-blue/quay-krewe/internal/store"
 	"github.com/cucumber/godog"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -753,6 +755,92 @@ func initializePathSteps(sc *godog.ScenarioContext) {
 		return nil
 	})
 
+	// What a session says about the step it holds, before it builds anything. It writes the section
+	// itself, into its own memory file, and the next exec reads it back.
+
+	// Written into the file the way a session writes into its own memory: the directory is mounted in,
+	// so this process and that container are looking at one place. The section it already carries is
+	// taken out first, because a session that restates a second time edits its own section rather
+	// than writing a second one under the same mark.
+	//
+	// The mark is written out here rather than read from the package, so a constant that comes back
+	// under another name does not take the check with it.
+	sc.Step(`^the session writes its restatement:$`, func(ctx context.Context, text *godog.DocString) error {
+		dir, err := sessionWorkingDir(ctx)
+		if err != nil {
+			return err
+		}
+		existing, _ := sandbox.ReadMemory(dir)
+		kept, _ := sandbox.WithoutSection(existing, "restatement")
+		return sandbox.WriteMemory(dir,
+			strings.TrimRight(kept, "\n")+"\n\n<!-- quay:restatement -->\n"+text.Content+"\n")
+	})
+
+	// Read out of the store rather than out of the file the session wrote, because the claim is that
+	// the text reached the step. A check against the file would pass against a read back that did
+	// nothing at all.
+	sc.Step(`^step (\d+) reads back the restatement "([^"]*)"$`,
+		func(ctx context.Context, number int, want string) error {
+			step, err := stepAsItStands(ctx, int32(number))
+			if err != nil {
+				return err
+			}
+			if !strings.Contains(step.GetRestatement(), unescape(want)) {
+				return fmt.Errorf("step %d restates %q, want it to carry %q",
+					number, step.GetRestatement(), unescape(want))
+			}
+			if step.GetRestatedAt() == nil {
+				return fmt.Errorf("step %d carries a restatement and no moment it was written", number)
+			}
+			return nil
+		})
+
+	sc.Step(`^step (\d+) does not read back the restatement "([^"]*)"$`,
+		func(ctx context.Context, number int, unwanted string) error {
+			step, err := stepAsItStands(ctx, int32(number))
+			if err != nil {
+				return err
+			}
+			if strings.Contains(step.GetRestatement(), unescape(unwanted)) {
+				return fmt.Errorf("step %d still restates %q: %q",
+					number, unescape(unwanted), step.GetRestatement())
+			}
+			return nil
+		})
+
+	// Both the word and its moment, because a write that cleared one and left the other says the
+	// step was approved at a time nobody approved it.
+	sc.Step(`^nobody has approved step (\d+)'s restatement$`, func(ctx context.Context, number int) error {
+		step, err := stepAsItStands(ctx, int32(number))
+		if err != nil {
+			return err
+		}
+		if step.GetRestatementApproved() || step.GetRestatementApprovedAt() != nil {
+			return fmt.Errorf("step %d reads as approved at %v",
+				number, step.GetRestatementApprovedAt())
+		}
+		return nil
+	})
+
+	// The restatement is a section and never a level. Swept into the session's own context, it is
+	// stored as though the operator had typed it and rendered again underneath itself on every exec
+	// from then on.
+	sc.Step(`^the session's context does not carry "([^"]*)"$`, func(ctx context.Context, unwanted string) error {
+		w := worldFrom(ctx)
+		current, err := w.lastExec()
+		if err != nil {
+			return err
+		}
+		got, err := w.store.GetContext(ctx, store.ContextSession, current.sessionID)
+		if err != nil {
+			return err
+		}
+		if strings.Contains(got, unescape(unwanted)) {
+			return fmt.Errorf("the session's context carries %q: %q", unescape(unwanted), got)
+		}
+		return nil
+	})
+
 	// Finishing a step. The result is the point of the write: nothing can see inside a container, so
 	// what somebody wrote is what the next session reads.
 
@@ -1144,6 +1232,20 @@ func stepHeldByTheTake(ctx context.Context, feature string, number int32) error 
 		return nil
 	}
 	return fmt.Errorf("the path has no step %d", number)
+}
+
+// stepAsItStands reads one step of the feature a scenario means when it names none, from the control
+// plane now. The assertions about a restatement go through it because the text arrives on an exec
+// rather than in the answer to any call, so a read the scenario made earlier says nothing about it.
+func stepAsItStands(ctx context.Context, number int32) (*quaycrewv1.Step, error) {
+	held, err := theFeature(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := readPath(ctx, held.GetId()); err != nil {
+		return nil, err
+	}
+	return stepNumbered(ctx, number)
 }
 
 // takenText is what the last take composed, and a refusal to assert on nothing when no take landed.
