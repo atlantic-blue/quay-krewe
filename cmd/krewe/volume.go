@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -26,10 +25,10 @@ import (
 // for a session and for nothing else. So nothing said what a workspace's shared folder held, and
 // nothing put a file in one or took one out. Both words are gone, and each names this one instead.
 //
-// The bytes of a file travel through the control plane, in pieces. The tool and the volume are not
-// always on one machine: under Kubernetes the volume is beside the control plane, and a path the
-// system hands back reaches nothing here. A listing and a delete still open the directory on this
-// machine, so both of those wait for a step of their own.
+// The bytes of a file travel through the control plane, in pieces, and the listing is read there
+// too. The tool and the volume are not always on one machine: under Kubernetes the volume is beside
+// the control plane, and a path the system hands back reaches nothing here. A delete still opens the
+// directory on this machine, so it waits for a step of its own.
 
 // volumeUsage names the address form, because the scheme is the part nobody guesses.
 const volumeUsage = "usage: krewe volume list <address>" +
@@ -78,15 +77,17 @@ func runVolumeList(ctx context.Context, client quaycrewv1.ControlPlaneServiceCli
 	if err != nil {
 		return err
 	}
-	resp, err := client.LocateDirectory(ctx, &quaycrewv1.LocateDirectoryRequest{
+	said, err := client.ListVolume(ctx, &quaycrewv1.ListVolumeRequest{
 		Workspace: found.Where.WorkspaceID,
 		Project:   found.Where.ProjectID,
 		Session:   found.Where.SessionID,
+		Key:       found.Address.Key,
 	})
 	if err != nil {
 		return err
 	}
-	return listVolume(resp.GetHost(), found.Address.Key, out)
+	printVolume(said, out)
+	return nil
 }
 
 // volumeTransport carries bytes to a volume and back from one.
@@ -423,9 +424,9 @@ func (v *volumeReader) Close() error {
 
 // hostVolume is the part of the transport that still opens the directory on this machine.
 //
-// One road is left on it. The bytes of a file moved to the control plane, because the tool and the
-// volume are not always on one machine. A delete still names a path this process opens, and so does
-// the listing, so both of them are a step of their own.
+// One road is left on it. The bytes of a file and the listing both moved to the control plane,
+// because the tool and the volume are not always on one machine. A delete still names a path this
+// process opens, so it is a step of its own.
 type hostVolume struct {
 	client quaycrewv1.ControlPlaneServiceClient
 }
@@ -482,7 +483,7 @@ func whatItHolds(dir string) string {
 	}
 	names := make([]string, 0, len(entries))
 	for _, entry := range entries {
-		names = append(names, volumeName(entry))
+		names = append(names, volumeName(entry.Name(), entry.IsDir()))
 	}
 	return strings.Join(names, ", ")
 }
@@ -515,66 +516,49 @@ func writeWholeFile(at string, body io.Reader) error {
 	return os.Rename(partial.Name(), at)
 }
 
-// listVolume prints the directory the address landed on, then what is in it.
+// printVolume prints the directory the address landed on, then what is in it.
 //
 // The path goes first, on its own line. A listing is only useful beside the directory it read: a name
 // that is missing and a name in another folder read the same otherwise.
-func listVolume(root, key string, out io.Writer) error {
-	inside := workspace.InVolume(root, key)
-	info, err := os.Stat(inside)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return fmt.Errorf("%s holds nothing called %q", root, key)
-		}
-		return err
-	}
-	fmt.Fprintln(out, inside)
-	// A key that names a file lists that file, the way listing an object by its whole name does.
-	// Refusing it would refuse the one command somebody types to check a copy arrived.
-	if !info.IsDir() {
-		fmt.Fprint(out, volumeRows([]os.DirEntry{fs.FileInfoToDirEntry(info)}))
-		return nil
-	}
-	entries, err := os.ReadDir(inside)
-	if err != nil {
-		return err
-	}
-	if len(entries) == 0 {
+//
+// No names at all is an empty directory, and it is a sentence rather than a table: a heading over
+// nothing reads as a command that broke. A key that names one file answers with that one file, so
+// there is no other way to be handed nothing.
+func printVolume(said *quaycrewv1.ListVolumeResponse, out io.Writer) {
+	fmt.Fprintln(out, said.GetHost())
+	if len(said.GetEntries()) == 0 {
 		fmt.Fprintln(out, "nothing in it")
-		return nil
+		return
 	}
-	fmt.Fprint(out, volumeRows(entries))
-	return nil
+	fmt.Fprint(out, volumeRows(said.GetEntries()))
 }
 
-// volumeRows is the table. os.ReadDir hands its entries back sorted by name, and that order is the
-// contract here: one directory read twice answers the same.
-func volumeRows(entries []os.DirEntry) string {
+// volumeRows is the table. The names arrive sorted, and that order is the contract: one directory
+// read twice answers the same.
+func volumeRows(entries []*quaycrewv1.VolumeEntry) string {
 	rows := make([][]string, 0, len(entries))
 	for _, entry := range entries {
-		rows = append(rows, []string{volumeName(entry), volumeSize(entry)})
+		rows = append(rows, []string{
+			volumeName(entry.GetName(), entry.GetDirectory()), volumeSize(entry),
+		})
 	}
 	return display.Rows([]string{"NAME", "SIZE"}, rows)
 }
 
 // volumeName marks a folder with a trailing slash, the way every listing of files does, so a name
 // that could be either is not ambiguous.
-func volumeName(entry os.DirEntry) string {
-	if entry.IsDir() {
-		return entry.Name() + "/"
+func volumeName(name string, folder bool) string {
+	if folder {
+		return name + "/"
 	}
-	return entry.Name()
+	return name
 }
 
 // volumeSize is how big a file is, and empty for a folder. A folder's size on disk is the size of its
 // own record rather than of what is in it, so printing one answers a question nobody asked.
-func volumeSize(entry os.DirEntry) string {
-	if entry.IsDir() {
+func volumeSize(entry *quaycrewv1.VolumeEntry) string {
+	if entry.GetDirectory() {
 		return ""
 	}
-	info, err := entry.Info()
-	if err != nil {
-		return ""
-	}
-	return strconv.FormatInt(info.Size(), 10)
+	return strconv.FormatInt(entry.GetSize(), 10)
 }
