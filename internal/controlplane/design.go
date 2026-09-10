@@ -1536,12 +1536,15 @@ func takeText(step *quaycrewv1.Step, inThePath int, project string, hasContracts
 	if step.GetContractScope() != "" {
 		blocks = append(blocks, labelScope+"\n"+step.GetContractScope())
 	}
-	blocks = append(blocks, whereToRead(hasContracts), restateFirst())
+	blocks = append(blocks, whereToRead(hasContracts), takeDelivery, restateFirst())
 	return strings.Join(blocks, "\n\n") + "\n"
 }
 
 // restateFirst is the last paragraph of the take text, and it is always there, whole. It is what
 // makes the session restate the step rather than build it.
+//
+// It goes after the paragraph about delivering the work, because the last thing the text says is the
+// thing the session does next, and the session that has just read this delivers nothing yet.
 //
 // The mark is read from the package that reads it back, so the section the session is asked to write
 // and the section the system looks for cannot come to be two different words.
@@ -1562,6 +1565,21 @@ func restateFirst() string {
 // contracts it builds", because there the step is one of many on a page. The session is given one
 // step, so the text says which step these contracts belong to.
 const takeContracts = "The contracts this step builds"
+
+// takeDelivery is the last block of the take text: what to do with the work once it is built.
+//
+// Without it a session builds the step and stops, because nothing else in the text says a pull
+// request is the deliverable, and the words had to be written into each dispatch by hand.
+//
+// It names the git and github skills rather than restating them. Both are already in the session's
+// context, and a second copy of a rule is a copy that can disagree with the first. Opening a pull
+// request is the session's, ending it is the operator's, so the text refuses the merge here too.
+const takeDelivery = "Deliver this step as one pull request. The git and github skills say how a " +
+	"working tree, a branch, a commit and a pull request are done here." +
+	"\n\nWatch what proves this step fail before you make it pass, because a test you did not see " +
+	"fail proves nothing. Get every check green before you report, and fix a red check rather than " +
+	"explaining it." +
+	"\n\nDo not merge it. Report the address of the pull request."
 
 // whereToRead names the files the session opens before it starts.
 //

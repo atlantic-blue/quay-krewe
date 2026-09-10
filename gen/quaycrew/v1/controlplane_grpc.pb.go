@@ -67,6 +67,7 @@ const (
 	ControlPlaneService_LocateDirectory_FullMethodName          = "/quaycrew.v1.ControlPlaneService/LocateDirectory"
 	ControlPlaneService_PutVolumeFile_FullMethodName            = "/quaycrew.v1.ControlPlaneService/PutVolumeFile"
 	ControlPlaneService_GetVolumeFile_FullMethodName            = "/quaycrew.v1.ControlPlaneService/GetVolumeFile"
+	ControlPlaneService_ListVolume_FullMethodName               = "/quaycrew.v1.ControlPlaneService/ListVolume"
 	ControlPlaneService_ImportSkill_FullMethodName              = "/quaycrew.v1.ControlPlaneService/ImportSkill"
 	ControlPlaneService_ListSkills_FullMethodName               = "/quaycrew.v1.ControlPlaneService/ListSkills"
 	ControlPlaneService_AttachSkill_FullMethodName              = "/quaycrew.v1.ControlPlaneService/AttachSkill"
@@ -180,6 +181,11 @@ type ControlPlaneServiceClient interface {
 	// is the operator's to make, and these two do not widen anything.
 	PutVolumeFile(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[PutVolumeFileRequest, PutVolumeFileResponse], error)
 	GetVolumeFile(ctx context.Context, in *GetVolumeFileRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[GetVolumeFileResponse], error)
+	// What a directory in a volume holds. It is here for the reason the two calls above are: the
+	// volume is not always on the machine the tool runs on. A listing that opened a path itself then
+	// read nothing at all. It is not denied to the driver either, because it reads names and grants
+	// nothing.
+	ListVolume(ctx context.Context, in *ListVolumeRequest, opts ...grpc.CallOption) (*ListVolumeResponse, error)
 	ImportSkill(ctx context.Context, in *ImportSkillRequest, opts ...grpc.CallOption) (*ImportSkillResponse, error)
 	ListSkills(ctx context.Context, in *ListSkillsRequest, opts ...grpc.CallOption) (*ListSkillsResponse, error)
 	AttachSkill(ctx context.Context, in *AttachSkillRequest, opts ...grpc.CallOption) (*AttachSkillResponse, error)
@@ -700,6 +706,16 @@ func (c *controlPlaneServiceClient) GetVolumeFile(ctx context.Context, in *GetVo
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type ControlPlaneService_GetVolumeFileClient = grpc.ServerStreamingClient[GetVolumeFileResponse]
 
+func (c *controlPlaneServiceClient) ListVolume(ctx context.Context, in *ListVolumeRequest, opts ...grpc.CallOption) (*ListVolumeResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListVolumeResponse)
+	err := c.cc.Invoke(ctx, ControlPlaneService_ListVolume_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *controlPlaneServiceClient) ImportSkill(ctx context.Context, in *ImportSkillRequest, opts ...grpc.CallOption) (*ImportSkillResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ImportSkillResponse)
@@ -928,6 +944,11 @@ type ControlPlaneServiceServer interface {
 	// is the operator's to make, and these two do not widen anything.
 	PutVolumeFile(grpc.ClientStreamingServer[PutVolumeFileRequest, PutVolumeFileResponse]) error
 	GetVolumeFile(*GetVolumeFileRequest, grpc.ServerStreamingServer[GetVolumeFileResponse]) error
+	// What a directory in a volume holds. It is here for the reason the two calls above are: the
+	// volume is not always on the machine the tool runs on. A listing that opened a path itself then
+	// read nothing at all. It is not denied to the driver either, because it reads names and grants
+	// nothing.
+	ListVolume(context.Context, *ListVolumeRequest) (*ListVolumeResponse, error)
 	ImportSkill(context.Context, *ImportSkillRequest) (*ImportSkillResponse, error)
 	ListSkills(context.Context, *ListSkillsRequest) (*ListSkillsResponse, error)
 	AttachSkill(context.Context, *AttachSkillRequest) (*AttachSkillResponse, error)
@@ -1099,6 +1120,9 @@ func (UnimplementedControlPlaneServiceServer) PutVolumeFile(grpc.ClientStreaming
 }
 func (UnimplementedControlPlaneServiceServer) GetVolumeFile(*GetVolumeFileRequest, grpc.ServerStreamingServer[GetVolumeFileResponse]) error {
 	return status.Error(codes.Unimplemented, "method GetVolumeFile not implemented")
+}
+func (UnimplementedControlPlaneServiceServer) ListVolume(context.Context, *ListVolumeRequest) (*ListVolumeResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListVolume not implemented")
 }
 func (UnimplementedControlPlaneServiceServer) ImportSkill(context.Context, *ImportSkillRequest) (*ImportSkillResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ImportSkill not implemented")
@@ -2006,6 +2030,24 @@ func _ControlPlaneService_GetVolumeFile_Handler(srv interface{}, stream grpc.Ser
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type ControlPlaneService_GetVolumeFileServer = grpc.ServerStreamingServer[GetVolumeFileResponse]
 
+func _ControlPlaneService_ListVolume_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListVolumeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ControlPlaneServiceServer).ListVolume(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ControlPlaneService_ListVolume_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ControlPlaneServiceServer).ListVolume(ctx, req.(*ListVolumeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _ControlPlaneService_ImportSkill_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ImportSkillRequest)
 	if err := dec(in); err != nil {
@@ -2430,6 +2472,10 @@ var ControlPlaneService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "LocateDirectory",
 			Handler:    _ControlPlaneService_LocateDirectory_Handler,
+		},
+		{
+			MethodName: "ListVolume",
+			Handler:    _ControlPlaneService_ListVolume_Handler,
 		},
 		{
 			MethodName: "ImportSkill",
