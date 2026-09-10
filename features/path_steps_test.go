@@ -378,6 +378,12 @@ func initializePathSteps(sc *godog.ScenarioContext) {
 		return refused(worldFrom(ctx), codes.ResourceExhausted)
 	})
 
+	// The file refusal is the wrong state rather than a full machine: the take is not allowed at all
+	// while that step runs, and no amount of room would let it through.
+	sc.Step(`^the control plane refuses it as a file two steps write$`, func(ctx context.Context) error {
+		return refused(worldFrom(ctx), codes.FailedPrecondition)
+	})
+
 	// The count the take answered with, and never one worked out here. It is the count the write
 	// made, so a take that dispatched without counting is a failure rather than a number that
 	// happens to agree.
@@ -699,34 +705,23 @@ func initializePathSteps(sc *godog.ScenarioContext) {
 	// The step names the session in the same write that moved its state, so a take that dispatched
 	// and recorded nobody leaves a step nothing can be read back from.
 	sc.Step(`^step (\d+) is held by that session$`, func(ctx context.Context, number int) error {
-		w, p := worldFrom(ctx), pathFrom(ctx)
-		if p.take == nil {
-			return fmt.Errorf("no step was taken, so nothing holds one")
-		}
 		held, err := theFeature(ctx)
 		if err != nil {
 			return err
 		}
-		resp, err := w.client.ListSteps(ctx, &quaycrewv1.ListStepsRequest{Feature: held.GetId()})
-		if err != nil {
-			return err
-		}
-		for _, step := range resp.GetSteps() {
-			if step.GetNumber() != int32(number) {
-				continue
-			}
-			if step.GetState() != "taken" {
-				return fmt.Errorf("step %d reads as %q after a take", number, step.GetState())
-			}
-			started := p.take.GetSession()
-			if step.GetSession() != started.GetHandle() && step.GetSession() != started.GetId() {
-				return fmt.Errorf("step %d names session %q, and the session that took it is %q",
-					number, step.GetSession(), started.GetId())
-			}
-			return nil
-		}
-		return fmt.Errorf("the path has no step %d", number)
+		return stepHeldByTheTake(ctx, held.GetId(), int32(number))
 	})
+
+	// The scenarios about two features name which one they mean. The feature a scenario means when it
+	// names none is the first, and the second one is the whole point of these.
+	sc.Step(`^step (\d+) of feature (\d+) is held by that session$`,
+		func(ctx context.Context, number, feature int) error {
+			held, err := featureOfProject(ctx, int32(feature))
+			if err != nil {
+				return err
+			}
+			return stepHeldByTheTake(ctx, held.GetId(), int32(number))
+		})
 
 	sc.Step(`^the refusal names the session holding step (\d+)$`, func(ctx context.Context, number int) error {
 		w, p := worldFrom(ctx), pathFrom(ctx)
@@ -1120,6 +1115,35 @@ func takeStep(ctx context.Context, feature string, number int32) error {
 	w.execs = append(w.execs, dispatched{
 		sessionID: resp.GetSession().GetId(), handle: resp.GetSession().GetHandle()})
 	return w.settled(ctx)
+}
+
+// stepHeldByTheTake reads one step back from the control plane and says whether the last take is what
+// holds it. It reads the store rather than what the take answered, because a take that answered with a
+// session and wrote none is exactly what this is for.
+func stepHeldByTheTake(ctx context.Context, feature string, number int32) error {
+	w, p := worldFrom(ctx), pathFrom(ctx)
+	if p.take == nil {
+		return fmt.Errorf("no step was taken, so nothing holds one")
+	}
+	resp, err := w.client.ListSteps(ctx, &quaycrewv1.ListStepsRequest{Feature: feature})
+	if err != nil {
+		return err
+	}
+	for _, step := range resp.GetSteps() {
+		if step.GetNumber() != number {
+			continue
+		}
+		if step.GetState() != "taken" {
+			return fmt.Errorf("step %d reads as %q after a take", number, step.GetState())
+		}
+		started := p.take.GetSession()
+		if step.GetSession() != started.GetHandle() && step.GetSession() != started.GetId() {
+			return fmt.Errorf("step %d names session %q, and the session that took it is %q",
+				number, step.GetSession(), started.GetId())
+		}
+		return nil
+	}
+	return fmt.Errorf("the path has no step %d", number)
 }
 
 // takenText is what the last take composed, and a refusal to assert on nothing when no take landed.

@@ -92,6 +92,19 @@ var ErrPathHoldsTakenSteps = errors.New("store: the path drops or renames a step
 // number the operator set.
 var ErrTooManyStepsInFlight = errors.New("store: the project already has as many steps in flight as its cap allows")
 
+// ErrStepsTouchTheSameFile is returned when a line of the step being taken names a file a step in
+// state taken already names. A SharedFileError carries the file and that step, and answers errors.Is
+// for this.
+//
+// The read of the files and the write are one transaction, for the reason ErrTooManyStepsInFlight is
+// one: two takes at one moment, each reading before the other wrote, would both pass and put two
+// sessions on one file.
+//
+// The files are read across the whole project rather than inside one feature. Two features share the
+// user model, the router and the configuration, so a check scoped to a feature would let two of them
+// write one file at the same moment.
+var ErrStepsTouchTheSameFile = errors.New("store: a step in flight already writes that file")
+
 // DefaultStepsInFlightCap is how many steps a project nobody configured may hold in state taken at
 // one time. It is the default of the column, repeated here for the stores to answer with when a
 // project carries no design row at all.
@@ -111,6 +124,69 @@ type StepInFlight struct {
 	Number        int32
 	FeatureNumber int32
 	FeatureTitle  string
+	// Touches is what this step says it writes, one file per line, as the path document wrote it.
+	// It travels with the step because the take reads it in the same statement it counts them in: a
+	// second read for the files would be a second moment, and a take that landed between the two
+	// would be missed.
+	Touches string
+}
+
+// SharedFileError names the file two steps write and the step in flight that already writes it.
+//
+// One file and one step rather than every collision, because the operator has one move either way:
+// wait for that step, or finish it. FLIGHT-3 says which one it is, so two runs of one take name the
+// same step.
+type SharedFileError struct {
+	// File is the line both steps carry, trimmed of the spaces at each end.
+	File string
+	// Step is the step in flight that names it, and the feature that step sits in.
+	Step StepInFlight
+}
+
+func (e *SharedFileError) Error() string {
+	return fmt.Sprintf("%s: step %d.%d %s writes %s",
+		ErrStepsTouchTheSameFile.Error(), e.Step.FeatureNumber, e.Step.Number, e.Step.FeatureTitle, e.File)
+}
+
+// Is makes errors.Is(err, ErrStepsTouchTheSameFile) answer, so a caller that only wants to know which
+// rule refused the take does not have to unwrap the file.
+func (e *SharedFileError) Is(target error) bool { return target == ErrStepsTouchTheSameFile }
+
+// FilesTouched is what a step says it writes: the touches text split on newlines, each line trimmed
+// of the spaces at each end, with the empty lines dropped.
+//
+// It is here rather than in each store because the two stores are held to one conformance suite, and
+// a trim that ran in one of them would let the same path collide in Postgres and pass in memory.
+func FilesTouched(touches string) []string {
+	files := make([]string, 0)
+	for _, line := range strings.Split(touches, "\n") {
+		if named := strings.TrimSpace(line); named != "" {
+			files = append(files, named)
+		}
+	}
+	return files
+}
+
+// SharesAFile is the first file the step being taken names that a step in flight names too, or nil
+// when the two sets are apart.
+//
+// The steps in flight are read in feature number order and then step number order, and the answer is
+// the first match in that walk, so the same take refused twice names the same step. The comparison is
+// exact and case sensitive: this reads text a person wrote in a document, and ./internal/store.go and
+// internal/store.go are two lines to it.
+func SharesAFile(touches string, flying []StepInFlight) *SharedFileError {
+	taking := make(map[string]bool)
+	for _, file := range FilesTouched(touches) {
+		taking[file] = true
+	}
+	for _, held := range flying {
+		for _, file := range FilesTouched(held.Touches) {
+			if taking[file] {
+				return &SharedFileError{File: file, Step: held}
+			}
+		}
+	}
+	return nil
 }
 
 // StepsInFlightError names every step in flight and the cap they were counted against.
@@ -555,13 +631,16 @@ type Store interface {
 	// The count is the write's own, so a caller that prints it prints what the take made rather than
 	// what a second read a moment later says.
 	//
-	// Several steps may be taken at once, in one feature or across the features of one project.
-	// ErrTooManyStepsInFlight is the only limit, and it counts every step in state taken in the whole
-	// project against the design's cap. Counted inside the feature, two features could each run the
-	// whole cap.
+	// Several steps may be taken at once, in one feature or across the features of one project. Two
+	// limits refuse a take. ErrTooManyStepsInFlight counts every step in state taken in the whole
+	// project against the design's cap. ErrStepsTouchTheSameFile reads what each of those steps says
+	// it writes, and refuses a step that names a file one of them names. Both read the whole project:
+	// counted inside the feature, two features could each run the whole cap, and two features could
+	// each write one file at the same moment.
 	//
-	// The count, the state check and the write are one transaction, so two callers cannot both take
-	// one step, and two takes at one moment cannot both pass a cap with room for one of them.
+	// The count, the file check, the state check and the write are one transaction, so two callers
+	// cannot both take one step, two takes at one moment cannot both pass a cap with room for one of
+	// them, and two takes at one moment cannot both pass a file only one of them may write.
 	TakeStep(ctx context.Context, feature string, number int32, session string) (*quaycrewv1.Step, int32, error)
 	// FinishStep records what came of a step: the word that closes it, what somebody wrote, who spoke
 	// the word, and the stamp. A feature that does not exist and a path that holds no step of that

@@ -3419,6 +3419,254 @@ func runPathConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 			t.Fatalf("taking a step the path does not hold answered %v, want ErrNotFound", err)
 		}
 	})
+
+	// The rule this slice exists for. Two sessions on one file write over each other, and what a step
+	// says it writes is the only thing the system has to see the collision coming.
+	t.Run("a take on a file a step in flight writes is refused, naming the file and that step", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		feature := newFeature(t, s, newProject(t, s, "acme", "house-bills"), "the bills")
+		writePath(t, s, feature.GetId(),
+			store.Step{Number: 1, Title: "the store holds it", Touches: "internal/store/store.go"},
+			store.Step{Number: 2, Title: "the command reads it", Touches: "internal/store/store.go"})
+		if _, _, err := s.TakeStep(ctx, feature.GetId(), 1, "session-one"); err != nil {
+			t.Fatalf("TakeStep: %v", err)
+		}
+
+		_, _, err := s.TakeStep(ctx, feature.GetId(), 2, "session-two")
+		if !errors.Is(err, store.ErrStepsTouchTheSameFile) {
+			t.Fatalf("the take on a shared file answered %v, want ErrStepsTouchTheSameFile", err)
+		}
+		var shared *store.SharedFileError
+		if !errors.As(err, &shared) {
+			t.Fatalf("the refusal is %v, and it names no file for the caller to print", err)
+		}
+		if shared.File != "internal/store/store.go" {
+			t.Errorf("the refusal names the file %q, want internal/store/store.go", shared.File)
+		}
+		want := store.StepInFlight{
+			Number: 1, FeatureNumber: feature.GetNumber(), FeatureTitle: feature.GetTitle(),
+			Touches: "internal/store/store.go",
+		}
+		if shared.Step != want {
+			t.Errorf("the refusal names %v, want %v", shared.Step, want)
+		}
+		read, err := s.GetStep(ctx, feature.GetId(), 2)
+		if err != nil {
+			t.Fatalf("GetStep after the refusal: %v", err)
+		}
+		if read.GetState() != store.StepReady || read.GetSession() != "" {
+			t.Fatalf("the refused take left step 2 as %q held by %q", read.GetState(), read.GetSession())
+		}
+	})
+
+	// The trap the re-keying put here, in the shape that matters most. Authentication and payment
+	// share the user model, the router and the configuration, so the collision crosses the two paths.
+	// Read inside one feature, this take would pass and two sessions would write one file.
+	t.Run("the file check reads every feature of the project", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		project := newProject(t, s, "acme", "house-bills")
+		first := newFeature(t, s, project, "authentication")
+		second := newFeature(t, s, project, "payment")
+		writePath(t, s, first.GetId(),
+			store.Step{Number: 1, Title: "sign up", Touches: "internal/user/model.go"})
+		writePath(t, s, second.GetId(),
+			store.Step{Number: 1, Title: "checkout", Touches: "internal/user/model.go"},
+			store.Step{Number: 2, Title: "the receipt", Touches: "internal/receipt/receipt.go"})
+		if _, _, err := s.TakeStep(ctx, first.GetId(), 1, "session-one"); err != nil {
+			t.Fatalf("TakeStep: %v", err)
+		}
+
+		_, _, err := s.TakeStep(ctx, second.GetId(), 1, "session-two")
+		var shared *store.SharedFileError
+		if !errors.As(err, &shared) {
+			t.Fatalf("a take across two features answered %v, want a SharedFileError", err)
+		}
+		if shared.Step.FeatureNumber != first.GetNumber() || shared.Step.FeatureTitle != "authentication" {
+			t.Errorf("the refusal puts the step in feature %d %q, want feature %d authentication",
+				shared.Step.FeatureNumber, shared.Step.FeatureTitle, first.GetNumber())
+		}
+
+		// The refusal lands on the step and never on the feature, so the rest of this path is still
+		// there to take.
+		if _, _, err := s.TakeStep(ctx, second.GetId(), 2, "session-three"); err != nil {
+			t.Fatalf("the next step of the second feature answered %v, and it names another file", err)
+		}
+	})
+
+	// The two sets are apart, so both takes pass. A check that refused on any two steps at all would
+	// turn the cap into one.
+	t.Run("two steps naming different files are both taken", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		feature := newFeature(t, s, newProject(t, s, "acme", "house-bills"), "the bills")
+		writePath(t, s, feature.GetId(),
+			store.Step{Number: 1, Title: "the store holds it", Touches: "internal/store/store.go"},
+			store.Step{Number: 2, Title: "the command reads it", Touches: "cmd/krewe/step.go"})
+		if _, _, err := s.TakeStep(ctx, feature.GetId(), 1, "session-one"); err != nil {
+			t.Fatalf("TakeStep: %v", err)
+		}
+
+		if _, _, err := s.TakeStep(ctx, feature.GetId(), 2, "session-two"); err != nil {
+			t.Fatalf("the second take answered %v, and the two steps name different files", err)
+		}
+	})
+
+	// A file written with a space after it is the same file. The document is prose somebody typed, so
+	// the line is trimmed at both ends before anything is compared.
+	t.Run("a file written with spaces around it still collides", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		feature := newFeature(t, s, newProject(t, s, "acme", "house-bills"), "the bills")
+		writePath(t, s, feature.GetId(),
+			store.Step{Number: 1, Title: "the store holds it", Touches: "internal/store/store.go   "},
+			store.Step{Number: 2, Title: "the command reads it", Touches: "  internal/store/store.go"})
+		if _, _, err := s.TakeStep(ctx, feature.GetId(), 1, "session-one"); err != nil {
+			t.Fatalf("TakeStep: %v", err)
+		}
+
+		_, _, err := s.TakeStep(ctx, feature.GetId(), 2, "session-two")
+		var shared *store.SharedFileError
+		if !errors.As(err, &shared) {
+			t.Fatalf("a take on the same file written with spaces answered %v, want a SharedFileError", err)
+		}
+		if shared.File != "internal/store/store.go" {
+			t.Errorf("the refusal names the file %q, want it trimmed to internal/store/store.go", shared.File)
+		}
+	})
+
+	// The check compares text and never resolves a path, and this is the cost of that. It is written
+	// down as a test so the limit is a decision somebody reads rather than a surprise.
+	t.Run("a file written two ways is two files to the check", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		feature := newFeature(t, s, newProject(t, s, "acme", "house-bills"), "the bills")
+		writePath(t, s, feature.GetId(),
+			store.Step{Number: 1, Title: "the store holds it", Touches: "internal/store/store.go"},
+			store.Step{Number: 2, Title: "the command reads it", Touches: "./internal/store/store.go"},
+			store.Step{Number: 3, Title: "the console draws it", Touches: "internal/store/Store.go"})
+
+		if _, _, err := s.TakeStep(ctx, feature.GetId(), 1, "session-one"); err != nil {
+			t.Fatalf("TakeStep: %v", err)
+		}
+		if _, _, err := s.TakeStep(ctx, feature.GetId(), 2, "session-two"); err != nil {
+			t.Fatalf("a take on ./internal/store/store.go answered %v, and the check compares text", err)
+		}
+		if _, _, err := s.TakeStep(ctx, feature.GetId(), 3, "session-three"); err != nil {
+			t.Fatalf("a take on internal/store/Store.go answered %v, and the check is case sensitive", err)
+		}
+	})
+
+	// Three steps in flight all name the file, which only happens once the document is rewritten under
+	// them: the check itself refuses a second take on a file, and a path write updates the touches of a
+	// step somebody already took. The refusal names the one in the lower feature, and the lower number
+	// inside it, so one take refused twice names the same step both times.
+	t.Run("the refusal names the first collision by feature and then by step number", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		project := newProject(t, s, "acme", "house-bills")
+		first := newFeature(t, s, project, "authentication")
+		second := newFeature(t, s, project, "payment")
+		writePath(t, s, first.GetId(),
+			store.Step{Number: 4, Title: "sign up", Touches: "internal/user/signup.go"},
+			store.Step{Number: 9, Title: "sign in", Touches: "internal/user/signin.go"})
+		writePath(t, s, second.GetId(),
+			store.Step{Number: 1, Title: "the router", Touches: "internal/router/router.go"},
+			store.Step{Number: 2, Title: "checkout", Touches: "internal/checkout/checkout.go"})
+		// Taken in an order that is nobody's idea of ascending, so an answer that happens to read the
+		// take order rather than the number order fails here.
+		for _, held := range []struct {
+			feature string
+			number  int32
+		}{{second.GetId(), 1}, {first.GetId(), 9}, {first.GetId(), 4}} {
+			if _, _, err := s.TakeStep(ctx, held.feature, held.number, "session-one"); err != nil {
+				t.Fatalf("TakeStep on step %d: %v", held.number, err)
+			}
+		}
+		const shares = "internal/user/model.go"
+		writePath(t, s, first.GetId(),
+			store.Step{Number: 4, Title: "sign up", Touches: shares},
+			store.Step{Number: 9, Title: "sign in", Touches: shares})
+		writePath(t, s, second.GetId(),
+			store.Step{Number: 1, Title: "the router", Touches: shares},
+			store.Step{Number: 2, Title: "checkout", Touches: shares})
+
+		_, _, err := s.TakeStep(ctx, second.GetId(), 2, "session-four")
+		var shared *store.SharedFileError
+		if !errors.As(err, &shared) {
+			t.Fatalf("a take on a file three steps write answered %v, want a SharedFileError", err)
+		}
+		// Feature 1 before feature 2, and step 4 before step 9.
+		if shared.Step.FeatureNumber != first.GetNumber() || shared.Step.Number != 4 {
+			t.Errorf("the refusal names step %d.%d, want step %d.4",
+				shared.Step.FeatureNumber, shared.Step.Number, first.GetNumber())
+		}
+	})
+
+	// A step that says it writes nothing matches nothing, so it is taken. The path write is what warns
+	// about it, and this is the behaviour that warning describes.
+	t.Run("a step naming no file is taken beside a step that names one", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		feature := newFeature(t, s, newProject(t, s, "acme", "house-bills"), "the bills")
+		writePath(t, s, feature.GetId(),
+			store.Step{Number: 1, Title: "the store holds it", Touches: "internal/store/store.go"},
+			store.Step{Number: 2, Title: "the thinking", Touches: ""},
+			store.Step{Number: 3, Title: "the other thinking", Touches: "\n  \n"})
+		if _, _, err := s.TakeStep(ctx, feature.GetId(), 1, "session-one"); err != nil {
+			t.Fatalf("TakeStep: %v", err)
+		}
+
+		if _, _, err := s.TakeStep(ctx, feature.GetId(), 2, "session-two"); err != nil {
+			t.Fatalf("a take on a step naming no file answered %v, and it collides with nothing", err)
+		}
+		if _, _, err := s.TakeStep(ctx, feature.GetId(), 3, "session-three"); err != nil {
+			t.Fatalf("a take on a step naming only blank lines answered %v", err)
+		}
+	})
+
+	// Finishing the colliding step lets the refused take through, with nothing re-planned. It is what
+	// the refusal tells the operator to do, so it has to work.
+	t.Run("finishing the step that holds the file lets the refused take pass", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		feature := newFeature(t, s, newProject(t, s, "acme", "house-bills"), "the bills")
+		writePath(t, s, feature.GetId(),
+			store.Step{Number: 1, Title: "the store holds it", Touches: "internal/store/store.go"},
+			store.Step{Number: 2, Title: "the command reads it", Touches: "internal/store/store.go"})
+		if _, _, err := s.TakeStep(ctx, feature.GetId(), 1, "session-one"); err != nil {
+			t.Fatalf("TakeStep: %v", err)
+		}
+		if _, _, err := s.TakeStep(ctx, feature.GetId(), 2, "session-two"); !errors.Is(err, store.ErrStepsTouchTheSameFile) {
+			t.Fatalf("the take on a shared file answered %v, want ErrStepsTouchTheSameFile", err)
+		}
+		finishStep(t, s, feature.GetId(), 1, store.StepDone)
+
+		if _, _, err := s.TakeStep(ctx, feature.GetId(), 2, "session-two"); err != nil {
+			t.Fatalf("the take after the first step closed answered %v, and nothing writes that file now", err)
+		}
+	})
+
+	// The file check belongs to one project, the way the cap does. Two projects that both write a file
+	// of that name are two repositories, and neither waits for the other.
+	t.Run("a file a second project writes leaves this take alone", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		busy := newFeature(t, s, newProject(t, s, "acme", "house-bills"), "the bills")
+		quiet := newFeature(t, s, newProject(t, s, "acme", "car-bills"), "the other bills")
+		writePath(t, s, busy.GetId(),
+			store.Step{Number: 1, Title: "the store holds it", Touches: "internal/store/store.go"})
+		writePath(t, s, quiet.GetId(),
+			store.Step{Number: 1, Title: "its own store", Touches: "internal/store/store.go"})
+		if _, _, err := s.TakeStep(ctx, busy.GetId(), 1, "session-one"); err != nil {
+			t.Fatalf("TakeStep: %v", err)
+		}
+
+		if _, _, err := s.TakeStep(ctx, quiet.GetId(), 1, "session-elsewhere"); err != nil {
+			t.Fatalf("a take in a second project answered %v, and the file check is one project's", err)
+		}
+	})
 }
 
 // numbersOf is a path's step numbers, in the order the store answered with.

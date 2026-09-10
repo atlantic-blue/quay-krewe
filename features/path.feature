@@ -40,6 +40,13 @@ Feature: A project holds a numbered path of steps
   three steps in flight is three steps wherever they sit, and the refusal names the feature each one
   is in.
 
+  A step is also refused when it names a file that a step in flight names, so two sessions are never
+  given one file. The check reads what each step says it writes, one file per line, across every
+  feature of the project. It never reads a diff, so a step that writes a file it did not name is not
+  caught. The refusal lands on the step and never on the feature: a feature waits on one step and
+  carries on with the rest of its path, and finishing the step that holds the file lets the refused
+  take through with nothing re-planned.
+
   There is no way to empty a path. A document with no step heading is refused, so a wrong file path
   cannot take somebody's path away.
 
@@ -2033,6 +2040,288 @@ Feature: A project holds a numbered path of steps
     When the caller caps the steps in flight at "0"
     Then the command fails
     And the cap on steps in flight is 10
+
+  # Milestone 7, the second limit. Two sessions writing one file write over each other, and the only
+  # thing the system can see it coming with is what each step says it writes.
+  #
+  # The check reads the whole project, across every feature, for the reason the cap does. Two features
+  # share the user model, the router and the configuration, so the collision is real and it crosses
+  # the two paths.
+  #
+  # It reads what a step says it writes and never a diff, so a step that writes a file it did not name
+  # is not caught. Section 14 of the design defers that check.
+  Scenario: A take on a file a step in flight writes is refused, naming the file and that step
+    Given the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+
+      What this touches
+      internal/store/store.go
+
+      After
+
+      ## 2. The command line reads it back
+
+      What this touches
+      internal/store/store.go
+
+      After
+      """
+    And the operator took step 1
+    When the operator takes step 2
+    Then the control plane refuses it as a file two steps write
+    And the refusal suggests "internal/store/store.go"
+    And the refusal suggests "step 1.1 the bills"
+    And 1 session was started
+    And the operator reads the path
+    And step 2 is ready
+
+  # The refusal lands on the step and never on the feature. Nothing about payment is blocked, queued
+  # or ordered against authentication: one step of it waits, and the rest of its path is there to
+  # take.
+  Scenario: A step of one feature sharing a file with a taken step of another is refused
+    Given the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And the project's feature "authentication"
+    And the project's feature "payment"
+    And the operator sets the path of feature 1 to:
+      """
+      ## 1. Sign up
+
+      What this touches
+      internal/user/model.go
+      """
+    And the operator sets the path of feature 2 to:
+      """
+      ## 1. Checkout
+
+      What this touches
+      internal/user/model.go
+
+      After
+
+      ## 2. The receipt
+
+      What this touches
+      internal/receipt/receipt.go
+
+      After
+      """
+    And the operator took step 1 of feature 1
+    When the operator takes step 1 of feature 2
+    Then the control plane refuses it as a file two steps write
+    And the refusal suggests "authentication"
+    And the refusal suggests "internal/user/model.go"
+
+  Scenario: The next step of the second feature is taken while the first one waits
+    Given the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And the project's feature "authentication"
+    And the project's feature "payment"
+    And the operator sets the path of feature 1 to:
+      """
+      ## 1. Sign up
+
+      What this touches
+      internal/user/model.go
+      """
+    And the operator sets the path of feature 2 to:
+      """
+      ## 1. Checkout
+
+      What this touches
+      internal/user/model.go
+
+      After
+
+      ## 2. The receipt
+
+      What this touches
+      internal/receipt/receipt.go
+
+      After
+      """
+    And the operator took step 1 of feature 1
+    And the operator takes step 1 of feature 2
+    And the control plane refuses it as a file two steps write
+    When the operator takes step 2 of feature 2
+    Then step 2 of feature 2 is held by that session
+    And the operator reads the path of feature 2
+    And step 1 is ready
+    And the path holds 2 steps
+
+  Scenario: Two steps naming different files are both taken
+    Given the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+
+      What this touches
+      internal/store/store.go
+
+      After
+
+      ## 2. The command line reads it back
+
+      What this touches
+      cmd/krewe/step.go
+
+      After
+      """
+    And the operator took step 1
+    When the operator takes step 2
+    Then step 2 is held by that session
+    And step 1 is still taken
+    And 2 sessions were started
+
+  # The document is prose somebody typed, so a line is trimmed at both ends before anything is
+  # compared. A file written with a space after it is the same file.
+  #
+  # The spaced line sits above another one, because a block is trimmed whole before it is stored and a
+  # single line would lose its spaces on the way in. What is proved here is the trim the take does.
+  Scenario: A file written with trailing spaces still collides
+    Given the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+
+      What this touches
+      internal/store/store.go   
+      internal/store/memory.go
+
+      After
+
+      ## 2. The command line reads it back
+
+      What this touches
+      internal/store/store.go
+
+      After
+      """
+    And the operator took step 1
+    When the operator takes step 2
+    Then the control plane refuses it as a file two steps write
+    And the refusal suggests "internal/store/store.go"
+
+  # The comparison is exact and case sensitive, because it compares text and never resolves a path.
+  # This is the cost of that, written down so the limit is a decision somebody reads.
+  Scenario: A file written two ways is two files to the check
+    Given the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+
+      What this touches
+      internal/store/store.go
+
+      After
+
+      ## 2. The command line reads it back
+
+      What this touches
+      ./internal/store/store.go
+
+      After
+
+      ## 3. The console draws it
+
+      What this touches
+      internal/store/Store.go
+
+      After
+      """
+    And the operator took step 1
+    When the operator takes step 2
+    Then step 2 is held by that session
+    And the operator takes step 3
+    And step 3 is held by that session
+    And 3 sessions were started
+
+  # A step that names no file matches nothing, so it is taken whatever it goes on to write. The path
+  # write is where that is said out loud, because the document is where somebody can fix it.
+  Scenario: A step naming no file is taken, and setting that path warned
+    Given the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+
+      What this touches
+      internal/store/store.go
+
+      After
+
+      ## 2. The thinking
+
+      After
+      """
+    And the path write warns "step 2 names no file"
+    And the path write warns "collides with nothing"
+    And the operator took step 1
+    When the operator takes step 2
+    Then step 2 is held by that session
+    And 2 sessions were started
+
+  # What the refusal tells the operator to do, so it has to work. Nothing is re-planned: the same
+  # take, typed again, goes through.
+  Scenario: Finishing the step that holds the file lets the refused take pass
+    Given the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+
+      What this touches
+      internal/store/store.go
+
+      After
+
+      ## 2. The command line reads it back
+
+      What this touches
+      internal/store/store.go
+
+      After
+      """
+    And the operator took step 1
+    And the operator takes step 2
+    And the control plane refuses it as a file two steps write
+    And the operator finishes step 1 with "the brief is kept"
+    When the operator takes step 2
+    Then step 2 is held by that session
+    And the take says 1 of 10 steps are in flight
+
+  Scenario: The tool prints the shared file refusal and starts nothing
+    Given the system listens on an address the tool can dial
+    And the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+
+      What this touches
+      internal/store/store.go
+
+      After
+
+      ## 2. The command line reads it back
+
+      What this touches
+      internal/store/store.go
+
+      After
+      """
+    And the operator took step 1
+    When the caller takes step "1.2"
+    Then the command fails
+    And standard error says "internal/store/store.go"
+    And standard error says "nothing was started"
+    And 1 session was started
 
   # The session reads which step it is on in the design section of its own memory file, which it
   # reads on every exec.
