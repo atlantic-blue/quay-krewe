@@ -1,6 +1,7 @@
 package controlplane
 
 import (
+	"context"
 	"errors"
 	"io"
 	"os"
@@ -13,16 +14,16 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// The bytes of one file in a volume, in and out.
+// One file in a volume: its bytes in and out, and the names a directory holds.
 //
 // The problem these answer: a volume is a directory on the machine that runs the sandboxes. Where the
 // tool runs on that machine it opens the directory itself. Under Kubernetes it does not, the directory
-// is beside the control plane, and a path the tool is handed reaches nothing at all. So the bytes
-// travel through here, and the tool works the same way in both places.
+// is beside the control plane, and a path the tool is handed reaches nothing at all. So the work is
+// done here, and the tool works the same way in both places.
 //
-// They stream because a message has a ceiling. The default is four mebibytes. The file that started
-// this work is 1,105,815 bytes, over the one mebibyte ceiling ReadSessionWork holds a file to, and a
-// call that must carry a whole file in one message only moves that ceiling.
+// The two that carry bytes stream, because a message has a ceiling. The default is four mebibytes.
+// The file that started this work is 1,105,815 bytes, over the one mebibyte ceiling ReadSessionWork
+// holds a file to, and a call that must carry a whole file in one message only moves that ceiling.
 
 // VolumeChunk is how much of a file one message carries.
 //
@@ -123,6 +124,69 @@ func (s *Server) GetVolumeFile(req *quaycrewv1.GetVolumeFileRequest, stream quay
 			return status.Errorf(codes.Internal, "read %s: %v", key, err)
 		}
 	}
+}
+
+// ListVolume says what one directory in a volume holds.
+//
+// It reads the directory this process holds, for the reason the two calls above carry bytes. The tool
+// asked where the volume was and opened that path itself, which reaches nothing where the volume is
+// beside the control plane rather than beside the tool. The answer then was that the directory held
+// nothing, and an empty volume and an unreachable one read the same.
+//
+// The names come back sorted, which is os.ReadDir's own order, so one directory read twice answers
+// the same. A key that names a file answers with that one file, so no entries at all is an empty
+// directory and nothing else.
+func (s *Server) ListVolume(ctx context.Context, req *quaycrewv1.ListVolumeRequest) (*quaycrewv1.ListVolumeResponse, error) {
+	found, err := s.directoryFor(ctx, req.GetWorkspace(), req.GetProject(), req.GetSession())
+	if err != nil {
+		return nil, err
+	}
+	// This is the point of use, and the caller can no longer be the one that holds a key inside the
+	// volume: it never sees the directory. So `../../etc/passwd` is cleaned onto the root here, and
+	// lands inside the volume or it lands nowhere.
+	key := workspace.HeldKey(req.GetKey())
+	inside := workspace.InVolume(found.Dir, key)
+	info, err := os.Stat(inside)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// The directory rather than the path with the key on it, because a name that is missing
+			// and a name in another folder read the same. It is the host's path: the person reading
+			// the refusal is standing at that machine and not at this one.
+			return nil, status.Errorf(codes.NotFound, "%s holds nothing called %q", found.Host, key)
+		}
+		return nil, status.Errorf(codes.Internal, "%v", err)
+	}
+	answer := &quaycrewv1.ListVolumeResponse{Host: workspace.InVolume(found.Host, key)}
+	if !info.IsDir() {
+		answer.Entries = []*quaycrewv1.VolumeEntry{{Name: info.Name(), Size: info.Size()}}
+		return answer, nil
+	}
+	entries, err := os.ReadDir(inside)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "%v", err)
+	}
+	answer.Entries = make([]*quaycrewv1.VolumeEntry, 0, len(entries))
+	for _, entry := range entries {
+		answer.Entries = append(answer.Entries, volumeEntry(entry))
+	}
+	return answer, nil
+}
+
+// volumeEntry is one name in a directory, as the listing reads it.
+//
+// A folder carries no size. Its size on disk is the size of its own record rather than of what is in
+// it, so answering with one answers a question nobody asked. An entry whose size cannot be read is
+// answered without one for the same reason: the name is what the caller asked for, and a second
+// failure inside a listing hides the names that did read.
+func volumeEntry(entry os.DirEntry) *quaycrewv1.VolumeEntry {
+	held := &quaycrewv1.VolumeEntry{Name: entry.Name(), Directory: entry.IsDir()}
+	if held.GetDirectory() {
+		return held
+	}
+	if info, err := entry.Info(); err == nil {
+		held.Size = info.Size()
+	}
+	return held
 }
 
 // volumeChunks reads the pieces of a put as an ordinary reader, so the write below is one copy.

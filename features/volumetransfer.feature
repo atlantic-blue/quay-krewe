@@ -12,8 +12,7 @@ Feature: A transfer works when the volume is on another machine
   whole file in one message only moves that ceiling somewhere else. The file below is one byte over
   it, so the runtime refuses it as a single message.
 
-  A listing and a delete still open the directory on this machine. Both of them wait for a step of
-  their own.
+  A delete still opens the directory on this machine. It waits for a step of its own.
 
   Background:
     Given a running control plane

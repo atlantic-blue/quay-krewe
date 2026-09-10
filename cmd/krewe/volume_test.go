@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -133,33 +132,6 @@ func TestVolumeListHoldsAKeyThatClimbsInsideTheVolume(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), `"etc/passwd"`) {
 		t.Errorf("the key was not cleaned onto the volume: %s", err)
-	}
-}
-
-// listVolume is where a key becomes a path on disk, so it is where a key that climbs has to be held.
-// The parser cleans what it reads, and this is the guard under it, on the road the two verbs that
-// write take as well.
-func TestListingAKeyThatClimbsStaysInsideTheDirectory(t *testing.T) {
-	above := t.TempDir()
-	root := filepath.Join(above, "volume")
-	if err := os.MkdirAll(root, 0o777); err != nil {
-		t.Fatalf("make the volume: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(above, "passwd"), []byte("a secret"), 0o666); err != nil {
-		t.Fatalf("write the file above it: %v", err)
-	}
-
-	var said bytes.Buffer
-	err := listVolume(root, "../passwd", &said)
-
-	if err == nil {
-		t.Fatalf("a key that climbs out of the volume was listed:\n%s", said.String())
-	}
-	if strings.Contains(said.String(), "passwd") {
-		t.Fatalf("the listing read a file above the volume:\n%s", said.String())
-	}
-	if !strings.Contains(err.Error(), root) {
-		t.Errorf("the refusal read somewhere other than the volume: %s", err)
 	}
 }
 

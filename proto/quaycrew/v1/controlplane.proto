@@ -1013,6 +1013,38 @@ message GetVolumeFileResponse {
   bytes chunk = 1;
 }
 
+// ListVolumeRequest asks what one directory in a volume holds.
+//
+// The levels are read the way a put and a get read them. The key is held inside the volume here, and
+// not before: the caller cannot open the directory, so it cannot be the end that holds a key inside
+// it.
+message ListVolumeRequest {
+  string workspace = 1;
+  string project = 2;
+  string session = 3;
+  // key is a directory inside the volume, or the name of one file in it. A key that names a file
+  // answers with that one file, which is the command somebody types to check a copy arrived.
+  string key = 4;
+}
+message ListVolumeResponse {
+  // host is the directory the listing read, on the machine running the sandboxes, with the key on
+  // the end of it. A name that is missing and a name in another folder read the same, so a listing
+  // is only useful beside the directory it came from.
+  string host = 1;
+  // entries are the names in that directory, sorted by name, so one directory read twice answers the
+  // same. None at all is an empty directory, because a key that names a file answers with that file.
+  repeated VolumeEntry entries = 2;
+}
+// VolumeEntry is one name in a volume.
+message VolumeEntry {
+  string name = 1;
+  // size is how big the file is, in bytes.
+  int64 size = 2;
+  // directory says this name is a folder. A folder carries no size, because a folder's size on disk
+  // is the size of its own record rather than of what is in it.
+  bool directory = 3;
+}
+
 // SecretRef names a secret a workspace has set. It carries no value and there is no call that returns
 // one: a value the backend holds must not become readable because a client asked politely. The only
 // reader is the system itself, at the moment an exec needs it.
@@ -1483,6 +1515,12 @@ service ControlPlaneService {
   // is the operator's to make, and these two do not widen anything.
   rpc PutVolumeFile(stream PutVolumeFileRequest) returns (PutVolumeFileResponse);
   rpc GetVolumeFile(GetVolumeFileRequest) returns (stream GetVolumeFileResponse);
+
+  // What a directory in a volume holds. It is here for the reason the two calls above are: the
+  // volume is not always on the machine the tool runs on. A listing that opened a path itself then
+  // read nothing at all. It is not denied to the driver either, because it reads names and grants
+  // nothing.
+  rpc ListVolume(ListVolumeRequest) returns (ListVolumeResponse);
 
   rpc ImportSkill(ImportSkillRequest) returns (ImportSkillResponse);
   rpc ListSkills(ListSkillsRequest) returns (ListSkillsResponse);
