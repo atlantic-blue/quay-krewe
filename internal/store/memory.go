@@ -636,15 +636,17 @@ func (m *Memory) GetDesign(_ context.Context, project string) (*quaycrewv1.Desig
 // default the row would have carried.
 //
 // The defaults are answered rather than left at zero because each zero is a value a reader would act
-// on. A cap of zero refuses every take, an empty pattern reads no count out of any output, and a
-// budget of zero ends a run before it starts. The one field left empty is the command, and empty is
-// what it means there: this project proves nothing yet.
+// on. A cap of zero refuses every take, an empty pattern reads no count out of any output, a budget
+// of zero ends a run before it starts, and a threshold of zero offers krewe the next level before it
+// agreed with anybody once. The one field left empty is the command, and empty is what it means
+// there: this project proves nothing yet.
 func bornDesign(project string) *quaycrewv1.Design {
 	return &quaycrewv1.Design{
 		Project:             project,
 		StepsInFlightCap:    DefaultStepsInFlightCap,
 		ProofCountPattern:   DefaultProofCountPattern,
 		ProofTimeoutSeconds: DefaultProofTimeoutSeconds,
+		TrustThreshold:      DefaultTrustThreshold,
 	}
 }
 
@@ -1046,28 +1048,68 @@ func (m *Memory) SetProofCommand(_ context.Context, project string, settings Pro
 // the write happen under one hold of the lock, the way the postgres store does them in one statement,
 // so a check that lands between the two cannot open a gate the write then closes over.
 //
+// The agreement is written here, off the verdict the row already carries, and the design's counters
+// move under the same hold of the lock. Postgres does the two in one transaction, and this has to
+// agree: a reader that saw a closed step whose counters had not moved would read a trust record that
+// is behind the work by one step.
+//
 // The session and the take stamp are left where they are, so the row still says who took the step. No
 // session is read, stopped or reclaimed: the step and the session are separate records.
-func (m *Memory) FinishStep(_ context.Context, feature string, number int32, finish Finish) (*quaycrewv1.Step, error) {
+func (m *Memory) FinishStep(_ context.Context, feature string, number int32, finish Finish) (
+	*quaycrewv1.Step, *quaycrewv1.Design, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, err := m.featureLocked(feature); err != nil {
-		return nil, err
-	}
-	held, err := m.stepLocked(feature, number)
+	held, err := m.featureLocked(feature)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
+	}
+	step, err := m.stepLocked(feature, number)
+	if err != nil {
+		return nil, nil, err
 	}
 	// The moment of the last run, never its verdict. A failing run opens this gate, and the row
 	// records the disagreement below.
-	if finish.State == StepDone && held.GetProofRanAt() == nil {
-		return nil, ErrNotChecked
+	if finish.State == StepDone && step.GetProofRanAt() == nil {
+		return nil, nil, ErrNotChecked
 	}
-	held.State = finish.State
-	held.Result = finish.Result
-	held.ClosedBy = finish.ClosedBy
-	held.FinishedAt = timestamppb.New(time.Now().UTC())
-	return proto.Clone(held).(*quaycrewv1.Step), nil
+	step.State = finish.State
+	step.Result = finish.Result
+	step.ClosedBy = finish.ClosedBy
+	step.OperatorAgreed = Agreed(finish.State, step.GetProofState())
+	step.FinishedAt = timestamppb.New(time.Now().UTC())
+	design := m.moveTheCountersLocked(held.GetProject(), step.GetOperatorAgreed())
+	return proto.Clone(step).(*quaycrewv1.Step), design, nil
+}
+
+// moveTheCountersLocked records one agreement or one disagreement on the project's design row, and
+// answers the row after the write.
+//
+// The run is a run of consecutive agreements and never a ratio. One disagreement sets it to zero,
+// which is the whole difference between a measure of how things stand now and a number that drifts
+// upward over a long record and stops saying anything.
+//
+// A disagreement also takes the level back down, and LoweredTrustLevel holds the floor. The row is
+// made where the project has none, the way every other design write makes it, so a project that
+// finished a step before anybody wrote a brief still carries its count.
+func (m *Memory) moveTheCountersLocked(project, agreed string) *quaycrewv1.Design {
+	if m.designs == nil {
+		m.designs = make(map[string]*quaycrewv1.Design)
+	}
+	design, ok := m.designs[project]
+	if !ok {
+		design = bornDesign(project)
+		m.designs[project] = design
+	}
+	if agreed == AgreedYes {
+		design.TrustRun++
+		design.TrustAgreements++
+	} else {
+		design.TrustRun = 0
+		design.TrustDisagreements++
+		design.TrustLevel = LoweredTrustLevel(design.GetTrustLevel())
+	}
+	design.UpdatedAt = timestamppb.New(time.Now().UTC())
+	return copyDesign(design)
 }
 
 // SetRestatement records what the session wrote about a step before it built anything.

@@ -689,7 +689,8 @@ func (p *Postgres) SetContext(ctx context.Context, scope ContextScope, owner, bo
 // written next to each other because a column added to one and not the other reads as a zero rather
 // than as a failure.
 const designColumns = `project, brief, body, approved, approved_at, written_by, updated_at, contracts, ` +
-	`steps_in_flight_cap, proof_command, proof_count_pattern, proof_timeout_seconds`
+	`steps_in_flight_cap, proof_command, proof_count_pattern, proof_timeout_seconds, ` +
+	`trust_level, trust_threshold, trust_run, trust_offered, trust_agreements, trust_disagreements`
 
 // scanDesign reads one design row.
 func scanDesign(row pgx.Row) (*quaycrewv1.Design, error) {
@@ -701,9 +702,14 @@ func scanDesign(row pgx.Row) (*quaycrewv1.Design, error) {
 		stepsInFlightCap                           int32
 		proofCommand, proofCountPattern            string
 		proofTimeoutSeconds                        int32
+		trustLevel, trustThreshold, trustRun       int32
+		trustOffered                               bool
+		trustAgreements, trustDisagreements        int32
 	)
 	if err := row.Scan(&project, &brief, &body, &approved, &approvedAt, &writtenBy, &updatedAt,
-		&contracts, &stepsInFlightCap, &proofCommand, &proofCountPattern, &proofTimeoutSeconds); err != nil {
+		&contracts, &stepsInFlightCap, &proofCommand, &proofCountPattern, &proofTimeoutSeconds,
+		&trustLevel, &trustThreshold, &trustRun, &trustOffered, &trustAgreements,
+		&trustDisagreements); err != nil {
 		return nil, err
 	}
 	design := &quaycrewv1.Design{
@@ -718,6 +724,12 @@ func scanDesign(row pgx.Row) (*quaycrewv1.Design, error) {
 		ProofCommand:        proofCommand,
 		ProofCountPattern:   proofCountPattern,
 		ProofTimeoutSeconds: proofTimeoutSeconds,
+		TrustLevel:          trustLevel,
+		TrustThreshold:      trustThreshold,
+		TrustRun:            trustRun,
+		TrustOffered:        trustOffered,
+		TrustAgreements:     trustAgreements,
+		TrustDisagreements:  trustDisagreements,
 	}
 	if approvedAt != nil {
 		design.ApprovedAt = timestamppb.New(*approvedAt)
@@ -750,8 +762,9 @@ func (p *Postgres) projectExists(ctx context.Context, project string) error {
 // answers with a Design carrying its identifier and every default the row would have carried.
 //
 // The defaults are answered rather than left at zero, because each zero is a value a reader would act
-// on: a cap of zero refuses every take, an empty pattern reads no count out of any output, and a
-// budget of zero ends a run before it starts.
+// on: a cap of zero refuses every take, an empty pattern reads no count out of any output, a budget
+// of zero ends a run before it starts, and a threshold of zero offers krewe the next level before it
+// agreed with anybody once.
 func (p *Postgres) GetDesign(ctx context.Context, project string) (*quaycrewv1.Design, error) {
 	if err := p.projectExists(ctx, project); err != nil {
 		return nil, err
@@ -764,6 +777,7 @@ func (p *Postgres) GetDesign(ctx context.Context, project string) (*quaycrewv1.D
 			StepsInFlightCap:    DefaultStepsInFlightCap,
 			ProofCountPattern:   DefaultProofCountPattern,
 			ProofTimeoutSeconds: DefaultProofTimeoutSeconds,
+			TrustThreshold:      DefaultTrustThreshold,
 		}, nil
 	}
 	if err != nil {
@@ -930,7 +944,7 @@ func (p *Postgres) SetProofCommand(ctx context.Context, project string, settings
 // later.
 const stepColumns = `s.feature, s.number, s.title, s.intention, s.touches, s.proof, ` +
 	`s.proof_scenario, s.after, s.milestone, s.contracts, s.contract_scope, ` +
-	`s.state, s.session, s.result, s.closed_by, s.taken_at, s.finished_at, ` +
+	`s.state, s.session, s.result, s.closed_by, s.operator_agreed, s.taken_at, s.finished_at, ` +
 	`s.restatement, s.restated_at, s.restatement_approved, s.restatement_approved_at, ` +
 	`s.proof_state, s.proof_scenarios_run, s.proof_output, s.proof_ran_at`
 
@@ -950,6 +964,7 @@ func scanStep(row pgx.Row) (*quaycrewv1.Step, error) {
 		feature, title, intention, touches, proof string
 		scenario, state, session, result          string
 		contracts, contractScope, closedBy        string
+		operatorAgreed                            string
 		restatement, proofState, proofOutput      string
 		number, after, milestone, scenariosRun    int32
 		approved                                  bool
@@ -958,27 +973,28 @@ func scanStep(row pgx.Row) (*quaycrewv1.Step, error) {
 	)
 	if err := row.Scan(&feature, &number, &title, &intention, &touches, &proof,
 		&scenario, &after, &milestone, &contracts, &contractScope,
-		&state, &session, &result, &closedBy, &takenAt, &finishedAt,
+		&state, &session, &result, &closedBy, &operatorAgreed, &takenAt, &finishedAt,
 		&restatement, &restatedAt, &approved, &approvedAt,
 		&proofState, &scenariosRun, &proofOutput, &proofRanAt); err != nil {
 		return nil, err
 	}
 	step := &quaycrewv1.Step{
-		Feature:       feature,
-		Number:        number,
-		Title:         title,
-		Intention:     intention,
-		Touches:       touches,
-		Proof:         proof,
-		ProofScenario: scenario,
-		After:         after,
-		Milestone:     milestone,
-		Contracts:     contracts,
-		ContractScope: contractScope,
-		State:         state,
-		Session:       session,
-		Result:        result,
-		ClosedBy:      closedBy,
+		Feature:        feature,
+		Number:         number,
+		Title:          title,
+		Intention:      intention,
+		Touches:        touches,
+		Proof:          proof,
+		ProofScenario:  scenario,
+		After:          after,
+		Milestone:      milestone,
+		Contracts:      contracts,
+		ContractScope:  contractScope,
+		State:          state,
+		Session:        session,
+		Result:         result,
+		ClosedBy:       closedBy,
+		OperatorAgreed: operatorAgreed,
 
 		Restatement:         restatement,
 		RestatementApproved: approved,
@@ -1438,36 +1454,115 @@ func stepsInFlightCap(ctx context.Context, transaction pgx.Tx, project string) (
 // refuses a word outside the two, and a second check here is a second place for the vocabulary to
 // drift.
 //
+// The agreement is written in that same statement, off the verdict the row already carries, so a
+// check landing beside this write cannot leave a word recorded against a verdict nobody read. Agreed
+// says the same rule in Go, and the conformance suite holds the two to one answer.
+//
+// The counters on the design row move in the same transaction, so no reader ever sees a closed step
+// whose count did not move. The design comes back from this call for that reason: a read after the
+// commit would be a second answer, and a second answer can already be one finish behind.
+//
 // The session and the take stamp are left where they are, so the row still says who took the step. No
 // session is read, stopped or reclaimed: the step and the session are separate records.
-func (p *Postgres) FinishStep(ctx context.Context, feature string, number int32, finish Finish) (*quaycrewv1.Step, error) {
+func (p *Postgres) FinishStep(ctx context.Context, feature string, number int32, finish Finish) (
+	*quaycrewv1.Step, *quaycrewv1.Design, error) {
 	if err := p.featureExists(ctx, feature); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
+	transaction, err := p.pool.Begin(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("begin the finish: %w", err)
+	}
+	defer func() { _ = transaction.Rollback(ctx) }()
+
+	// The project row is held for the rest of the transaction, the way the take holds it, so two
+	// finishes at one moment move the counters one after the other rather than both reading the same
+	// run and both writing it as one.
+	var project string
+	if err := transaction.QueryRow(ctx, `
+		select p.id from features f
+		join projects p on p.id = f.project
+		where f.id = $1
+		for update of p`, feature).Scan(&project); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil, ErrNotFound
+		}
+		return nil, nil, fmt.Errorf("hold the project: %w", err)
+	}
+
 	// The moment of the last run is read in the statement that writes the word, rather than in a read
 	// before it, so a step checked between the two cannot be closed under a gate nobody passed. The
 	// step is read again only to say which refusal a write of no rows earned: a step that is not
 	// there, and a step nobody checked, are two different things to the person who typed the command.
 	//
-	// The column read is proof_ran_at and never proof_state. A failing run carries a moment, so it
-	// opens this gate and the row keeps the disagreement.
-	step, err := scanStep(p.pool.QueryRow(ctx, `
+	// The column read for the gate is proof_ran_at and never proof_state. A failing run carries a
+	// moment, so it opens this gate and the row keeps the disagreement.
+	step, err := scanStep(transaction.QueryRow(ctx, `
 		update feature_steps s
-		set state = $3, result = $4, closed_by = $5, finished_at = now(), updated_at = now()
+		set state = $3, result = $4, closed_by = $5,
+			operator_agreed = case
+				when $3 = $7 and s.proof_state = $8 then $10
+				when $3 = $9 and s.proof_state = $11 then $10
+				else $12 end,
+			finished_at = now(), updated_at = now()
 		where s.feature = $1 and s.number = $2
 			and (not $6::boolean or s.proof_ran_at is not null)
 		returning `+stepColumns,
-		feature, number, finish.State, finish.Result, finish.ClosedBy, finish.State == StepDone))
+		feature, number, finish.State, finish.Result, finish.ClosedBy, finish.State == StepDone,
+		StepDone, ProofPassing, StepStopped, AgreedYes, ProofFailing, AgreedNo))
 	if errors.Is(err, pgx.ErrNoRows) {
 		if _, missing := p.GetStep(ctx, feature, number); missing != nil {
-			return nil, missing
+			return nil, nil, missing
 		}
-		return nil, ErrNotChecked
+		return nil, nil, ErrNotChecked
 	}
 	if err != nil {
-		return nil, fmt.Errorf("finish step: %w", err)
+		return nil, nil, fmt.Errorf("finish step: %w", err)
 	}
-	return step, nil
+
+	design, err := moveTheCounters(ctx, transaction, project, step.GetOperatorAgreed())
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := transaction.Commit(ctx); err != nil {
+		return nil, nil, fmt.Errorf("commit the finish: %w", err)
+	}
+	return step, design, nil
+}
+
+// moveTheCounters records one agreement or one disagreement on the project's design row, and answers
+// the row after the write.
+//
+// The run is a run of consecutive agreements and never a ratio. One disagreement sets it to zero,
+// which is the whole difference between a measure of how things stand now and a number that drifts
+// upward over a long record and stops saying anything.
+//
+// A disagreement also takes the level back down, and the greatest holds the floor at zero: a
+// disagreement at level 0 records the disagreement and leaves the level where it is.
+//
+// The row is made where the project has none, the way every other design write makes it. A project
+// that finished a step before anybody wrote a brief still carries its count, and the insert writes
+// the same numbers the update would have arrived at from the column defaults.
+func moveTheCounters(ctx context.Context, transaction pgx.Tx, project, agreed string) (
+	*quaycrewv1.Design, error) {
+	design, err := scanDesign(transaction.QueryRow(ctx, `
+		insert into project_designs (project, trust_run, trust_agreements, trust_disagreements)
+		values ($1,
+			case when $2 then 1 else 0 end,
+			case when $2 then 1 else 0 end,
+			case when $2 then 0 else 1 end)
+		on conflict (project) do update set
+			trust_run = case when $2 then project_designs.trust_run + 1 else 0 end,
+			trust_agreements = project_designs.trust_agreements + case when $2 then 1 else 0 end,
+			trust_disagreements = project_designs.trust_disagreements + case when $2 then 0 else 1 end,
+			trust_level = case when $2 then project_designs.trust_level
+				else greatest(project_designs.trust_level - 1, $3::integer) end,
+			updated_at = now()
+		returning `+designColumns, project, agreed == AgreedYes, TrustLevelChecked))
+	if err != nil {
+		return nil, fmt.Errorf("move the trust counters: %w", err)
+	}
+	return design, nil
 }
 
 // SetRestatement records what the session wrote about a step before it built anything.

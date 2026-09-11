@@ -95,6 +95,13 @@ Feature: A project holds a numbered path of steps
   milestone it belongs to. A step block names its milestone as well, because a session opens the file
   at its own step and reads down.
 
+  The project counts how often the operator agreed with krewe. Krewe checks a step and the operator
+  speaks the word, and the word done moves to krewe as krewe earns it, so the count is what it earns
+  it with. Agreement is read from the row and never asked: done after a passing check, or stopped
+  after a failing one. The count is a run of consecutive agreements and never a ratio, so one
+  disagreement starts the run again and takes the trust level back down. The step and the record move
+  in one transaction, so no reader sees a closed step whose count did not move.
+
   Background:
     Given a running control plane
     And a workspace named "acme"
@@ -3710,6 +3717,203 @@ Feature: A project holds a numbered path of steps
     And the operator checks step 1
     When the operator stops step 1 with "the approach was wrong"
     Then step 1 is still stopped
+
+  # The trust record. Krewe checks a step and the operator speaks the word, and this counts how often
+  # the two agreed, because the word done moves to krewe as krewe earns it.
+  #
+  # Agreement is read from the row and never asked. Done after a passing check and stopped after a
+  # failing one are both the operator doing what the verdict pointed at, and the other two are the
+  # operator differing from it. Nothing asks the operator, because that is a question with an obvious
+  # answer and one more keystroke.
+  #
+  # The count is a run of consecutive agreements and never a ratio. One disagreement starts the run
+  # again, because a ratio over a long record drifts upward and stops saying anything about the last
+  # ten steps. A disagreement also takes the level back down, and level 0 is the floor.
+  #
+  # The step and the design move in one transaction, so no reader sees a closed step whose counters
+  # did not move.
+
+  Scenario: Finishing a step after a passing check records an agreement
+    Given a step taken, restated and approved, naming the scenario "a project carries a brief"
+    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the run answers "1 scenarios (1 passed)" and exits 0
+    And the operator checks step 1
+    When the operator finishes step 1 with "shipped as pull request 736"
+    Then step 1 says the operator agreed
+    And the run of agreements is 1
+    And the trust record counts 1 agreement and 0 disagreements
+
+  Scenario: Finishing a step after a failing check records a disagreement
+    Given a step taken, restated and approved, naming the scenario "a project carries a brief"
+    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the run answers "1 scenarios (0 passed, 1 failed)" and exits 1
+    And the operator checks step 1
+    When the operator finishes step 1 with "the scenario is wrong, not the code"
+    Then step 1 says the operator did not agree
+    And the run of agreements is 0
+    And the trust record counts 0 agreements and 1 disagreement
+
+  # A stop after a run that said no agrees with krewe rather than differing from it: the run said the
+  # work is not there, and the operator stopped the work.
+  Scenario: Stopping a step after a failing check records an agreement
+    Given a step taken, restated and approved, naming the scenario "a project carries a brief"
+    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the run answers "1 scenarios (0 passed, 1 failed)" and exits 1
+    And the operator checks step 1
+    When the operator stops step 1 with "the approach was wrong"
+    Then step 1 says the operator agreed
+    And the run of agreements is 1
+    And the trust record counts 1 agreement and 0 disagreements
+
+  Scenario: Stopping a step after a passing check records a disagreement
+    Given a step taken, restated and approved, naming the scenario "a project carries a brief"
+    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the run answers "1 scenarios (1 passed)" and exits 0
+    And the operator checks step 1
+    When the operator stops step 1 with "the feature was dropped"
+    Then step 1 says the operator did not agree
+    And the run of agreements is 0
+    And the trust record counts 0 agreements and 1 disagreement
+
+  # The floor. Level 0 is where every project starts, so a disagreement there records the
+  # disagreement and leaves the level alone: a level below zero is not a level.
+  Scenario: A disagreement at level 0 leaves the level at 0
+    Given a step taken, restated and approved, naming the scenario "a project carries a brief"
+    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the run answers "1 scenarios (0 passed, 1 failed)" and exits 1
+    And the operator checks step 1
+    When the operator finishes step 1 with "the scenario is wrong, not the code"
+    Then the trust level is 0
+    And the trust record counts 0 agreements and 1 disagreement
+
+  # What the operator reads when they close a step krewe said no about. It is a record and not an
+  # argument: the line says what was written.
+  Scenario: The caller marks a step done after a failing check and reads the disagreement
+    Given the system listens on an address the tool can dial
+    And a step taken, restated and approved, naming the scenario "a project carries a brief"
+    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the run answers "1 scenarios (0 passed, 1 failed)" and exits 1
+    And the operator checks step 1
+    When the caller marks step "1.1" done with "the scenario is wrong, not the code"
+    Then standard output carries "the check said failing, so the row records a disagreement"
+    And the command succeeds
+
+  Scenario: The caller marks a step done after a passing check and reads the agreement
+    Given the system listens on an address the tool can dial
+    And a step taken, restated and approved, naming the scenario "a project carries a brief"
+    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the run answers "1 scenarios (1 passed)" and exits 0
+    And the operator checks step 1
+    When the caller marks step "1.1" done with "shipped as pull request 736"
+    Then standard output carries "the check said passing, so the row records an agreement"
+    And the command succeeds
+
+  # The same line on a stop, because a stop is a word about a verdict too.
+  Scenario: The caller stops a step after a failing check and reads the agreement
+    Given the system listens on an address the tool can dial
+    And a step taken, restated and approved, naming the scenario "a project carries a brief"
+    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the run answers "1 scenarios (0 passed, 1 failed)" and exits 1
+    And the operator checks step 1
+    When the caller stops step "1.1" with "the approach was wrong"
+    Then standard output carries "the check said failing, so the row records an agreement"
+    And the command succeeds
+
+  # A step nobody ran anything on is closed against no verdict, so the line says that rather than
+  # naming a state the operator never read.
+  Scenario: The caller stops a step nothing checked and reads that nothing checked it
+    Given the system listens on an address the tool can dial
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+      """
+    When the caller stops step "1.1" with "the customer withdrew it"
+    Then standard output carries "nothing checked it, so the row records a disagreement"
+    And the command succeeds
+
+  # Who closed a step, on the step read whole. A column of done says nothing about which of those
+  # steps anybody read, and the agreement beside it says what they made of the verdict.
+  Scenario: Showing a step says who closed it and what the row records
+    Given the system listens on an address the tool can dial
+    And a step taken, restated and approved, naming the scenario "a project carries a brief"
+    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the run answers "1 scenarios (1 passed)" and exits 0
+    And the operator checks step 1
+    And the operator finishes step 1 with "shipped as pull request 736"
+    When the caller shows step "1.1"
+    Then standard output carries "closed by the operator, and the row records an agreement"
+    And the command succeeds
+
+  Scenario: Showing a step nobody closed leaves the closer line out
+    Given the system listens on an address the tool can dial
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+      """
+    When the caller shows step "1.1"
+    Then standard output does not carry "closed by"
+    And the command succeeds
+
+  # The listing carries the same cell, so the operator reads a whole path without opening each step.
+  Scenario: The path listing says who closed each step
+    Given the system listens on an address the tool can dial
+    And a step taken, restated and approved, naming the scenario "a project carries a brief"
+    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the run answers "1 scenarios (1 passed)" and exits 0
+    And the operator checks step 1
+    And the operator finishes step 1 with "shipped as pull request 736"
+    When the caller reads the path of feature 1
+    Then standard output carries "operator"
+    And the command succeeds
+
+  # The session on a later step reads what came of the steps before it, and who closed one is part of
+  # that: a step krewe closed was read by nobody.
+  Scenario: A step the operator closed says so in the path a session reads
+    Given a step taken, restated and approved, naming the scenario "a project carries a brief"
+    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the run answers "1 scenarios (1 passed)" and exits 0
+    And the operator checks step 1
+    And the operator finishes step 1 with "shipped as pull request 736"
+    When the operator dispatches "and again" to the same session
+    Then the session's path file carries "closed by operator"
+
+  # The record, read on demand. It writes nothing, so the operator reads how far krewe got as often
+  # as they want to, and it says what each level means so the level is a thing they can decide about
+  # from this output alone.
+  Scenario: The caller reads the trust record and it says the level, the run and both totals
+    Given the system listens on an address the tool can dial
+    And a step taken, restated and approved, naming the scenario "a project carries a brief"
+    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the run answers "1 scenarios (1 passed)" and exits 0
+    And the operator checks step 1
+    And the operator finishes step 1 with "shipped as pull request 736"
+    When the caller reads the trust record
+    Then standard output carries "krewe is at trust level 0"
+    And standard output carries "level 0: krewe checks a step, and you say done"
+    And standard output carries "level 1: krewe closes a step its own check passed"
+    And standard output carries "1 agreement in a row, against a threshold of 5"
+    And standard output carries "1 agreement and 0 disagreements in all"
+    And the command succeeds
+
+  Scenario: A project with no design reads back with no design and a trust level of 0
+    Given the system listens on an address the tool can dial
+    When the caller reads the trust record
+    Then standard output carries "house-bills has no design yet, so krewe is at trust level 0"
+    And standard output carries "level 1: krewe closes a step its own check passed"
+    And the command succeeds
+
+  Scenario: Reading the trust record records nothing
+    Given the system listens on an address the tool can dial
+    And a step taken, restated and approved, naming the scenario "a project carries a brief"
+    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the run answers "1 scenarios (1 passed)" and exits 0
+    And the operator checks step 1
+    And the operator finishes step 1 with "shipped as pull request 736"
+    When the caller reads the trust record
+    And the caller reads the trust record
+    Then the run of agreements is 1
+    And the trust record counts 1 agreement and 0 disagreements
+    And the command succeeds
 
   # One step whole, which is what a row of the listing cannot hold. The listing gives each step one
   # line, and an intention, a list of files and the end of a failed run do not fit on one, so the

@@ -609,6 +609,23 @@ message Design {
   // The field numbers follow the order the slices add them rather than the order the design lists
   // them, so this is 18 and the numbers below it belong to the fields the later slices add.
   string contracts = 18;
+  // trust_level is where the word done sits. At 0 krewe checks a step and the operator says done. At
+  // 1 krewe closes a step its own check passed. It is one of those two numbers and never another.
+  int32 trust_level = 11;
+  // trust_threshold is the run of agreements that earns an offer of the next level. It is 5 on a row
+  // nobody set it on, and that five is a guess: nothing measured it.
+  int32 trust_threshold = 12;
+  // trust_run is the consecutive agreements since the last disagreement or the last level change. It
+  // is a run and never a ratio: one disagreement sets it to zero, because a ratio over a long record
+  // drifts upward and stops saying anything about the last ten steps.
+  int32 trust_run = 13;
+  // trust_offered is true after krewe offers the next level, until the operator answers. Krewe never
+  // raises its own level.
+  bool trust_offered = 14;
+  // trust_agreements and trust_disagreements are the whole record: every time the operator's word
+  // matched krewe's verdict, and every time it did not.
+  int32 trust_agreements = 15;
+  int32 trust_disagreements = 16;
 }
 
 message GetDesignRequest {
@@ -767,6 +784,12 @@ message Step {
   //
   // The number is 22 rather than 18 because 18 to 21 belong to the proof result.
   string closed_by = 22;
+  // operator_agreed is whether the operator's word matched krewe's last verdict: yes, no, or empty
+  // while nothing is decided.
+  //
+  // It is read from the row and never asked. Done after a passing check is yes, stopped after a
+  // failing check is yes, and everything else is no, including a step closed with nothing run on it.
+  string operator_agreed = 23;
   // milestone is which milestone of the feature this step belongs to. Zero means the step belongs to
   // no milestone, and zero is never a milestone row.
   //
@@ -926,9 +949,13 @@ message FinishStepRequest {
   string state = 3;
   string result = 4;
 }
-// FinishStepResponse is the step after the write.
+// FinishStepResponse is the step after the write, and the design after its counters moved.
+//
+// The design is answered rather than read back afterwards, because the two move in one transaction.
+// A second read is a second answer, and a second answer can already be one finish behind.
 message FinishStepResponse {
   Step step = 1;
+  Design design = 2;
 }
 
 // Feature is one narrowed part of a project. A project delivers several at the same time, each with

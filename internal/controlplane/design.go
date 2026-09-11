@@ -1297,11 +1297,19 @@ func stepBlock(step *quaycrewv1.Step, milestone string) string {
 // The count is on the line with the verdict because the two are one fact: a run that passed while
 // reporting no scenario is a run that proved nothing, and a reader who saw only the word would take
 // the step for proved.
+//
+// Who closed the step is on the same line, because it is the third part of one fact: a step that
+// passed and that krewe closed itself was never read by anybody, and the next session reads this
+// file to learn what the steps before it produced. It is left off while nobody closed the step.
 func proofLine(step *quaycrewv1.Step) string {
 	if step.GetProofState() == "" || step.GetProofState() == store.ProofUnproven {
 		return ""
 	}
-	return fmt.Sprintf("proof: %s, %s", step.GetProofState(), display.Scenarios(step.GetProofScenariosRun()))
+	said := fmt.Sprintf("proof: %s, %s", step.GetProofState(), display.Scenarios(step.GetProofScenariosRun()))
+	if step.GetClosedBy() != "" {
+		said += ", closed by " + step.GetClosedBy()
+	}
+	return said
 }
 
 // ListSteps reads a feature's path and the milestones it is grouped into, or every feature's path
@@ -1621,6 +1629,11 @@ func stepFinishStates() []string { return []string{stepDone, stepStopped} }
 // tells it nothing. An unknown word is refused rather than stored, the way an unknown permission mode
 // already is, so one layer owns the two words a step ends with.
 //
+// The store records whether the operator agreed with krewe's last verdict, and moves the project's
+// trust counters in the same transaction. Nothing here asks the operator whether they agreed: done
+// after a passing check and stopped after a failing one are both agreements, and the row already
+// says which happened.
+//
 // Nothing dispatches, stops or reclaims a session as a consequence. The step and the session that
 // took it are separate records, and the row still says who took it after the write.
 func (s *Server) FinishStep(ctx context.Context, req *quaycrewv1.FinishStepRequest) (*quaycrewv1.FinishStepResponse, error) {
@@ -1648,7 +1661,7 @@ func (s *Server) FinishStep(ctx context.Context, req *quaycrewv1.FinishStepReque
 	if stepNumbered(steps, req.GetNumber()) == nil {
 		return nil, noSuchStep(req.GetNumber(), len(steps))
 	}
-	written, err := s.store.FinishStep(ctx, req.GetFeature(), req.GetNumber(), store.Finish{
+	written, design, err := s.store.FinishStep(ctx, req.GetFeature(), req.GetNumber(), store.Finish{
 		State: req.GetState(), Result: req.GetResult(), ClosedBy: closedByOperator,
 	})
 	if errors.Is(err, store.ErrNotChecked) {
@@ -1657,7 +1670,10 @@ func (s *Server) FinishStep(ctx context.Context, req *quaycrewv1.FinishStepReque
 	if err != nil {
 		return nil, storeError(err, "step")
 	}
-	return &quaycrewv1.FinishStepResponse{Step: written}, nil
+	// The design as the write left it, rather than a read after it. The counters moved in the same
+	// transaction as the word, so this answer and the step agree about one finish, and a second read
+	// could already be behind another one.
+	return &quaycrewv1.FinishStepResponse{Step: written, Design: design}, nil
 }
 
 // nothingCheckedItYet is gate 3's refusal: the operator reads a verdict before speaking the word.
