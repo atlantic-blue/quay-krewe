@@ -1357,6 +1357,12 @@ func initializePathSteps(sc *godog.ScenarioContext) {
 		return runTool(ctx, "path", whereTheProjectIs(ctx), strconv.Itoa(number))
 	})
 
+	// One step whole, which is the read the listing above cannot answer: a row holds a line, and an
+	// intention, a list of files and the end of a failed run do not fit on one.
+	sc.Step(`^the caller shows step "([^"]*)"$`, func(ctx context.Context, said string) error {
+		return runTool(ctx, "step", "show", whereTheProjectIs(ctx), said)
+	})
+
 	// Counted off the printed lines rather than asked of the system again, because what this proves
 	// is what the operator is looking at.
 	sc.Step(`^standard output lists (\d+) steps in number order$`, func(ctx context.Context, want int) error {
