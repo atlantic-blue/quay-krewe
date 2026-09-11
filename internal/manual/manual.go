@@ -171,6 +171,15 @@ commands:
                                           .krewe/contracts.md
   design approve [<address>]              say the design as it stands is the one to build from. It
                                           is the operator's word: a session is refused this call
+  design proof [<address>]                say what one scenario run looks like in this project. Put
+    "<command>" [--pattern <regexp>]      {scenario} where the scenario name goes: a command without
+    [--timeout <seconds>]                 it runs everything, so it proves nothing about one step.
+                                          With no command it prints what is set, with a real scenario
+                                          name in place of the token, and writes nothing. The pattern
+                                          reads the count of scenarios out of the output and needs
+                                          one group around the number. It is the operator's word: a
+                                          session is refused this call, because a session that could
+                                          set it would choose what proves its own work
   feature [<address>]                     the narrowed parts of a project, in number order, with the
                                           state of each one, how many of its steps are done, and what
                                           it narrows to. A project delivers several features at once,

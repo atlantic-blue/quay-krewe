@@ -10,6 +10,12 @@ Feature: A project carries what it is for and what was designed
   Approval is a statement about one text. Any write to the design clears it, and the write says so,
   so a person learns the rule by reading the output rather than by being surprised later.
 
+  The project also says what one scenario run looks like: the command, what reads the count of
+  scenarios out of its output, and the budget for one run. The command carries the token {scenario},
+  and the run puts the step's own scenario name there, because a command that runs everything says
+  nothing about one step. Setting it is the operator's word, and a session is refused it: a session
+  that could set the command that proves its own work would choose what proves it.
+
   Background:
     Given a running control plane
     And a workspace named "acme"
@@ -453,3 +459,99 @@ Feature: A project carries what it is for and what was designed
     Then standard output carries "this project has no contracts document yet"
     And standard output carries "krewe design contracts"
     And the command succeeds
+
+  # What one scenario run looks like in this project: the command, what reads the count of scenarios
+  # out of its output, and the budget for one run. It is the operator's word. A session that could set
+  # the command that proves its own work would choose what proves it, and the check would stop being a
+  # check.
+  #
+  # The command carries {scenario}, and the run puts the step's own scenario name there. Without the
+  # token the command runs whatever the runner finds, which says nothing about one step.
+
+  Scenario: The proof command is read back with a real scenario name where the token was
+    Given the system listens on an address the tool can dial
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+
+      The scenario that proves it
+      a project carries a brief
+
+      After
+      0
+      """
+    When the caller sets the project's proof command to "go test ./features/... -run '{scenario}'"
+    And the caller reads the project's proof command
+    Then standard output carries "go test ./features/... -run '{scenario}'"
+    And standard output carries "go test ./features/... -run 'a project carries a brief'"
+    And standard output carries "([0-9]+) scenarios"
+    And standard output carries "900 seconds"
+    And the command succeeds
+
+  # The refusal names what to type rather than only saying no, because a person who reads it is about
+  # to type the command again.
+  Scenario: A proof command that runs everything is refused, and the refusal says what to put in
+    Given the system listens on an address the tool can dial
+    When the caller sets the project's proof command to "go test ./features/..."
+    Then the command fails
+    And standard error says "it proves nothing about one step"
+    And standard error says "{scenario}"
+    And the project proves nothing
+
+  Scenario: A count pattern that does not compile is refused, naming the fault
+    When the operator sets the project's proof command to "go test -run '{scenario}'" counting with "([0-9]+ scenarios"
+    Then the control plane refuses it as invalid
+    And the refusal suggests "missing closing )"
+    And the project proves nothing
+
+  # A pattern that compiles and captures nothing fails later and quietly: the run matches, reads no
+  # number, and reports a run that proved nothing.
+  Scenario: A count pattern with no group is refused
+    When the operator sets the project's proof command to "go test -run '{scenario}'" counting with "[0-9]+ scenarios"
+    Then the control plane refuses it as invalid
+    And the refusal suggests "needs one group around the number"
+    And the project proves nothing
+
+  Scenario: A budget above the bounds is refused, and the refusal names them
+    When the operator sets the project's proof budget to 3601 seconds
+    Then the control plane refuses it as invalid
+    And the refusal suggests "between 1 and 3600"
+
+  Scenario: A budget below the bounds is refused, and the refusal names them
+    When the operator sets the project's proof budget to -1 seconds
+    Then the control plane refuses it as invalid
+    And the refusal suggests "between 1 and 3600"
+
+  # The gate is only real while nothing inside a sandbox can pass it. A session that could set the
+  # command that checks its own work would choose what proves it.
+  Scenario: A session cannot set the proof command
+    Given the project's proof command is "go test ./features/... -run '{scenario}'"
+    When the driver asks to set the project's proof command
+    Then the driver is refused, told the call is the operator's to make
+    And the project proves one scenario with "go test ./features/... -run '{scenario}'"
+
+  # An empty value is a caller saying nothing about that setting, so the command is set on its own
+  # without losing the pattern the project already had.
+  Scenario: An empty pattern leaves the pattern that was already set
+    Given the project's proof command is "go test -run '{scenario}'" counting with "ran ([0-9]+)"
+    When the operator sets the project's proof command to "make one {scenario}"
+    And the operator reads the project's design
+    Then the project proves one scenario with "make one {scenario}"
+    And the project reads the count with "ran ([0-9]+)"
+
+  Scenario: Setting the proof command leaves the approval where it is
+    Given the project's design is "# Bills\n"
+    And the operator approved the project's design
+    When the operator sets the project's proof command to "go test -run '{scenario}'"
+    And the operator reads the project's design
+    Then the design is approved
+
+  # The pattern and the budget are flags on the same word, so an operator sets all three in one
+  # command rather than learning a second one.
+  Scenario: The caller sets the pattern and the budget beside the command
+    Given the system listens on an address the tool can dial
+    When the caller sets the project's proof command to "make one {scenario}" counting with "ran ([0-9]+)" inside 120 seconds
+    Then the command succeeds
+    And the project proves one scenario with "make one {scenario}"
+    And the project reads the count with "ran ([0-9]+)"
+    And the project gives one run 120 seconds

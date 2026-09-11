@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -243,4 +245,103 @@ func anEditorSaving(t *testing.T, name, saves string) string {
 		t.Fatal(err)
 	}
 	return at
+}
+
+// The one argument form of krewe design proof. A person standing in a project types the command
+// alone, and a person naming the project they mean types the address alone, so the word has to tell
+// the two apart from what was typed. A shell command carries a space or the scenario token; an
+// address is names joined by slashes and carries neither.
+//
+// The scenarios in features/design.feature always name the address, because the tool they run reads
+// where it is standing from the machine it runs on. This is the other branch.
+func TestOneArgumentIsTheProofCommandOrTheAddress(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		typed string
+		wrote string
+	}{
+		{
+			name:  "a command carrying a space",
+			typed: "go test ./features/... -run '{scenario}'",
+			wrote: "go test ./features/... -run '{scenario}'",
+		},
+		{
+			// No space anywhere in it, so the token is the only thing saying this is a command.
+			name:  "a command carrying only the token",
+			typed: "./proof.sh{scenario}",
+			wrote: "./proof.sh{scenario}",
+		},
+		{
+			// An address, so nothing is written and the project reads back as proving nothing.
+			name:  "an address",
+			typed: "acme/house-bills",
+			wrote: "",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client := testClient(t)
+			mustRun(t, client, "workspace", "create", "acme")
+			mustRun(t, client, "project", "create", "house-bills")
+
+			mustRun(t, client, "design", "proof", test.typed)
+
+			design, err := client.GetDesign(context.Background(), &quaycrewv1.GetDesignRequest{
+				Project: projectNamed(t, client, "house-bills")})
+			if err != nil {
+				t.Fatalf("GetDesign: %v", err)
+			}
+			if got := design.GetDesign().GetProofCommand(); got != test.wrote {
+				t.Fatalf("the project proves one scenario with %q, want %q", got, test.wrote)
+			}
+		})
+	}
+}
+
+// The pattern and the budget are flags, and both of them reach the store together with the command.
+// A flag with no command is refused rather than ignored: a caller who meant to change the pattern
+// would otherwise read the old one back and believe the write landed.
+func TestTheProofFlagsReachTheStoreAndNeedACommand(t *testing.T) {
+	client := testClient(t)
+	mustRun(t, client, "workspace", "create", "acme")
+	mustRun(t, client, "project", "create", "house-bills")
+
+	mustRun(t, client, "design", "proof", "make one {scenario}", "--pattern", "ran ([0-9]+)", "--timeout", "120")
+
+	design, err := client.GetDesign(context.Background(), &quaycrewv1.GetDesignRequest{
+		Project: projectNamed(t, client, "house-bills")})
+	if err != nil {
+		t.Fatalf("GetDesign: %v", err)
+	}
+	if got := design.GetDesign().GetProofCountPattern(); got != "ran ([0-9]+)" {
+		t.Errorf("the project reads the count with %q", got)
+	}
+	if got := design.GetDesign().GetProofTimeoutSeconds(); got != 120 {
+		t.Errorf("one run has %d seconds, want 120", got)
+	}
+
+	var out bytes.Buffer
+	err = run(context.Background(), client, []string{"design", "proof", "--pattern", "ran ([0-9]+)"}, &out, "")
+	if err == nil {
+		t.Fatal("a pattern with no command was accepted, so a caller reads the old one back and believes it landed")
+	}
+	if !strings.Contains(err.Error(), "belongs to") {
+		t.Errorf("the refusal is %q, and never says the pattern goes with a command", err)
+	}
+}
+
+// projectNamed is the identifier of one project of the system under test, which the tool never shows
+// and every design call needs.
+func projectNamed(t *testing.T, client quaycrewv1.ControlPlaneServiceClient, name string) string {
+	t.Helper()
+	resp, err := client.ListProjects(context.Background(), &quaycrewv1.ListProjectsRequest{})
+	if err != nil {
+		t.Fatalf("ListProjects: %v", err)
+	}
+	for _, project := range resp.GetProjects() {
+		if project.GetName() == name {
+			return project.GetId()
+		}
+	}
+	t.Fatalf("no project called %s", name)
+	return ""
 }

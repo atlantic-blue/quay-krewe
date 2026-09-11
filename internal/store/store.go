@@ -124,6 +124,31 @@ var ErrNothingRestated = errors.New("store: there is no restatement to approve")
 // default of 3 and calls it a guess that nothing measured, and that text is stale.
 const DefaultStepsInFlightCap int32 = 10
 
+// DefaultProofCountPattern and DefaultProofTimeoutSeconds are what a project nobody configured reads
+// back for its proof settings. They are the defaults of their columns, repeated here for the same
+// reason DefaultStepsInFlightCap is: a project with no design row has to answer what the row would
+// have given it, or a reader learns one thing before the first write and another after it.
+//
+// The pattern is the shape the godog runner prints, and the group is what a later slice reads the
+// number out of. Nine hundred seconds is fifteen minutes.
+const (
+	DefaultProofCountPattern         = `([0-9]+) scenarios`
+	DefaultProofTimeoutSeconds int32 = 900
+)
+
+// ProofSettings is what one scenario run looks like in a project: the command, how to read the count
+// of scenarios out of what it printed, and the budget for one run.
+//
+// An empty value leaves that setting where it is. Empty Command, empty CountPattern and a
+// TimeoutSeconds of zero each mean "do not change this one", so a caller may set the command alone
+// without losing the pattern the project already had. There is no way to clear one back to nothing,
+// and none is needed: a proof command is replaced rather than removed.
+type ProofSettings struct {
+	Command        string
+	CountPattern   string
+	TimeoutSeconds int32
+}
+
 // StepInFlight is one step in state taken, and the feature it sits in. The feature travels with it
 // because the cap counts across the whole project: a refusal naming step 1 three times, in a project
 // where three features each hold one, tells the operator nothing about which to finish.
@@ -603,6 +628,19 @@ type Store interface {
 	// Lowering it below what runs now is allowed and stops nothing: it refuses the next take. A cap
 	// that reached into running sessions would end work nobody asked it to end.
 	SetStepsInFlightCap(ctx context.Context, project string, atOnce int32) (*quaycrewv1.Design, error)
+	// SetProofCommand records what one scenario run looks like in this project, and creates the
+	// design row on first use.
+	//
+	// The store keeps what it is given. Whether the command names a scenario, whether the pattern
+	// compiles and whether the budget is one a person should have typed are the control plane's
+	// questions, the way the cap above already is.
+	//
+	// An empty value in ProofSettings leaves that setting where it is, so a caller sets the command
+	// alone without losing the pattern the project already had.
+	//
+	// The approval is untouched, and so is every trust column. A proof command says how a step is
+	// run, and nothing about what the design says.
+	SetProofCommand(ctx context.Context, project string, settings ProofSettings) (*quaycrewv1.Design, error)
 
 	// SetPath replaces one feature's path and returns the whole path after the write, in number
 	// order. The steps are what a caller may set; the rest of each row belongs to the system.

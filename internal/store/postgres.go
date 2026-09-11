@@ -689,7 +689,7 @@ func (p *Postgres) SetContext(ctx context.Context, scope ContextScope, owner, bo
 // written next to each other because a column added to one and not the other reads as a zero rather
 // than as a failure.
 const designColumns = `project, brief, body, approved, approved_at, written_by, updated_at, contracts, ` +
-	`steps_in_flight_cap`
+	`steps_in_flight_cap, proof_command, proof_count_pattern, proof_timeout_seconds`
 
 // scanDesign reads one design row.
 func scanDesign(row pgx.Row) (*quaycrewv1.Design, error) {
@@ -699,20 +699,25 @@ func scanDesign(row pgx.Row) (*quaycrewv1.Design, error) {
 		approvedAt                                 *time.Time
 		updatedAt                                  time.Time
 		stepsInFlightCap                           int32
+		proofCommand, proofCountPattern            string
+		proofTimeoutSeconds                        int32
 	)
 	if err := row.Scan(&project, &brief, &body, &approved, &approvedAt, &writtenBy, &updatedAt,
-		&contracts, &stepsInFlightCap); err != nil {
+		&contracts, &stepsInFlightCap, &proofCommand, &proofCountPattern, &proofTimeoutSeconds); err != nil {
 		return nil, err
 	}
 	design := &quaycrewv1.Design{
-		Project:          project,
-		Brief:            brief,
-		Body:             body,
-		Approved:         approved,
-		WrittenBy:        writtenBy,
-		UpdatedAt:        timestamppb.New(updatedAt),
-		Contracts:        contracts,
-		StepsInFlightCap: stepsInFlightCap,
+		Project:             project,
+		Brief:               brief,
+		Body:                body,
+		Approved:            approved,
+		WrittenBy:           writtenBy,
+		UpdatedAt:           timestamppb.New(updatedAt),
+		Contracts:           contracts,
+		StepsInFlightCap:    stepsInFlightCap,
+		ProofCommand:        proofCommand,
+		ProofCountPattern:   proofCountPattern,
+		ProofTimeoutSeconds: proofTimeoutSeconds,
 	}
 	if approvedAt != nil {
 		design.ApprovedAt = timestamppb.New(*approvedAt)
@@ -742,10 +747,11 @@ func (p *Postgres) projectExists(ctx context.Context, project string) error {
 }
 
 // GetDesign returns the project's design. A project with no design row is the normal state and
-// answers with a Design carrying its identifier and the cap the column would have given it.
+// answers with a Design carrying its identifier and every default the row would have carried.
 //
-// The cap is answered rather than left at zero, because zero is a number that refuses every take and
-// a project nobody configured refuses nothing.
+// The defaults are answered rather than left at zero, because each zero is a value a reader would act
+// on: a cap of zero refuses every take, an empty pattern reads no count out of any output, and a
+// budget of zero ends a run before it starts.
 func (p *Postgres) GetDesign(ctx context.Context, project string) (*quaycrewv1.Design, error) {
 	if err := p.projectExists(ctx, project); err != nil {
 		return nil, err
@@ -753,7 +759,12 @@ func (p *Postgres) GetDesign(ctx context.Context, project string) (*quaycrewv1.D
 	design, err := scanDesign(p.pool.QueryRow(ctx,
 		`select `+designColumns+` from project_designs where project = $1`, project))
 	if errors.Is(err, pgx.ErrNoRows) {
-		return &quaycrewv1.Design{Project: project, StepsInFlightCap: DefaultStepsInFlightCap}, nil
+		return &quaycrewv1.Design{
+			Project:             project,
+			StepsInFlightCap:    DefaultStepsInFlightCap,
+			ProofCountPattern:   DefaultProofCountPattern,
+			ProofTimeoutSeconds: DefaultProofTimeoutSeconds,
+		}, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get design: %w", err)
@@ -866,6 +877,46 @@ func (p *Postgres) SetStepsInFlightCap(ctx context.Context, project string, atOn
 		returning `+designColumns, project, atOnce))
 	if err != nil {
 		return nil, fmt.Errorf("set the cap: %w", err)
+	}
+	return design, nil
+}
+
+// SetProofCommand records what one scenario run looks like in this project, and creates the row on
+// first use the way every other design write does.
+//
+// An empty value leaves that setting where it is, and the choice is made inside the one statement
+// rather than by reading the row first. A read and then a write would let a second caller land
+// between them, and the pattern this caller meant to keep would be the one it read rather than the
+// one on the row.
+//
+// On first use there is nothing to keep, so an empty value takes the column default. The defaults are
+// passed in rather than left to the column, because this is one insert and a statement cannot ask for
+// the default of one column and a value for another in the same row.
+//
+// The three values are kept as they are given, for the reason the cap is: the control plane refuses a
+// command that names no scenario, a pattern that does not compile and a budget outside the bounds,
+// and a second check here is a second place for those rules to drift.
+//
+// No approval and no trust column moves. A proof command says how a step is run, and nothing about
+// what the design body means.
+func (p *Postgres) SetProofCommand(ctx context.Context, project string, settings ProofSettings) (
+	*quaycrewv1.Design, error) {
+	if err := p.projectExists(ctx, project); err != nil {
+		return nil, err
+	}
+	design, err := scanDesign(p.pool.QueryRow(ctx, `
+		insert into project_designs (project, proof_command, proof_count_pattern, proof_timeout_seconds)
+		values ($1, $2, coalesce(nullif($3, ''), $5), coalesce(nullif($4, 0), $6))
+		on conflict (project) do update set
+			proof_command = coalesce(nullif($2, ''), project_designs.proof_command),
+			proof_count_pattern = coalesce(nullif($3, ''), project_designs.proof_count_pattern),
+			proof_timeout_seconds = coalesce(nullif($4, 0), project_designs.proof_timeout_seconds),
+			updated_at = now()
+		returning `+designColumns,
+		project, settings.Command, settings.CountPattern, settings.TimeoutSeconds,
+		DefaultProofCountPattern, DefaultProofTimeoutSeconds))
+	if err != nil {
+		return nil, fmt.Errorf("set the proof command: %w", err)
 	}
 	return design, nil
 }
