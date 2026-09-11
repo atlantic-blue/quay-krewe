@@ -53,6 +53,17 @@ import (
 // worth running. Reading the design stays open, so a session still reads the command it will be run
 // under.
 //
+// The trust ladder is refused on both its calls, and they are the plainest self grant in the list:
+// they move the word done. Krewe earns the next level by agreeing with the operator over and over, and
+// it offers rather than takes, so a session that could raise its own would be handing itself the word
+// it was supposed to earn. Reading the record stays open, because what a session is allowed to do is
+// something it should be able to look up.
+//
+// Setting the threshold is refused beside it because lowering the number is the same grant by a
+// longer road: a session that could say two agreements are enough would be writing its own offer.
+// Raising the number grants nothing, and the call is refused whole rather than by the direction of
+// the change, because a guard that reads which way a number moved is a guard nobody can check.
+//
 // Archiving is refused on both its calls. It is the operator's word about the record: a session that
 // could put sessions away could hide the evidence of what it did, and the sweep over a project could
 // do it to every finished session at once. Restoring stays open, because it hides nothing.
@@ -76,7 +87,9 @@ func DeniedToDriver(fullMethod string, request any) error {
 		quaycrewv1.ControlPlaneService_ApproveDesign_FullMethodName,
 		quaycrewv1.ControlPlaneService_ApproveRestatement_FullMethodName,
 		quaycrewv1.ControlPlaneService_SetStepsInFlightCap_FullMethodName,
-		quaycrewv1.ControlPlaneService_SetProofCommand_FullMethodName:
+		quaycrewv1.ControlPlaneService_SetProofCommand_FullMethodName,
+		quaycrewv1.ControlPlaneService_RaiseTrust_FullMethodName,
+		quaycrewv1.ControlPlaneService_SetTrustThreshold_FullMethodName:
 		return refusedToDriver(fullMethod)
 	case quaycrewv1.ControlPlaneService_SetContext_FullMethodName:
 		if req, ok := request.(*quaycrewv1.SetContextRequest); ok && req.GetScope() == "system" {

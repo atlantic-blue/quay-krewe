@@ -935,6 +935,70 @@ func (p *Postgres) SetProofCommand(ctx context.Context, project string, settings
 	return design, nil
 }
 
+// RaiseTrust accepts the offer krewe made and moves the level up one.
+//
+// The offer is read in the statement that writes the level, rather than in a read before it, so a
+// disagreement landing between the two cannot leave a level raised against an offer it had already
+// taken away. The row is read again only to say which refusal a write of no rows earned: a project
+// with no design and a project krewe offered nothing are two different things to whoever typed the
+// command.
+//
+// The level guard sits in the same where clause. Krewe only ever offers the level below the top, so a
+// row that somehow carried an offer at level 1 still writes no level 2: the ladder has two rungs and
+// the statement is what holds it to them.
+//
+// No counter but the run moves. The totals are the whole record of what happened, and a raise is not
+// an agreement.
+func (p *Postgres) RaiseTrust(ctx context.Context, project string) (*quaycrewv1.Design, error) {
+	if err := p.projectExists(ctx, project); err != nil {
+		return nil, err
+	}
+	design, err := scanDesign(p.pool.QueryRow(ctx, `
+		update project_designs set trust_level = trust_level + 1, trust_run = 0,
+			trust_offered = false, updated_at = now()
+		where project = $1 and trust_offered and trust_level < $2
+		returning `+designColumns, project, TrustLevelCloses))
+	if errors.Is(err, pgx.ErrNoRows) {
+		var one int
+		held := p.pool.QueryRow(ctx, `select 1 from project_designs where project = $1`, project).Scan(&one)
+		if errors.Is(held, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		if held != nil {
+			return nil, fmt.Errorf("read the design: %w", held)
+		}
+		return nil, ErrNoOfferStanding
+	}
+	if err != nil {
+		return nil, fmt.Errorf("raise the trust level: %w", err)
+	}
+	return design, nil
+}
+
+// SetTrustThreshold records the run of agreements that earns an offer, and creates the row on first
+// use the way every other design write does.
+//
+// The number is kept as it is given, for the reason the cap above keeps what it is given: the control
+// plane refuses one outside the bounds, and a second check here is a second place for them to drift.
+//
+// No counter moves and no offer is made. A threshold set below the run a project already has is a
+// number the next finish reads, because the offer belongs to the write that moves the run.
+func (p *Postgres) SetTrustThreshold(ctx context.Context, project string, threshold int32) (
+	*quaycrewv1.Design, error) {
+	if err := p.projectExists(ctx, project); err != nil {
+		return nil, err
+	}
+	design, err := scanDesign(p.pool.QueryRow(ctx, `
+		insert into project_designs (project, trust_threshold) values ($1, $2)
+		on conflict (project) do update set trust_threshold = excluded.trust_threshold,
+			updated_at = now()
+		returning `+designColumns, project, threshold))
+	if err != nil {
+		return nil, fmt.Errorf("set the trust threshold: %w", err)
+	}
+	return design, nil
+}
+
 // stepColumns is what every path read selects, in the order scanStep reads them. The two are written
 // next to each other because a column added to one and not the other reads as a zero rather than as
 // a failure.
@@ -1540,25 +1604,44 @@ func (p *Postgres) FinishStep(ctx context.Context, feature string, number int32,
 // A disagreement also takes the level back down, and the greatest holds the floor at zero: a
 // disagreement at level 0 records the disagreement and leaves the level where it is.
 //
+// The offer rides on the same statement, because it is a fact about the run this write just made. An
+// agreement that takes the run to the project's threshold sets it while the level is below the top,
+// and a disagreement takes it away: the run went back to zero, and an offer that outlived what
+// invalidated it would ask the operator to trust a run that is no longer there. OfferTheNextLevel
+// says this same rule in Go, and the conformance suite holds the two to one answer.
+//
+// Nothing else makes an offer. Setting the threshold below a run a project already has writes no
+// offer, because this is the only statement that reads the two numbers against each other.
+//
+// The insert branch reads no level. A row born by a finish is at level 0, which is below the top one,
+// and it writes the threshold rather than leaving it to the column default so that the number the
+// offer is decided against is the number the row comes back carrying.
+//
 // The row is made where the project has none, the way every other design write makes it. A project
 // that finished a step before anybody wrote a brief still carries its count, and the insert writes
 // the same numbers the update would have arrived at from the column defaults.
 func moveTheCounters(ctx context.Context, transaction pgx.Tx, project, agreed string) (
 	*quaycrewv1.Design, error) {
 	design, err := scanDesign(transaction.QueryRow(ctx, `
-		insert into project_designs (project, trust_run, trust_agreements, trust_disagreements)
-		values ($1,
+		insert into project_designs (project, trust_threshold, trust_run, trust_agreements,
+			trust_disagreements, trust_offered)
+		values ($1, $4::integer,
 			case when $2 then 1 else 0 end,
 			case when $2 then 1 else 0 end,
-			case when $2 then 0 else 1 end)
+			case when $2 then 0 else 1 end,
+			$2 and 1 >= $4::integer)
 		on conflict (project) do update set
 			trust_run = case when $2 then project_designs.trust_run + 1 else 0 end,
 			trust_agreements = project_designs.trust_agreements + case when $2 then 1 else 0 end,
 			trust_disagreements = project_designs.trust_disagreements + case when $2 then 0 else 1 end,
 			trust_level = case when $2 then project_designs.trust_level
 				else greatest(project_designs.trust_level - 1, $3::integer) end,
+			trust_offered = $2
+				and project_designs.trust_run + 1 >= project_designs.trust_threshold
+				and project_designs.trust_level < $5::integer,
 			updated_at = now()
-		returning `+designColumns, project, agreed == AgreedYes, TrustLevelChecked))
+		returning `+designColumns,
+		project, agreed == AgreedYes, TrustLevelChecked, DefaultTrustThreshold, TrustLevelCloses))
 	if err != nil {
 		return nil, fmt.Errorf("move the trust counters: %w", err)
 	}

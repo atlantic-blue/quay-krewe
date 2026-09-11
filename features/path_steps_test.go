@@ -1351,6 +1351,73 @@ func initializePathSteps(sc *godog.ScenarioContext) {
 		return runTool(ctx, "trust", whereTheProjectIs(ctx))
 	})
 
+	// The offer, and the raise. Krewe earns the next level by agreeing with the operator over and
+	// over, and it offers rather than takes: nothing in this block moves a level except the word the
+	// operator types.
+
+	sc.Step(`^the project's trust threshold is (\d+)$`, func(ctx context.Context, number int) error {
+		return setTheTrustThreshold(ctx, int32(number))
+	})
+
+	sc.Step(`^the operator sets the trust threshold to (-?\d+)$`, func(ctx context.Context, number int) error {
+		return setTheTrustThreshold(ctx, int32(number))
+	})
+
+	sc.Step(`^the trust threshold is (\d+)$`, func(ctx context.Context, want int) error {
+		design, err := theTrustRecord(ctx)
+		if err != nil {
+			return err
+		}
+		if got := design.GetTrustThreshold(); got != int32(want) {
+			return fmt.Errorf("the trust threshold is %d, want %d", got, want)
+		}
+		return nil
+	})
+
+	// Read off the row rather than off what a write answered, because an offer that lived only in one
+	// response is an offer no later command could find.
+	sc.Step(`^krewe is offered the next level$`, func(ctx context.Context) error {
+		return theStandingOffer(ctx, true)
+	})
+
+	sc.Step(`^krewe is offered nothing$`, func(ctx context.Context) error {
+		return theStandingOffer(ctx, false)
+	})
+
+	sc.Step(`^the operator accepts the offer$`, func(ctx context.Context) error {
+		w := worldFrom(ctx)
+		_, err := w.client.RaiseTrust(ctx, &quaycrewv1.RaiseTrustRequest{Project: w.projectID})
+		w.lastErr = err
+		return nil
+	})
+
+	sc.Step(`^the caller accepts the offer$`, func(ctx context.Context) error {
+		return runTool(ctx, "trust", "raise", whereTheProjectIs(ctx))
+	})
+
+	sc.Step(`^the caller sets the trust threshold to "([^"]*)"$`, func(ctx context.Context, said string) error {
+		return runTool(ctx, "trust", "threshold", whereTheProjectIs(ctx), said)
+	})
+
+	// The two calls that move the word done, asked for with the driver's own token. A session that
+	// could raise its own level would be handing itself the word it was supposed to earn, and one
+	// that could lower the threshold would be writing its own offer.
+	sc.Step(`^the driver asks to raise the trust level$`, func(ctx context.Context) error {
+		return asDriver(ctx, func(ctx context.Context, client quaycrewv1.ControlPlaneServiceClient) error {
+			_, err := client.RaiseTrust(ctx, &quaycrewv1.RaiseTrustRequest{
+				Project: worldFrom(ctx).projectID})
+			return err
+		})
+	})
+
+	sc.Step(`^the driver asks to set the trust threshold$`, func(ctx context.Context) error {
+		return asDriver(ctx, func(ctx context.Context, client quaycrewv1.ControlPlaneServiceClient) error {
+			_, err := client.SetTrustThreshold(ctx, &quaycrewv1.SetTrustThresholdRequest{
+				Project: worldFrom(ctx).projectID, Threshold: 1})
+			return err
+		})
+	})
+
 	sc.Step(`^the caller marks step "([^"]*)" done with "([^"]*)"$`,
 		func(ctx context.Context, said, result string) error {
 			return runTool(ctx, "step", "done", whereTheProjectIs(ctx), said, result)
@@ -1748,6 +1815,34 @@ func theTrustRecord(ctx context.Context) (*quaycrewv1.Design, error) {
 		return nil, fmt.Errorf("read the trust record: %w", err)
 	}
 	return resp.GetDesign(), nil
+}
+
+// setTheTrustThreshold records how many agreements in a row earn an offer, keeping what came back so
+// a Then step reads the refusal as well as the design.
+func setTheTrustThreshold(ctx context.Context, threshold int32) error {
+	w := worldFrom(ctx)
+	_, err := w.client.SetTrustThreshold(ctx, &quaycrewv1.SetTrustThresholdRequest{
+		Project: w.projectID, Threshold: threshold,
+	})
+	w.lastErr = err
+	return nil
+}
+
+// theStandingOffer reads the design back and holds whether krewe is asking for the next level to what
+// the scenario says.
+//
+// It reads the row rather than what a write answered, because an offer stands until the operator
+// answers it: what these scenarios ask is what a later command would find.
+func theStandingOffer(ctx context.Context, want bool) error {
+	design, err := theTrustRecord(ctx)
+	if err != nil {
+		return err
+	}
+	if got := design.GetTrustOffered(); got != want {
+		return fmt.Errorf("krewe is offered the next level: %v, want %v (the run is %d against a threshold of %d, at level %d)",
+			got, want, design.GetTrustRun(), design.GetTrustThreshold(), design.GetTrustLevel())
+	}
+	return nil
 }
 
 // finishStep closes a step of the feature a scenario means when it names none.

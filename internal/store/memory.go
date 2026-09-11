@@ -1038,6 +1038,50 @@ func (m *Memory) SetProofCommand(_ context.Context, project string, settings Pro
 	})
 }
 
+// RaiseTrust accepts the offer krewe made and moves the level up one.
+//
+// The offer is read and the level written under one hold of the lock, the way the postgres store does
+// them in one statement, so a disagreement landing between the two cannot leave a level raised
+// against an offer it had already taken away.
+//
+// A raise at the top level earns the same refusal as a raise with no offer, because krewe never
+// offers a level that does not exist. The guard is here rather than only in the offer, so a row that
+// carried an offer at level 1 could still never read as level 2.
+func (m *Memory) RaiseTrust(_ context.Context, project string) (*quaycrewv1.Design, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, err := m.getProjectLocked(project); err != nil {
+		return nil, err
+	}
+	held, ok := m.designs[project]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	if !held.GetTrustOffered() || held.GetTrustLevel() >= TrustLevelCloses {
+		return nil, ErrNoOfferStanding
+	}
+	held.TrustLevel++
+	held.TrustRun = 0
+	held.TrustOffered = false
+	held.UpdatedAt = timestamppb.New(time.Now().UTC())
+	return copyDesign(held), nil
+}
+
+// SetTrustThreshold records the run of agreements that earns an offer, and creates the row on first
+// use the way every other design write does.
+//
+// The number is kept as it is given, for the reason the cap above is: the control plane refuses one
+// outside the bounds, and a second check here is a second place for the bounds to drift.
+//
+// No counter moves and no offer is made. A threshold set below the run a project already has is a
+// number the next finish reads, because the offer belongs to the write that moves the run.
+func (m *Memory) SetTrustThreshold(_ context.Context, project string, threshold int32) (
+	*quaycrewv1.Design, error) {
+	return m.writeDesign(project, func(design *quaycrewv1.Design) {
+		design.TrustThreshold = threshold
+	})
+}
+
 // FinishStep records what came of a step: the word that closes it, what somebody wrote, who spoke
 // the word, and the stamp.
 //
@@ -1103,10 +1147,16 @@ func (m *Memory) moveTheCountersLocked(project, agreed string) *quaycrewv1.Desig
 	if agreed == AgreedYes {
 		design.TrustRun++
 		design.TrustAgreements++
+		design.TrustOffered = OfferTheNextLevel(
+			design.GetTrustRun(), design.GetTrustThreshold(), design.GetTrustLevel())
 	} else {
 		design.TrustRun = 0
 		design.TrustDisagreements++
 		design.TrustLevel = LoweredTrustLevel(design.GetTrustLevel())
+		// The offer goes with the run it was made from. An offer that outlived the disagreement that
+		// invalidated it would ask the operator to trust a run that is no longer there, which is worse
+		// than never having offered.
+		design.TrustOffered = false
 	}
 	design.UpdatedAt = timestamppb.New(time.Now().UTC())
 	return copyDesign(design)

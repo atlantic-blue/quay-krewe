@@ -709,6 +709,34 @@ message SetProofCommandResponse {
   Design design = 1;
 }
 
+// RaiseTrustRequest accepts the offer krewe made, and moves the word done up one level.
+//
+// Krewe never raises its own level. It offers, and the operator answers, which is why the driver is
+// refused this call. A raise with no offer standing is refused, and so is a raise at the top level:
+// krewe never offers a level that does not exist.
+message RaiseTrustRequest {
+  string project = 1;
+}
+message RaiseTrustResponse {
+  Design design = 1;
+}
+
+// SetTrustThresholdRequest says how many agreements in a row earn an offer of the next level.
+//
+// The default is five and that five is provisional: nothing measured it, because krewe has closed no
+// step yet. The number that replaces it comes from the first project to reach ten closes, read as how
+// often the operator disagreed.
+//
+// The driver is refused this call. Lowering the threshold is a grant, so a session that could set it
+// would be shortening the run it has to earn.
+message SetTrustThresholdRequest {
+  string project = 1;
+  int32 threshold = 2;
+}
+message SetTrustThresholdResponse {
+  Design design = 1;
+}
+
 // Step is one step of a feature's path: one atomised change, with what proves it.
 //
 // The field numbers follow the order the slices add them, not the order the design document lists
@@ -949,13 +977,22 @@ message FinishStepRequest {
   string state = 3;
   string result = 4;
 }
-// FinishStepResponse is the step after the write, and the design after its counters moved.
+// FinishStepResponse is the step after the write, the design after its counters moved, and any offer
+// the write earned.
 //
 // The design is answered rather than read back afterwards, because the two move in one transaction.
 // A second read is a second answer, and a second answer can already be one finish behind.
 message FinishStepResponse {
   Step step = 1;
   Design design = 2;
+  // offer is the sentence krewe prints when the run of agreements reaches the project's threshold,
+  // and is empty otherwise. Krewe offers the next level and the operator accepts it with
+  // krewe trust raise: nothing here raises anything.
+  //
+  // Field 3 is left for the next step of the path, which a later slice answers here. A field number
+  // is fixed once it ships, so this takes the number the contract gives it rather than the next free
+  // one.
+  string offer = 4;
 }
 
 // Feature is one narrowed part of a project. A project delivers several at the same time, each with
@@ -1656,6 +1693,14 @@ service ControlPlaneService {
   // The driver is refused it. A session that could set the command that proves its own work would
   // choose what proves it, and the check would stop being a check.
   rpc SetProofCommand(SetProofCommandRequest) returns (SetProofCommandResponse);
+
+  // Accepting the offer krewe made, and moving the word done up one level. The driver is refused it:
+  // krewe never raises its own level, so the offer is krewe's and the answer is the operator's.
+  rpc RaiseTrust(RaiseTrustRequest) returns (RaiseTrustResponse);
+
+  // How many agreements in a row earn an offer. The driver is refused it: lowering the number is a
+  // grant, so a session that could set it would shorten the run it has to earn.
+  rpc SetTrustThreshold(SetTrustThresholdRequest) returns (SetTrustThresholdResponse);
 
   // Running the scenario the step promised, inside the sandbox of the session that holds it, and
   // recording what it reported.

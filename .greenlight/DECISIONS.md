@@ -752,3 +752,53 @@ stale, or the part of the contract that has no code behind it yet is recorded as
 - The row is born carrying the column defaults, so a project that counted its first finish reads the
   same threshold, cap, pattern and budget as one with no row at all. `krewe trust` still says the
   project has no design, because it reads the brief and the body rather than the row's existence.
+
+## Settled on 2026-09-11, building S-26, where a contract and the code disagreed
+
+Four entries. In each one the code on `main` wins and the sentence in the contract is recorded as
+stale, or the part of the contract that has no code behind it yet is recorded as waiting for it.
+
+**`FinishStepResponse` takes the offer as field 4, and field 3 stays free for `next`.**
+- Status: settled, and the contracts say it this way.
+- WIRE-12 answers `FinishStepResponse { Step step = 1; Design design = 2; int32 next = 3; string
+  offer = 4; }`. The offer ships here and `next` does not: the command line still reads what is next
+  through `ListSteps`, which is what prints the line today.
+- So the offer takes 4 rather than the next free number, which is 3. A field number is fixed once it
+  ships, and renumbering `next` later to get it out of the way is the one thing a wire format cannot
+  do. This is the rule `Design` already follows: S-25 gave the six trust columns 11 to 16 while 17 and
+  18 were already taken, because the contract had reserved them.
+- The rest of WIRE-12 is untouched, per the slice's own note.
+
+**The offer sentence is built by the control plane, and both stores write only the column.**
+- Status: settled, and the contracts say nothing either way.
+- TRUST-2 gives the sentence and says the finish "sets `trust_offered` and prints the offer", without
+  saying which layer writes the words.
+- The store decides whether an offer stands, in the statement that moves the run, and the control
+  plane turns the row into the sentence. A store that composed the text would put a user facing
+  string in two implementations held to one conformance suite, and the suite would then be comparing
+  prose.
+- `store.OfferTheNextLevel` holds the rule in Go for the memory store, and the Postgres statement says
+  the same thing in SQL, which is the shape `Agreed` and `LoweredTrustLevel` already have.
+
+**The count in the offer is the run the write arrived at, never the literal five.**
+- Status: settled, and the contract text reads as a literal.
+- TRUST-2 writes the sentence as "krewe agreed with you 5 times in a row", and its acceptance
+  criterion reads "Five agreements in a row print the offer, with the count behind it".
+- A project sets its own threshold, so a sentence carrying five would claim a run the project never
+  had. The count is `trust_run` as the finish left it, and it is counted in words: a run of one reads
+  "1 time in a row", because "1 times" reads as a sentence a machine assembled.
+- The scenarios set the threshold to 1 and to 2 for that reason. A scenario that walked five steps
+  would prove the same rule and prove it against the number it happens to default to.
+
+**The raise at level 1 is proved in each store's own test, not in `features/path.feature`.**
+- Status: settled, and it is the shape S-25 used for the disagreement at level 1.
+- STORE-15 says "`trust_level` never goes above 1. A raise at level 1 is refused by the same
+  sentinel". The scenario in the feature file reaches that state the way an operator does: it accepts
+  the offer and then asks again, and the second raise is refused because no offer stands.
+- The guard on the level is a second condition in the same statement, and nothing a caller can do
+  produces an offer standing at level 1: the offer is only ever made below the top. So the state is
+  written per store, in `TestARaiseWithAnOfferStandingAtLevelOneIsRefused` on the memory row and in
+  `TestARaiseAtLevelOneIsRefusedInPostgres` in one statement, and both mutations were watched red.
+- Krewe closing a step at level 1 is S-27 and the reopen is S-28. Neither is built here, so
+  `closed_by_krewe` stays false and the raise's output names `krewe step reopen` as a word the
+  operator will have rather than one they have.

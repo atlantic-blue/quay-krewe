@@ -3915,6 +3915,244 @@ Feature: A project holds a numbered path of steps
     And the trust record counts 1 agreement and 0 disagreements
     And the command succeeds
 
+  # The offer, and the raise. Krewe earns the next level by agreeing with the operator over and over,
+  # and then it asks: it never takes.
+  #
+  # The offer is made where a finish moves the run to the threshold, and nowhere else. Setting the
+  # threshold under a run the project already has makes no offer by itself, because the operator reads
+  # an offer beside the step that earned it rather than beside the number they just typed.
+  #
+  # An offer stands until it is answered, so krewe trust prints it. A disagreement takes it away: the
+  # run went back to zero, and an offer that outlived what invalidated it would ask the operator to
+  # trust a run that is no longer there.
+  #
+  # The threshold default is five and that five is a guess. Nothing measured it, because krewe has
+  # closed no step yet, and the number that replaces it comes from the first project to reach ten
+  # closes.
+
+  Scenario: The run that reaches the threshold earns an offer of the next level
+    Given the project's design is "the design, whole"
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+      ## 2. The store holds a project's design
+      """
+    And the project's trust threshold is 2
+    And krewe checked step 1, and it passed
+    And the operator finishes step 1 with "shipped as pull request 736"
+    And krewe is offered nothing
+    When krewe checked step 2, and it passed
+    And the operator finishes step 2 with "shipped as pull request 737"
+    Then krewe is offered the next level
+    And the run of agreements is 2
+
+  # What the operator reads at the moment krewe earns it, with the run it earned it with. The count is
+  # the real run and never the five the default happens to hold.
+  Scenario: The finish that earns the offer prints it, with the count behind it
+    Given the system listens on an address the tool can dial
+    And the project's design is "the design, whole"
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+      ## 2. The store holds a project's design
+      """
+    And the project's trust threshold is 2
+    And krewe checked step 1, and it passed
+    And the operator finishes step 1 with "shipped as pull request 736"
+    And krewe checked step 2, and it passed
+    When the caller marks step "1.2" done with "shipped as pull request 737"
+    Then standard output carries "krewe agreed with you 2 times in a row"
+    And standard output carries "Let it close a step its own check passed?"
+    And standard output carries "Accept with krewe trust raise"
+    And the command succeeds
+
+  # An offer stands until the operator answers it, so the record they read on demand carries it. A
+  # finish that scrolled away is not where anybody decides this.
+  Scenario: The trust record prints the standing offer until the operator answers it
+    Given the system listens on an address the tool can dial
+    And the project's design is "the design, whole"
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+      """
+    And the project's trust threshold is 1
+    And krewe checked step 1, and it passed
+    And the operator finishes step 1 with "shipped as pull request 737"
+    When the caller reads the trust record
+    Then standard output carries "krewe agreed with you 1 time in a row, so it asks for level 1"
+    And standard output carries "accept with krewe trust raise"
+    And the command succeeds
+
+  Scenario: The trust record prints no offer where krewe earned none
+    Given the system listens on an address the tool can dial
+    And the project's design is "the design, whole"
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+      """
+    And krewe checked step 1, and it passed
+    And the operator finishes step 1 with "shipped as pull request 737"
+    When the caller reads the trust record
+    Then standard output does not carry "accept with krewe trust raise"
+    And the command succeeds
+
+  # The word that moves the level is the operator's. The run starts again, because the agreements
+  # behind the old level bought the level and are spent.
+  Scenario: Accepting the offer moves the level to 1 and the run to zero
+    Given the project's design is "the design, whole"
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+      """
+    And the project's trust threshold is 1
+    And krewe checked step 1, and it passed
+    And the operator finishes step 1 with "shipped as pull request 737"
+    When the operator accepts the offer
+    Then the trust level is 1
+    And the run of agreements is 0
+    And krewe is offered nothing
+
+  Scenario: The caller accepts the offer and reads what changes and the way back
+    Given the system listens on an address the tool can dial
+    And the project's design is "the design, whole"
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+      """
+    And the project's trust threshold is 1
+    And krewe checked step 1, and it passed
+    And the operator finishes step 1 with "shipped as pull request 737"
+    When the caller accepts the offer
+    Then standard output carries "krewe is at trust level 1"
+    And standard output carries "krewe now closes a step its own check passed"
+    And standard output carries "krewe step reopen"
+    And the command succeeds
+
+  # Krewe never raises its own level, so there is nothing to accept until it asks. The refusal names
+  # the word that reads the record, because the question behind it is how far off the offer is.
+  Scenario: A raise with no offer standing is refused
+    Given the project's design is "the design, whole"
+    When the operator accepts the offer
+    Then the control plane refuses it as the wrong state
+    And the refusal suggests "krewe did not earn the next level here yet"
+    And the refusal suggests "krewe trust"
+    And the trust level is 0
+
+  # The top of the ladder. It has two rungs, and krewe never offers a level that does not exist.
+  Scenario: A raise at level 1 is refused
+    Given the project's design is "the design, whole"
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+      """
+    And the project's trust threshold is 1
+    And krewe checked step 1, and it passed
+    And the operator finishes step 1 with "shipped as pull request 737"
+    And the operator accepts the offer
+    When the operator accepts the offer
+    Then the control plane refuses it as the wrong state
+    And the trust level is 1
+
+  # The offer goes with the run it was made from. One that survived the disagreement invalidating it
+  # would ask the operator to trust a run that is no longer there.
+  Scenario: A disagreement while the offer stands takes the offer away
+    Given the project's design is "the design, whole"
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+      ## 2. The store holds a project's design
+      """
+    And the project's trust threshold is 1
+    And krewe checked step 1, and it passed
+    And the operator finishes step 1 with "shipped as pull request 737"
+    And krewe is offered the next level
+    When krewe checked step 2, and it failed
+    And the operator finishes step 2 with "the scenario is wrong, not the code"
+    Then krewe is offered nothing
+    And the run of agreements is 0
+    And the operator accepts the offer
+    And the control plane refuses it as the wrong state
+
+  Scenario: The caller sets the threshold and reads it back on the trust record
+    Given the system listens on an address the tool can dial
+    And the project's design is "the design, whole"
+    When the caller sets the trust threshold to "3"
+    And the caller reads the trust record
+    Then standard output carries "against a threshold of 3"
+    And the command succeeds
+
+  # The threshold is a number and nothing else. A write that moved a counter would hand krewe a run it
+  # never earned, or take away one it did.
+  Scenario: Setting the threshold moves no run of agreements
+    Given the project's design is "the design, whole"
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+      """
+    And krewe checked step 1, and it passed
+    And the operator finishes step 1 with "shipped as pull request 737"
+    When the operator sets the trust threshold to 9
+    Then the trust threshold is 9
+    And the run of agreements is 1
+    And the trust record counts 1 agreement and 0 disagreements
+
+  # The trap in the ladder. A threshold set under the run a project already has reads as though the
+  # offer should arrive on the spot, and it must not: the offer belongs to the write that moves the
+  # run, so the operator reads it beside the step that earned it.
+  Scenario: A threshold set below the run makes no offer by itself
+    Given the project's design is "the design, whole"
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+      ## 2. The store holds a project's design
+      """
+    And krewe checked step 1, and it passed
+    And the operator finishes step 1 with "shipped as pull request 736"
+    And krewe checked step 2, and it passed
+    And the operator finishes step 2 with "shipped as pull request 737"
+    When the operator sets the trust threshold to 1
+    Then krewe is offered nothing
+    And the run of agreements is 2
+    And the operator accepts the offer
+    And the control plane refuses it as the wrong state
+
+  Scenario: A threshold of zero is refused, naming the bounds
+    Given the project's design is "the design, whole"
+    When the operator sets the trust threshold to 0
+    Then the control plane refuses it as invalid
+    And the refusal suggests "say between 1 and 100"
+    And the trust threshold is 5
+
+  Scenario: A threshold above a hundred is refused, naming the bounds
+    Given the project's design is "the design, whole"
+    When the operator sets the trust threshold to 101
+    Then the control plane refuses it as invalid
+    And the trust threshold is 5
+
+  # The word done is what the whole ladder moves, so these two are the plainest self grant there is. A
+  # session that could raise its own level would hand itself the word it was supposed to earn.
+  Scenario: A session cannot raise the trust level
+    Given the project's design is "the design, whole"
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+      """
+    And the project's trust threshold is 1
+    And krewe checked step 1, and it passed
+    And the operator finishes step 1 with "shipped as pull request 737"
+    When the driver asks to raise the trust level
+    Then the driver is refused, told the call is the operator's to make
+    And the trust level is 0
+    And krewe is offered the next level
+
+  # Lowering the threshold is the same grant by a longer road: a session that could say two agreements
+  # are enough would be writing its own offer.
+  Scenario: A session cannot set the trust threshold
+    Given the project's design is "the design, whole"
+    When the driver asks to set the trust threshold
+    Then the driver is refused, told the call is the operator's to make
+    And the trust threshold is 5
+
   # One step whole, which is what a row of the listing cannot hold. The listing gives each step one
   # line, and an intention, a list of files and the end of a failed run do not fit on one, so the
   # operator had nowhere to read them.
