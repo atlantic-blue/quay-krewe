@@ -820,6 +820,23 @@ message TakeStepResponse {
   int32 steps_in_flight_cap = 6;
 }
 
+// ApproveRestatementRequest is the operator's word on what the session wrote about a step.
+message ApproveRestatementRequest {
+  string feature = 1;
+  int32 number = 2;
+}
+// ApproveRestatementResponse is the step with its restatement approved, the session that was sent to
+// build it, and the text that session was given.
+//
+// The text is carried back so a caller shows what the session was asked to do without a second call,
+// the way a take already does. It is composed by the control plane, so the console and the command
+// line send the same words.
+message ApproveRestatementResponse {
+  Step step = 1;
+  Session session = 2;
+  string text = 3;
+}
+
 // FinishStepRequest records what came of one step of a feature's path.
 //
 // state is done or stopped, and nothing else. result is what came of the step, or why it stopped, and
@@ -1514,6 +1531,14 @@ service ControlPlaneService {
   // in flight already writes. Both read every feature of the project, so two features never write one
   // file at the same moment. A refusal lands on the step and never on the feature.
   rpc TakeStep(TakeStepRequest) returns (TakeStepResponse);
+
+  // The operator's word on what a session wrote about the step it holds, which is what starts the
+  // build. The approval is recorded first and the same session is then dispatched with the build
+  // text, so a dispatch that fails leaves an approved restatement to approve again.
+  //
+  // The driver is refused it. A session that could approve its own restatement would be agreeing
+  // with itself, and the gate exists so that a person reads the text.
+  rpc ApproveRestatement(ApproveRestatementRequest) returns (ApproveRestatementResponse);
 
   // How many steps of one project may run at once. The driver is refused it: the cap is what the
   // operator reads at once, so a session that could raise its own would widen the fan out nobody

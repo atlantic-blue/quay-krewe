@@ -105,6 +105,13 @@ var ErrTooManyStepsInFlight = errors.New("store: the project already has as many
 // write one file at the same moment.
 var ErrStepsTouchTheSameFile = errors.New("store: a step in flight already writes that file")
 
+// ErrNothingRestated is returned when a step whose session wrote nothing is approved.
+//
+// The check and the write are one statement, for the reason ErrNothingToApprove is one: a read of
+// the text followed by a write would let a step restated between the two come back approved under a
+// text nobody read.
+var ErrNothingRestated = errors.New("store: there is no restatement to approve")
+
 // DefaultStepsInFlightCap is how many steps a project nobody configured may hold in state taken at
 // one time. It is the default of the column, repeated here for the stores to answer with when a
 // project carries no design row at all.
@@ -671,6 +678,16 @@ type Store interface {
 	//
 	// No length refuses the text. A cap here would lose work that exists only in the call being made.
 	SetRestatement(ctx context.Context, feature string, number int32, text string) (*quaycrewv1.Step, error)
+	// ApproveRestatement records the operator's word on the restatement as it stands, and returns the
+	// step after the write. A step whose session wrote nothing is ErrNothingRestated. A feature that
+	// does not exist and a path that holds no step of that number are both ErrNotFound.
+	//
+	// The text is read in the statement that writes the approval, so a step restated between a read
+	// and a write cannot come back approved under a text nobody read.
+	//
+	// Approving one that is already approved is allowed, and it moves the stamp. Nothing about the
+	// proof columns moves: what a session understood and what a run reported are two records.
+	ApproveRestatement(ctx context.Context, feature string, number int32) (*quaycrewv1.Step, error)
 
 	// ListFeatures returns a project's features in number order, or every project's when the
 	// identifier is empty, ordered by project and then by number. A project with no feature is an

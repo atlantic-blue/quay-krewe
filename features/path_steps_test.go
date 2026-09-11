@@ -40,6 +40,10 @@ type pathWorld struct {
 	// read is what the last read of one step answered: the step, and what it warned about. Kept so
 	// the assertions read the answer the operator got rather than asking the store a second time.
 	read *quaycrewv1.GetStepResponse
+	// approvals is what each approval of a restatement answered, in the order the scenario made them:
+	// the step, the session dispatched, and the text that session was given. Every one is kept rather
+	// than the last, because the scenario about approving twice holds the two stamps to each other.
+	approvals []*quaycrewv1.ApproveRestatementResponse
 	// recorded is the path as it stood before a scenario closed the feature, so a later read is
 	// compared against what was there rather than against what the scenario meant to write. A step
 	// somebody took has already moved, and this is what says closing the feature moved nothing more.
@@ -924,6 +928,136 @@ func initializePathSteps(sc *godog.ScenarioContext) {
 		return os.RemoveAll(dir)
 	})
 
+	// Approving what the session wrote, which is what starts the build. The exec it dispatches is
+	// waited for, because the call lets go of it and an assertion about what the session was asked
+	// would otherwise run while that exec was still starting.
+	//
+	// A refusal is kept the way every other refusal here is kept, so a scenario about a refused
+	// approval reads what the write did not change.
+	sc.Step(`^the operator approves step (\d+)'s restatement$`, func(ctx context.Context, number int) error {
+		w, p := worldFrom(ctx), pathFrom(ctx)
+		held, err := theFeature(ctx)
+		if err != nil {
+			return err
+		}
+		resp, err := w.client.ApproveRestatement(ctx, &quaycrewv1.ApproveRestatementRequest{
+			Feature: held.GetId(), Number: int32(number),
+		})
+		w.lastErr = err
+		if err != nil {
+			return nil
+		}
+		p.approvals = append(p.approvals, resp)
+		return w.settled(ctx)
+	})
+
+	// The call carries the driver's token, which is what a session inside a sandbox presents. The
+	// scenario reads the step again afterwards, because a refusal that still wrote the row would
+	// leave the gate looking closed and standing open.
+	sc.Step(`^the driver asks to approve step (\d+)'s restatement$`, func(ctx context.Context, number int) error {
+		held, err := theFeature(ctx)
+		if err != nil {
+			return err
+		}
+		return asDriver(ctx, func(ctx context.Context, client quaycrewv1.ControlPlaneServiceClient) error {
+			_, err := client.ApproveRestatement(ctx, &quaycrewv1.ApproveRestatementRequest{
+				Feature: held.GetId(), Number: int32(number),
+			})
+			return err
+		})
+	})
+
+	// Both the word and its moment, because a write that set one and left the other says the step was
+	// approved at no time at all.
+	sc.Step(`^step (\d+)'s restatement is approved$`, func(ctx context.Context, number int) error {
+		step, err := stepAsItStands(ctx, int32(number))
+		if err != nil {
+			return err
+		}
+		if !step.GetRestatementApproved() {
+			return fmt.Errorf("step %d reads as unapproved", number)
+		}
+		if step.GetRestatementApprovedAt() == nil {
+			return fmt.Errorf("step %d reads as approved and carries no moment it was approved", number)
+		}
+		return nil
+	})
+
+	// The session that restated the step is the one that builds it: it already holds the
+	// conversation, so nothing repeats the step body to it.
+	//
+	// The exec is read as well as the session, because an approval that answered with the right
+	// session and dispatched a different one, or dispatched nothing at all, reads the same here
+	// otherwise.
+	sc.Step(`^the session that took step (\d+) was asked to build it$`, func(ctx context.Context, number int) error {
+		w, p := worldFrom(ctx), pathFrom(ctx)
+		approved, err := lastApproval(ctx)
+		if err != nil {
+			return err
+		}
+		if p.take == nil {
+			return fmt.Errorf("no step was taken, so no session holds step %d", number)
+		}
+		took := p.take.GetSession()
+		if approved.GetSession().GetId() != took.GetId() {
+			return fmt.Errorf("the approval dispatched session %q, and step %d was taken by %q",
+				approved.GetSession().GetId(), number, took.GetId())
+		}
+		if asked := w.runner.lastRequest().Text; asked != approved.GetText() {
+			return fmt.Errorf("the session was asked %q, and the approval answered with %q",
+				asked, approved.GetText())
+		}
+		return nil
+	})
+
+	sc.Step(`^the build text carries "([^"]*)"$`, func(ctx context.Context, want string) error {
+		approved, err := lastApproval(ctx)
+		if err != nil {
+			return err
+		}
+		if !strings.Contains(approved.GetText(), unescape(want)) {
+			return fmt.Errorf("the build text is %q, want it to carry %q",
+				approved.GetText(), unescape(want))
+		}
+		return nil
+	})
+
+	sc.Step(`^the build text does not carry "([^"]*)"$`, func(ctx context.Context, unwanted string) error {
+		approved, err := lastApproval(ctx)
+		if err != nil {
+			return err
+		}
+		if strings.Contains(approved.GetText(), unescape(unwanted)) {
+			return fmt.Errorf("the build text is %q, and it carries %q",
+				approved.GetText(), unescape(unwanted))
+		}
+		return nil
+	})
+
+	// Held to the moment the first approval answered with rather than to a read of the step, because
+	// what this proves is that the second write moved the stamp rather than left the first one there.
+	sc.Step(`^the second approval is later than the first$`, func(ctx context.Context) error {
+		p := pathFrom(ctx)
+		if len(p.approvals) < 2 {
+			return fmt.Errorf("this scenario approved %d times, so there is no second approval",
+				len(p.approvals))
+		}
+		first := p.approvals[0].GetStep().GetRestatementApprovedAt()
+		second := p.approvals[1].GetStep().GetRestatementApprovedAt()
+		if first == nil || second == nil {
+			return fmt.Errorf("an approval answered with no moment on it: %v and %v", first, second)
+		}
+		if !second.AsTime().After(first.AsTime()) {
+			return fmt.Errorf("the second approval reads %v, and the first reads %v",
+				second.AsTime(), first.AsTime())
+		}
+		return nil
+	})
+
+	sc.Step(`^the caller approves the restatement of step "([^"]*)"$`, func(ctx context.Context, said string) error {
+		return runTool(ctx, "step", "approve", whereTheProjectIs(ctx), said)
+	})
+
 	sc.Step(`^the caller reads the restatement of step "([^"]*)"$`, func(ctx context.Context, said string) error {
 		return runTool(ctx, "step", "restatement", whereTheProjectIs(ctx), said)
 	})
@@ -1365,6 +1499,20 @@ func stepRead(ctx context.Context) (*quaycrewv1.GetStepResponse, error) {
 		return nil, fmt.Errorf("no step was read, so nothing was answered")
 	}
 	return p.read, nil
+}
+
+// lastApproval is what the last approval of a restatement answered, and a refusal to assert on
+// nothing when none landed. A scenario whose approval was refused has an error to say so, and
+// asserting against an empty answer would read as an approval that dispatched a session with no text.
+func lastApproval(ctx context.Context) (*quaycrewv1.ApproveRestatementResponse, error) {
+	w, p := worldFrom(ctx), pathFrom(ctx)
+	if w.lastErr != nil {
+		return nil, fmt.Errorf("the approval was refused: %w", w.lastErr)
+	}
+	if len(p.approvals) == 0 {
+		return nil, fmt.Errorf("nothing was approved, so no session was given any text")
+	}
+	return p.approvals[len(p.approvals)-1], nil
 }
 
 // takenText is what the last take composed, and a refusal to assert on nothing when no take landed.

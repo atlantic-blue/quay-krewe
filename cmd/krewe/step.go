@@ -18,6 +18,7 @@ import (
 
 const stepUsage = "usage: krewe step take [<address>] <feature>.<number>" +
 	"\n       krewe step restatement [<address>] <feature>.<number>" +
+	"\n       krewe step approve [<address>] <feature>.<number>" +
 	"\n       krewe step done [<address>] <feature>.<number> \"<result>\"" +
 	"\n       krewe step stop [<address>] <feature>.<number> \"<reason>\""
 
@@ -27,6 +28,9 @@ func runStep(ctx context.Context, client quaycrewv1.ControlPlaneServiceClient, a
 	}
 	if len(args) > 0 && args[0] == "restatement" {
 		return runStepRestatement(ctx, client, args[1:], out)
+	}
+	if len(args) > 0 && args[0] == "approve" {
+		return runStepApprove(ctx, client, args[1:], out)
 	}
 	if len(args) > 0 && (args[0] == "done" || args[0] == "stop") {
 		return runStepFinish(ctx, client, args[0], args[1:], out)
@@ -130,6 +134,55 @@ func runStepRestatement(ctx context.Context, client quaycrewv1.ControlPlaneServi
 	fmt.Fprintf(out, "approval: %s\n", restatementApproval(step))
 	fmt.Fprintf(out, "\n%s\n", strings.TrimRight(step.GetRestatement(), "\n"))
 	sayWarnings(out, resp.GetWarnings())
+	return nil
+}
+
+// runStepApprove says the word on what the session wrote, which is what starts the build.
+//
+// It approves the text as it stands. It opens no editor and asks no question, the way krewe design
+// approve does not: the operator has already read the text with krewe step restatement, and a command
+// that asked again would be asking somebody to agree to something twice.
+//
+// When the restatement is wrong the answer is not here. The operator answers that session with krewe
+// exec, and what it writes back clears the approval, which is why the last line says so.
+//
+// The build text prints whole, under the session, so the operator reads what the session was asked to
+// do without a second command.
+func runStepApprove(ctx context.Context, client quaycrewv1.ControlPlaneServiceClient, args []string, out io.Writer) error {
+	if len(args) == 0 || len(args) > 2 {
+		return fmt.Errorf("usage: krewe step approve [<address>] <feature>.<number>")
+	}
+	typed, said := "", args[0]
+	if len(args) == 2 {
+		typed, said = args[0], args[1]
+	}
+	located, err := designProject(ctx, client, typed)
+	if err != nil {
+		return err
+	}
+	features, err := featuresOf(ctx, client, located.ProjectID)
+	if err != nil {
+		return err
+	}
+	held, number, err := stepAddressed(said, features, located.Path.Project)
+	if err != nil {
+		return err
+	}
+	resp, err := client.ApproveRestatement(ctx, &quaycrewv1.ApproveRestatementRequest{
+		Feature: held.GetId(), Number: number,
+	})
+	if err != nil {
+		return fmt.Errorf("%w\n\nnothing was approved and nothing was started", err)
+	}
+	step := resp.GetStep()
+	fmt.Fprintf(out, "the restatement of step %d.%d of %s is approved: %s\n",
+		held.GetNumber(), step.GetNumber(), located.Path.Project, step.GetTitle())
+	fmt.Fprintf(out, "(session %s, handle %s)\n\n",
+		resp.GetSession().GetId(), resp.GetSession().GetHandle())
+	fmt.Fprintf(out, "it was asked to:\n\n%s\n", strings.TrimRight(resp.GetText(), "\n"))
+	// Said here because the approval is about one text. An operator who answers the session after this
+	// has a step nobody has agreed to again, and nothing else would tell them.
+	fmt.Fprint(out, "\na restatement written after this clears the approval\n")
 	return nil
 }
 

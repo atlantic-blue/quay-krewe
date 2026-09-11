@@ -1371,6 +1371,36 @@ func (p *Postgres) SetRestatement(ctx context.Context, feature string, number in
 	return step, nil
 }
 
+// ApproveRestatement records the operator's word on the restatement as it stands.
+//
+// The text is read in the statement that writes the approval, rather than in a read before it, so a
+// step restated between the two cannot come back approved under a text nobody read. The step is read
+// again only to say which refusal a write of no rows earned: a step that is not there, and a step
+// whose session wrote nothing, are two different things to the person who typed the command.
+//
+// Approving one that is already approved moves the stamp, and no proof column moves at all.
+func (p *Postgres) ApproveRestatement(ctx context.Context, feature string, number int32) (
+	*quaycrewv1.Step, error) {
+	if err := p.featureExists(ctx, feature); err != nil {
+		return nil, err
+	}
+	step, err := scanStep(p.pool.QueryRow(ctx, `
+		update feature_steps s
+		set restatement_approved = true, restatement_approved_at = now(), updated_at = now()
+		where s.feature = $1 and s.number = $2 and s.restatement <> ''
+		returning `+stepColumns, feature, number))
+	if errors.Is(err, pgx.ErrNoRows) {
+		if _, missing := p.GetStep(ctx, feature, number); missing != nil {
+			return nil, missing
+		}
+		return nil, ErrNothingRestated
+	}
+	if err != nil {
+		return nil, fmt.Errorf("approve the restatement: %w", err)
+	}
+	return step, nil
+}
+
 // The narrowed parts of a project: the listing, the add that gives the number, and the one line
 // saying what a feature narrows to.
 

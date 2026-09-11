@@ -37,6 +37,11 @@ import (
 // has produced a text somebody still has to read. A session that could approve its own text would be
 // agreeing with itself, and the gate would be a step in a script rather than a person's judgement.
 //
+// Approving a restatement is refused on the same line as approving a design. The gate exists so that
+// a person reads what a session understood before any code is built, and a session that could approve
+// its own text would be agreeing with itself and dispatching itself to build. Writing a restatement
+// stays open, because writing one grants nothing: it produces a text somebody still has to read.
+//
 // The cap on steps in flight is refused because it decides how much runs at once. A session that
 // could raise its own would widen the fan out without anybody asking for it, and the operator would
 // be reading more sessions than they agreed to. Taking a step stays open, because a take is a
@@ -63,6 +68,7 @@ func DeniedToDriver(fullMethod string, request any) error {
 		quaycrewv1.ControlPlaneService_ArchiveSession_FullMethodName,
 		quaycrewv1.ControlPlaneService_ArchiveProjectSessions_FullMethodName,
 		quaycrewv1.ControlPlaneService_ApproveDesign_FullMethodName,
+		quaycrewv1.ControlPlaneService_ApproveRestatement_FullMethodName,
 		quaycrewv1.ControlPlaneService_SetStepsInFlightCap_FullMethodName:
 		return refusedToDriver(fullMethod)
 	case quaycrewv1.ControlPlaneService_SetContext_FullMethodName:

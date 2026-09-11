@@ -58,6 +58,7 @@ const (
 	ControlPlaneService_ListSteps_FullMethodName                = "/quaycrew.v1.ControlPlaneService/ListSteps"
 	ControlPlaneService_GetStep_FullMethodName                  = "/quaycrew.v1.ControlPlaneService/GetStep"
 	ControlPlaneService_TakeStep_FullMethodName                 = "/quaycrew.v1.ControlPlaneService/TakeStep"
+	ControlPlaneService_ApproveRestatement_FullMethodName       = "/quaycrew.v1.ControlPlaneService/ApproveRestatement"
 	ControlPlaneService_SetStepsInFlightCap_FullMethodName      = "/quaycrew.v1.ControlPlaneService/SetStepsInFlightCap"
 	ControlPlaneService_FinishStep_FullMethodName               = "/quaycrew.v1.ControlPlaneService/FinishStep"
 	ControlPlaneService_ListFeatures_FullMethodName             = "/quaycrew.v1.ControlPlaneService/ListFeatures"
@@ -160,6 +161,13 @@ type ControlPlaneServiceClient interface {
 	// in flight already writes. Both read every feature of the project, so two features never write one
 	// file at the same moment. A refusal lands on the step and never on the feature.
 	TakeStep(ctx context.Context, in *TakeStepRequest, opts ...grpc.CallOption) (*TakeStepResponse, error)
+	// The operator's word on what a session wrote about the step it holds, which is what starts the
+	// build. The approval is recorded first and the same session is then dispatched with the build
+	// text, so a dispatch that fails leaves an approved restatement to approve again.
+	//
+	// The driver is refused it. A session that could approve its own restatement would be agreeing
+	// with itself, and the gate exists so that a person reads the text.
+	ApproveRestatement(ctx context.Context, in *ApproveRestatementRequest, opts ...grpc.CallOption) (*ApproveRestatementResponse, error)
 	// How many steps of one project may run at once. The driver is refused it: the cap is what the
 	// operator reads at once, so a session that could raise its own would widen the fan out nobody
 	// asked for.
@@ -612,6 +620,16 @@ func (c *controlPlaneServiceClient) TakeStep(ctx context.Context, in *TakeStepRe
 	return out, nil
 }
 
+func (c *controlPlaneServiceClient) ApproveRestatement(ctx context.Context, in *ApproveRestatementRequest, opts ...grpc.CallOption) (*ApproveRestatementResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ApproveRestatementResponse)
+	err := c.cc.Invoke(ctx, ControlPlaneService_ApproveRestatement_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *controlPlaneServiceClient) SetStepsInFlightCap(ctx context.Context, in *SetStepsInFlightCapRequest, opts ...grpc.CallOption) (*SetStepsInFlightCapResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(SetStepsInFlightCapResponse)
@@ -940,6 +958,13 @@ type ControlPlaneServiceServer interface {
 	// in flight already writes. Both read every feature of the project, so two features never write one
 	// file at the same moment. A refusal lands on the step and never on the feature.
 	TakeStep(context.Context, *TakeStepRequest) (*TakeStepResponse, error)
+	// The operator's word on what a session wrote about the step it holds, which is what starts the
+	// build. The approval is recorded first and the same session is then dispatched with the build
+	// text, so a dispatch that fails leaves an approved restatement to approve again.
+	//
+	// The driver is refused it. A session that could approve its own restatement would be agreeing
+	// with itself, and the gate exists so that a person reads the text.
+	ApproveRestatement(context.Context, *ApproveRestatementRequest) (*ApproveRestatementResponse, error)
 	// How many steps of one project may run at once. The driver is refused it: the cap is what the
 	// operator reads at once, so a session that could raise its own would widen the fan out nobody
 	// asked for.
@@ -1118,6 +1143,9 @@ func (UnimplementedControlPlaneServiceServer) GetStep(context.Context, *GetStepR
 }
 func (UnimplementedControlPlaneServiceServer) TakeStep(context.Context, *TakeStepRequest) (*TakeStepResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method TakeStep not implemented")
+}
+func (UnimplementedControlPlaneServiceServer) ApproveRestatement(context.Context, *ApproveRestatementRequest) (*ApproveRestatementResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ApproveRestatement not implemented")
 }
 func (UnimplementedControlPlaneServiceServer) SetStepsInFlightCap(context.Context, *SetStepsInFlightCapRequest) (*SetStepsInFlightCapResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SetStepsInFlightCap not implemented")
@@ -1914,6 +1942,24 @@ func _ControlPlaneService_TakeStep_Handler(srv interface{}, ctx context.Context,
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ControlPlaneService_ApproveRestatement_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ApproveRestatementRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ControlPlaneServiceServer).ApproveRestatement(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ControlPlaneService_ApproveRestatement_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ControlPlaneServiceServer).ApproveRestatement(ctx, req.(*ApproveRestatementRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _ControlPlaneService_SetStepsInFlightCap_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(SetStepsInFlightCapRequest)
 	if err := dec(in); err != nil {
@@ -2490,6 +2536,10 @@ var ControlPlaneService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "TakeStep",
 			Handler:    _ControlPlaneService_TakeStep_Handler,
+		},
+		{
+			MethodName: "ApproveRestatement",
+			Handler:    _ControlPlaneService_ApproveRestatement_Handler,
 		},
 		{
 			MethodName: "SetStepsInFlightCap",

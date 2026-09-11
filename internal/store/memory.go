@@ -988,6 +988,31 @@ func (m *Memory) SetRestatement(_ context.Context, feature string, number int32,
 	return proto.Clone(held).(*quaycrewv1.Step), nil
 }
 
+// ApproveRestatement records the operator's word on the restatement as it stands, and refuses a step
+// whose session wrote nothing.
+//
+// The read of the text and the write happen under one hold of the lock, the way the postgres store
+// does them in one statement, so a restatement written between the two cannot be approved by a word
+// spoken over the text before it.
+func (m *Memory) ApproveRestatement(_ context.Context, feature string, number int32) (
+	*quaycrewv1.Step, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, err := m.featureLocked(feature); err != nil {
+		return nil, err
+	}
+	held, err := m.stepLocked(feature, number)
+	if err != nil {
+		return nil, err
+	}
+	if held.GetRestatement() == "" {
+		return nil, ErrNothingRestated
+	}
+	held.RestatementApproved = true
+	held.RestatementApprovedAt = timestamppb.New(time.Now().UTC())
+	return proto.Clone(held).(*quaycrewv1.Step), nil
+}
+
 // stepLocked is one step of a feature's path, or ErrNotFound. The caller holds the lock.
 func (m *Memory) stepLocked(feature string, number int32) (*quaycrewv1.Step, error) {
 	for _, step := range m.steps[feature] {
