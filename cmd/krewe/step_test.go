@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	quaycrewv1 "github.com/atlantic-blue/quay-krewe/gen/quaycrew/v1"
 	"github.com/atlantic-blue/quay-krewe/internal/controlplane"
@@ -27,14 +28,16 @@ import (
 // The restatement and the word over it are written straight to the store, because they arrive
 // through the session's own memory file and this test keeps no directories on disk. What it is about
 // is what the check prints, and the gate before it has its own scenarios.
-func aStepToCheck(t *testing.T, answers sandbox.Reply) (quaycrewv1.ControlPlaneServiceClient, *sandbox.FakeProvider) {
+func aStepToCheck(t *testing.T, answers sandbox.Reply) (
+	quaycrewv1.ControlPlaneServiceClient, *sandbox.FakeProvider, *controlplane.Server) {
 	t.Helper()
 	held := store.NewMemory()
 	provider := &sandbox.FakeProvider{Replies: []sandbox.Reply{answers}}
-	client := testClientWith(t, controlplane.Config{
+	server := controlplane.NewServer(controlplane.Config{
 		Store: held, Runner: &model.FakeRunner{Reply: "ok"},
 		Provider: provider, Secrets: secrets.NewMemory(),
 	})
+	client := testClientFor(t, server)
 	mustRun(t, client, "workspace", "create", "acme")
 	mustRun(t, client, "project", "create", "house-bills")
 
@@ -67,42 +70,56 @@ func aStepToCheck(t *testing.T, answers sandbox.Reply) (quaycrewv1.ControlPlaneS
 	if _, err := held.ApproveRestatement(ctx, features[0].GetId(), 1); err != nil {
 		t.Fatalf("ApproveRestatement: %v", err)
 	}
-	theSandboxIsUp(t, held, provider, features[0].GetId())
-	return client, provider
+	theTakeHasLanded(t, server)
+	return client, provider, server
 }
 
-// theSandboxIsUp gives the provider the sandbox of the session holding the step.
+// theTakeHasLanded waits for the exec the take started, so the session holding the step has the
+// container that exec made before anything checks it.
 //
-// The take dispatches and lets go, so the container that dispatch makes may not be there yet when
-// the check runs, and a check on a session with no container is refused rather than answered. That
-// refusal belongs to the slice that makes a container for a reclaimed session; what these tests are
-// about is a session whose container is already up.
-//
-// The provider adopts a sandbox it already holds, so the dispatch still in flight takes this one
-// rather than making a second, and the canned answers reach it either way.
-func theSandboxIsUp(t *testing.T, held store.Store, provider *sandbox.FakeProvider, feature string) {
+// The take dispatches and lets go, so without this the check races the container: sometimes it finds
+// one and sometimes it starts one, and a test reading what the check printed would read a different
+// screen each run.
+func theTakeHasLanded(t *testing.T, server *controlplane.Server) {
+	t.Helper()
+	waiting, giveUp := context.WithTimeout(context.Background(), 10*time.Second)
+	defer giveUp()
+	server.WaitForExecs(waiting)
+	if waiting.Err() != nil {
+		t.Fatal("the exec the take started never landed")
+	}
+}
+
+// theSessionHoldingTheStep is the session the take gave step one to, read the way a caller reads it.
+func theSessionHoldingTheStep(t *testing.T, client quaycrewv1.ControlPlaneServiceClient) *quaycrewv1.Session {
 	t.Helper()
 	ctx := context.Background()
-	step, err := held.GetStep(ctx, feature, 1)
+	projects, err := client.ListProjects(ctx, &quaycrewv1.ListProjectsRequest{})
+	if err != nil || len(projects.GetProjects()) != 1 {
+		t.Fatalf("the system holds %d projects: %v", len(projects.GetProjects()), err)
+	}
+	project := projects.GetProjects()[0].GetId()
+	features, err := client.ListFeatures(ctx, &quaycrewv1.ListFeaturesRequest{Project: project})
+	if err != nil || len(features.GetFeatures()) != 1 {
+		t.Fatalf("the project holds %d features: %v", len(features.GetFeatures()), err)
+	}
+	read, err := client.GetStep(ctx, &quaycrewv1.GetStepRequest{
+		Feature: features.GetFeatures()[0].GetId(), Number: 1})
 	if err != nil {
 		t.Fatalf("GetStep: %v", err)
 	}
-	sessions, err := held.ListSessions(ctx, store.SessionFilter{Project: projectOf(t, held)})
+	sessions, err := client.ListSessions(ctx, &quaycrewv1.ListSessionsRequest{Project: project})
 	if err != nil {
 		t.Fatalf("ListSessions: %v", err)
 	}
-	for _, session := range sessions {
-		if session.GetHandle() != step.GetSession() && session.GetId() != step.GetSession() {
-			continue
+	held := read.GetStep().GetSession()
+	for _, session := range sessions.GetSessions() {
+		if session.GetHandle() == held || session.GetId() == held {
+			return session
 		}
-		if _, err := provider.Create(ctx, sandbox.Config{
-			ID: session.GetId(), Workspace: session.GetWorkspace(), Project: session.GetProject(),
-		}); err != nil {
-			t.Fatalf("make the session a sandbox: %v", err)
-		}
-		return
 	}
-	t.Fatalf("no session holds step 1, which reads %q", step.GetSession())
+	t.Fatalf("no session holds step 1, which reads %q", held)
+	return nil
 }
 
 // projectOf is the one project this system holds, which the tool made by name.
@@ -119,7 +136,7 @@ func projectOf(t *testing.T, held store.Store) string {
 // runs, and an operator reading the template cannot see that their quoting put the name somewhere
 // the runner never looks.
 func TestCheckPrintsTheCommandThenTheVerdict(t *testing.T) {
-	client, _ := aStepToCheck(t, sandbox.Reply{Match: "-run", Out: "1 scenarios (1 passed)"})
+	client, _, _ := aStepToCheck(t, sandbox.Reply{Match: "-run", Out: "1 scenarios (1 passed)"})
 
 	printed := mustRun(t, client, "step", "check", "1.1")
 
@@ -145,7 +162,7 @@ func TestCheckPrintsTheCommandThenTheVerdict(t *testing.T) {
 // status is what a script reads, and ErrSaid is how this tool says the reason is already on the
 // screen.
 func TestAFailingCheckPrintsTheOutputAndFails(t *testing.T) {
-	client, _ := aStepToCheck(t, sandbox.Reply{
+	client, _, _ := aStepToCheck(t, sandbox.Reply{
 		Match: "-run",
 		Out:   "1 scenarios (0 passed, 1 failed)\nthe brief read back empty",
 		Err:   errors.New("exit status 1"),
@@ -166,4 +183,55 @@ func TestAFailingCheckPrintsTheOutputAndFails(t *testing.T) {
 	if !strings.Contains(printed, "the brief read back empty") {
 		t.Errorf("the check printed %q, want it to carry the end of the run", printed)
 	}
+}
+
+// The way off the refusal this slice removes. A check on a session with no container used to be
+// refused, which left a step nobody could move: the session is gone, so the step cannot be checked,
+// so it cannot be closed. Now krewe starts the container, and the operator reads that it is doing so
+// before the wait rather than after it.
+func TestACheckOnAReclaimedSessionStartsAContainerAndSaysSoFirst(t *testing.T) {
+	client, provider, _ := aStepToCheck(t, sandbox.Reply{Match: "-run", Out: "1 scenarios (1 passed)"})
+	session := theSessionHoldingTheStep(t, client)
+	ctx := context.Background()
+	if _, err := client.ReclaimSession(ctx, &quaycrewv1.ReclaimSessionRequest{Id: session.GetId()}); err != nil {
+		t.Fatalf("reclaiming the session holding the step: %v", err)
+	}
+	// Read back, because a scenario about a session with no container is worth nothing while it has
+	// one.
+	if _, running, err := provider.Existing(ctx, session.GetId()); err != nil || running {
+		t.Fatalf("the session still has a container after the reclaim: running=%v, %v", running, err)
+	}
+	made := containersMadeFor(provider, session.GetId())
+
+	printed := mustRun(t, client, "step", "check", "1.1")
+
+	for _, want := range []string{
+		"krewe starts a container",
+		"verdict: passing, 1 scenario ran",
+		"krewe started a container",
+	} {
+		if !strings.Contains(printed, want) {
+			t.Errorf("the check printed %q, want it to carry %q", printed, want)
+		}
+	}
+	// Before the wait, because the whole reason the line exists is that the operator is about to wait
+	// longer than a check takes and should read why while it is happening.
+	if strings.Index(printed, "krewe starts a container") > strings.Index(printed, "verdict:") {
+		t.Errorf("the verdict is printed above the container line: %q", printed)
+	}
+	if got := containersMadeFor(provider, session.GetId()) - made; got != 1 {
+		t.Errorf("krewe made %d containers for the session, want 1", got)
+	}
+}
+
+// containersMadeFor is how many containers this provider actually made for one session. A container
+// it adopted is not one it made, which is what lets a test say a check made exactly one.
+func containersMadeFor(provider *sandbox.FakeProvider, session string) int {
+	made := 0
+	for _, cfg := range provider.Configurations() {
+		if cfg.ID == session {
+			made++
+		}
+	}
+	return made
 }

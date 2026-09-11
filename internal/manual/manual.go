@@ -242,11 +242,12 @@ commands:
     <feature>.<number>                    the session that holds it, and say what it reported. It
                                           prints the command before it waits, so you read what runs.
                                           No model starts and no token is spent: it is one command in
-                                          a container that already exists. It passes only where the
-                                          run exits zero and reports a scenario above zero, because a
-                                          name filter that matches nothing prints success in most
-                                          runners. A failing verdict is printed rather than refused,
-                                          and the command exits non zero
+                                          a container. A session the system reclaimed has none, so
+                                          krewe starts one for it and says so before the wait. It
+                                          passes only where the run exits zero and reports a scenario
+                                          above zero, because a name filter that matches nothing
+                                          prints success in most runners. A failing verdict is
+                                          printed rather than refused, and the command exits non zero
   step done [<address>]                   record what came of a step, and close it. The result is
     <feature>.<number> "<result>"         required: nothing can see inside a container, so what you
                                           write is what the next session reads. It touches no

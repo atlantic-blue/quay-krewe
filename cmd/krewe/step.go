@@ -272,7 +272,48 @@ func sayWhatWillRun(ctx context.Context, client quaycrewv1.ControlPlaneServiceCl
 	fmt.Fprintf(out, "the check runs:\n  %s\n",
 		strings.ReplaceAll(command, scenarioToken, read.GetStep().GetProofScenario()))
 	fmt.Fprintf(out, "\nthis waits for the run, and starts no model\n")
+	sayWhatTheWaitCosts(ctx, client, project, read.GetStep(), out)
 }
+
+// sayWhatTheWaitCosts prints the extra the operator is about to wait for: the container krewe starts
+// when the session holding the step was reclaimed.
+//
+// It prints before the wait rather than after it. The whole reason the line exists is that the
+// operator is about to wait longer than a check usually takes, and a sentence that arrives with the
+// verdict explains a wait that is already over.
+//
+// The control plane says the same thing in a warning underneath the verdict, because the two answer
+// different moments. This line is read from the session's status before the call. That warning is
+// what the run actually cost.
+//
+// Nothing here fails the check. A read that fails leaves the operator with one line fewer.
+func sayWhatTheWaitCosts(ctx context.Context, client quaycrewv1.ControlPlaneServiceClient,
+	project string, step *quaycrewv1.Step, out io.Writer) {
+	if step.GetSession() == "" {
+		return
+	}
+	sessions, err := client.ListSessions(ctx, &quaycrewv1.ListSessionsRequest{Project: project})
+	if err != nil {
+		return
+	}
+	for _, session := range sessions.GetSessions() {
+		// By handle or by identifier, because the step records whichever the take wrote. It is the
+		// match the control plane makes to find the same session.
+		if session.GetHandle() != step.GetSession() && session.GetId() != step.GetSession() {
+			continue
+		}
+		if session.GetStatus() != statusReclaimed {
+			return
+		}
+		fmt.Fprintf(out, "\nthe session holding this step was reclaimed, "+
+			"so krewe starts a container for it first\nthis takes longer than the run does\n")
+		return
+	}
+}
+
+// statusReclaimed is a session the system took the container back from. The word is the control
+// plane's and it is read off the wire, so it is named here rather than compared inline.
+const statusReclaimed = "reclaimed"
 
 // whenItWasWritten is how a moment prints here, and it is the one krewe design already prints an
 // whenItWasWritten is how a moment prints here, and it is the one krewe design already prints an

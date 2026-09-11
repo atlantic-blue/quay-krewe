@@ -5426,8 +5426,8 @@ func (x *CheckStepRequest) GetNumber() int32 {
 // of the output on the step, because a caller prints a verdict rather than a refusal.
 //
 // closed_by_krewe is false until the trust ladder exists. The warnings say what the operator has to
-// know about the answer: today there are none, and the reclaimed session that krewe started a
-// container for is what they carry first.
+// know about the answer, and today they carry one thing: the session was reclaimed, so krewe started
+// a container for it before the run, and that is why the call took longer than a check usually does.
 type CheckStepResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Step          *Step                  `protobuf:"bytes,1,opt,name=step,proto3" json:"step,omitempty"`

@@ -53,6 +53,10 @@ type FakeProvider struct {
 	// ExistingErr is the daemon refusing to say whether this session still has a container, which is
 	// not the same answer as none: a system that cannot tell must not report the work as unreachable.
 	ExistingErr error
+	// CreateErr is the daemon refusing to start a container at all, which is the machine being out of
+	// room or the image being gone. A scenario needs it to say what a caller that cannot have a
+	// sandbox is told.
+	CreateErr error
 	// Replies are what particular commands answer, handed to every sandbox this makes. A scenario
 	// about what the system does with a session's git needs its commands to answer differently from
 	// each other, and a double with one canned answer for everything cannot say anything about that.
@@ -79,8 +83,11 @@ func (f *FakeProvider) Create(ctx context.Context, cfg Config) (Sandbox, error) 
 	// budget says makes a suite green over a system that waits without end.
 	f.mu.Lock()
 	f.Calls = append(f.Calls, cfg)
-	hold := f.Hold
+	hold, refuse := f.Hold, f.CreateErr
 	f.mu.Unlock()
+	if refuse != nil {
+		return nil, refuse
+	}
 	if hold != nil {
 		select {
 		case <-hold:
