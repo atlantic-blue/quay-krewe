@@ -555,3 +555,37 @@ Feature: A project carries what it is for and what was designed
     And the project proves one scenario with "make one {scenario}"
     And the project reads the count with "ran ([0-9]+)"
     And the project gives one run 120 seconds
+
+  # The design skill is prose a workspace attaches, and nothing else. No controller runs because it
+  # exists and no gate reads it, so what the session gets is the brief in front of it and the krewe
+  # commands the brief names. These scenarios hold that path: the skill reaches a session, that
+  # session writes a design, and the word about it stays with the operator.
+  #
+  # Whether a model writes a good design is not provable here, because no scenario in this suite runs
+  # one. What is provable is that the skill loads, that it reaches the session, and that the design a
+  # session writes arrives unapproved.
+
+  Scenario: A workspace that attached the design skill gives it to a session
+    Given the system started, seeded from the skills this build ships with
+    And the operator attached the "design" skill to the workspace
+    When the operator dispatches "design this project" to the project
+    Then the memory file names the "design" skill and where its brief is
+
+  Scenario: A session holding the design skill writes a design that reads back
+    Given the system started, seeded from the skills this build ships with
+    And the operator attached the "design" skill to the workspace
+    And a session started by dispatching "design this project"
+    When the session holding the design skill writes the project's design as "# Bills\n\nOne part, one step.\n"
+    And the operator reads the project's design
+    Then the design body reads "# Bills\n\nOne part, one step.\n"
+    And the design says it was written by that session
+
+  # The whole reason the brief says never to approve. A session writes the design, so a session that
+  # could approve one would be agreeing with itself about a text nobody else read.
+  Scenario: The design a session holding the skill wrote is not approved
+    Given the system started, seeded from the skills this build ships with
+    And the operator attached the "design" skill to the workspace
+    And a session started by dispatching "design this project"
+    When the session holding the design skill writes the project's design as "# Bills\n"
+    And the operator reads the project's design
+    Then the design is not approved
