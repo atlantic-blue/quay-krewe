@@ -991,6 +991,10 @@ func (m *Memory) SetProofCommand(_ context.Context, project string, settings Pro
 // The word is kept as it is given, for the reason Postgres keeps it: the control plane refuses a word
 // outside the two, and a second check here is a second place for the vocabulary to drift.
 //
+// The word done is refused while the step carries no moment of a run, which is gate 3. The read and
+// the write happen under one hold of the lock, the way the postgres store does them in one statement,
+// so a check that lands between the two cannot open a gate the write then closes over.
+//
 // The session and the take stamp are left where they are, so the row still says who took the step. No
 // session is read, stopped or reclaimed: the step and the session are separate records.
 func (m *Memory) FinishStep(_ context.Context, feature string, number int32, finish Finish) (*quaycrewv1.Step, error) {
@@ -1002,6 +1006,11 @@ func (m *Memory) FinishStep(_ context.Context, feature string, number int32, fin
 	held, err := m.stepLocked(feature, number)
 	if err != nil {
 		return nil, err
+	}
+	// The moment of the last run, never its verdict. A failing run opens this gate, and the row
+	// records the disagreement below.
+	if finish.State == StepDone && held.GetProofRanAt() == nil {
+		return nil, ErrNotChecked
 	}
 	held.State = finish.State
 	held.Result = finish.Result

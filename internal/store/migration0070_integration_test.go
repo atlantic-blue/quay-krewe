@@ -103,6 +103,14 @@ func TestAStepWrittenBeforeTheClosedByColumnReadsBackWhole(t *testing.T) {
 		t.Errorf("the ready step reads as %q closed by %q", ready.GetState(), ready.GetClosedBy())
 	}
 
+	// The word done is refused until somebody read a verdict, so the step carries one before the
+	// finish. What this test is about is the column the migration added, not the gate.
+	if _, err := opened.RecordProof(ctx, "f1", 2, store.ProofResult{
+		State: store.ProofPassing, ScenariosRun: 1, Output: "1 scenarios (1 passed)",
+	}); err != nil {
+		t.Fatalf("RecordProof before the finish: %v", err)
+	}
+
 	// The column the migration added takes a word, and the call that closes a step writes it.
 	closed, err := opened.FinishStep(ctx, "f1", 2, store.Finish{
 		State: store.StepDone, Result: "it reads back whole", ClosedBy: "operator",

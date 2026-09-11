@@ -1389,13 +1389,25 @@ func (p *Postgres) FinishStep(ctx context.Context, feature string, number int32,
 	if err := p.featureExists(ctx, feature); err != nil {
 		return nil, err
 	}
+	// The moment of the last run is read in the statement that writes the word, rather than in a read
+	// before it, so a step checked between the two cannot be closed under a gate nobody passed. The
+	// step is read again only to say which refusal a write of no rows earned: a step that is not
+	// there, and a step nobody checked, are two different things to the person who typed the command.
+	//
+	// The column read is proof_ran_at and never proof_state. A failing run carries a moment, so it
+	// opens this gate and the row keeps the disagreement.
 	step, err := scanStep(p.pool.QueryRow(ctx, `
 		update feature_steps s
 		set state = $3, result = $4, closed_by = $5, finished_at = now(), updated_at = now()
 		where s.feature = $1 and s.number = $2
-		returning `+stepColumns, feature, number, finish.State, finish.Result, finish.ClosedBy))
+			and (not $6::boolean or s.proof_ran_at is not null)
+		returning `+stepColumns,
+		feature, number, finish.State, finish.Result, finish.ClosedBy, finish.State == StepDone))
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, ErrNotFound
+		if _, missing := p.GetStep(ctx, feature, number); missing != nil {
+			return nil, missing
+		}
+		return nil, ErrNotChecked
 	}
 	if err != nil {
 		return nil, fmt.Errorf("finish step: %w", err)

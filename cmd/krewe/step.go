@@ -245,9 +245,16 @@ func runStepCheck(ctx context.Context, client quaycrewv1.ControlPlaneServiceClie
 	return nil
 }
 
-// proofPassing is the one verdict that is not a failure. The word is the control plane's and it is
-// read off the wire, so it is named here rather than compared inline.
-const proofPassing = "passing"
+// proofPassing is the one verdict that is not a failure, and proofFailing is what a run that said no
+// reads as. The words are the control plane's and they are read off the wire, so they are named here
+// rather than compared inline.
+//
+// A step nobody checked reads as neither of them, which is why the two are separate words: unproven
+// is a step with no run on it, and that state is refused before it reaches this command.
+const (
+	proofPassing = "passing"
+	proofFailing = "failing"
+)
 
 // sayWhatWillRun prints the command this check is about to run, with the step's own scenario name
 // where the token is.
@@ -384,9 +391,24 @@ func runStepFinish(ctx context.Context, client quaycrewv1.ControlPlaneServiceCli
 	fmt.Fprintf(out, "step %d.%d of %s is %s: %s\n",
 		held.GetNumber(), step.GetNumber(), located.Path.Project, step.GetState(), step.GetResult())
 	if word == "done" {
+		sayIfTheyDisagreed(step, out)
 		return sayWhatIsNext(ctx, client, held, out)
 	}
 	return nil
+}
+
+// sayIfTheyDisagreed says plainly that the operator closed a step krewe's check said no about.
+//
+// The word is the operator's and the check is refused nothing by it, so the line is a record rather
+// than a warning: the operator is told what was written, not argued with.
+//
+// It prints for done alone. A stop after a failing check agrees with the verdict, and a stop reads no
+// verdict at all.
+func sayIfTheyDisagreed(step *quaycrewv1.Step, out io.Writer) {
+	if step.GetProofState() != proofFailing {
+		return
+	}
+	fmt.Fprintf(out, "the check said %s, so the row records a disagreement\n", proofFailing)
 }
 
 // sayWhatIsNext prints the step the operator may take now, under the line saying this one is done.

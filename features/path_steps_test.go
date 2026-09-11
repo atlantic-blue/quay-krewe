@@ -586,9 +586,31 @@ func initializePathSteps(sc *godog.ScenarioContext) {
 	// The setup for the scenarios about the path write, which protects three states. It closes the
 	// step through the call that closes one, so the record a rewrite has to keep is the record the
 	// system writes.
+	//
+	// A step going to done carries a verdict first, because the word is refused until somebody read
+	// one. These scenarios are about what a rewrite keeps, so the run they record passed.
 	sc.Step(`^step (\d+) is recorded as (done|stopped)$`,
 		func(ctx context.Context, number int, state string) error {
+			if state == "done" {
+				if err := recordAVerdict(ctx, int32(number), store.ProofPassing); err != nil {
+					return err
+				}
+			}
 			return finishStep(ctx, int32(number), state, "what came of it")
+		})
+
+	// A verdict on a step, written where krewe's own check writes one.
+	//
+	// It goes straight into the store, past the control plane, because a real check needs the session
+	// that holds the step, a container under it and a proof command on the project. The scenarios
+	// that use this line are about the word that closes a step, and the ones about the run itself
+	// take the whole way there and check for real.
+	sc.Step(`^krewe checked step (\d+), and it (passed|failed)$`,
+		func(ctx context.Context, number int, said string) error {
+			if said == "failed" {
+				return recordAVerdict(ctx, int32(number), store.ProofFailing)
+			}
+			return recordAVerdict(ctx, int32(number), store.ProofPassing)
 		})
 	// Read from the control plane rather than from what the last write answered, because what a
 	// refused write left behind is the question every one of these scenarios asks.
@@ -1564,6 +1586,26 @@ func setPathOf(ctx context.Context, feature, document string) error {
 	}
 	p.steps, p.warnings = resp.GetSteps(), resp.GetWarnings()
 	return nil
+}
+
+// recordAVerdict writes what one run of a step's scenario reported, on the feature a scenario means
+// when it names none.
+//
+// The output reads like the runner's, because the path a session reads carries it and a scenario
+// about that file would otherwise carry a line nothing ever wrote.
+func recordAVerdict(ctx context.Context, number int32, state string) error {
+	held, err := theFeature(ctx)
+	if err != nil {
+		return err
+	}
+	output := "1 scenarios (1 passed)"
+	if state == store.ProofFailing {
+		output = "1 scenarios (0 passed, 1 failed)"
+	}
+	_, err = worldFrom(ctx).store.RecordProof(ctx, held.GetId(), number, store.ProofResult{
+		State: state, ScenariosRun: 1, Output: output,
+	})
+	return err
 }
 
 // finishStep closes a step of the feature a scenario means when it names none.

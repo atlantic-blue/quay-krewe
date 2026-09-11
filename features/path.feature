@@ -1838,6 +1838,7 @@ Feature: A project holds a numbered path of steps
       The store holds a project's brief.
       """
     And the operator dispatches "and again" to the same session
+    And krewe checked step 1, and it passed
     And the operator finishes step 1 with "shipped as pull request 800"
     And the operator dispatches "once more" to the same session
     Then the session's memory file does not carry "The store holds a project's brief."
@@ -1917,6 +1918,7 @@ Feature: A project holds a numbered path of steps
       The first reading.
       """
     And the operator reads step 1
+    And krewe checked step 1, and it passed
     And the operator finishes step 1 with "shipped as pull request 800"
     And the session writes its restatement:
       """
@@ -2287,6 +2289,7 @@ Feature: A project holds a numbered path of steps
     And the operator took step 1
     And the operator took step 2
     And the operator took step 3
+    And krewe checked step 1, and it passed
     And the operator finishes step 1 with "the brief is kept"
     When the operator takes step 4
     Then step 4 is held by that session
@@ -2308,6 +2311,7 @@ Feature: A project holds a numbered path of steps
       After
       """
     And the operator took step 1
+    And krewe checked step 1, and it passed
     When the operator finishes step 1 with "the brief is kept"
     Then 1 session was started
     And step 1 is still done
@@ -2684,6 +2688,7 @@ Feature: A project holds a numbered path of steps
     And the operator took step 1
     And the operator takes step 2
     And the control plane refuses it as a file two steps write
+    And krewe checked step 1, and it passed
     And the operator finishes step 1 with "the brief is kept"
     When the operator takes step 2
     Then step 2 is held by that session
@@ -3025,6 +3030,7 @@ Feature: A project holds a numbered path of steps
       ## 2. The store holds a project's design
       """
     And the operator took step 1
+    And krewe checked step 1, and it passed
     When the operator finishes step 1 with "shipped as pull request 712, the brief reads back whole"
     Then step 1 is still done
     And the operator reads the path
@@ -3041,6 +3047,7 @@ Feature: A project holds a numbered path of steps
       ## 1. The store holds a project's brief
       """
     And the operator took step 1
+    And krewe checked step 1, and it passed
     When the operator finishes step 1 with "shipped as pull request 712"
     Then step 1 still names the session that took it
     And the session that took it is untouched
@@ -3148,6 +3155,7 @@ Feature: A project holds a numbered path of steps
       ## 1. The store holds a project's brief
       ## 2. The store holds a project's design
       """
+    And krewe checked step 1, and it passed
     And the operator finishes step 1 with "shipped as pull request 712, the brief reads back whole"
     When the operator dispatches "hello" to the project
     Then the session's path file carries "state: done"
@@ -3165,6 +3173,7 @@ Feature: A project holds a numbered path of steps
       """
       ## 1. The store holds a project's brief
       """
+    And krewe checked step 1, and it passed
     When the caller marks step "1.1" done with "shipped as pull request 712"
     Then standard output carries "step 1.1 of house-bills is done: shipped as pull request 712"
     And the caller reads the path
@@ -3181,6 +3190,7 @@ Feature: A project holds a numbered path of steps
       ## 1. The store holds a project's brief
       ## 2. The store holds a project's design
       """
+    And krewe checked step 1, and it passed
     When the caller marks step "1.1" done with "shipped as pull request 712"
     Then standard output carries "step 1.1 of house-bills is done"
     And standard output carries "next: step 2"
@@ -3196,6 +3206,7 @@ Feature: A project holds a numbered path of steps
       """
       ## 1. The store holds a project's brief
       """
+    And krewe checked step 1, and it passed
     When the caller marks step "1.1" done with "shipped as pull request 712"
     Then standard output carries "next: nothing, every step is taken or waiting"
 
@@ -3464,6 +3475,65 @@ Feature: A project holds a numbered path of steps
     And the caller reads the path of feature 1
     Then standard output carries "passing"
     And the command succeeds
+
+  # Gate 3. The operator reads a verdict before speaking the word, which is the whole of what this
+  # gate buys: a step closes because somebody read what a run said about it.
+  #
+  # It reads the moment of the last run and never the verdict. A check that said no is a check, and
+  # the word done belongs to the operator, so a failing verdict closes the step and the row records
+  # the disagreement. A gate that refused a failing run would be a gate on the operator.
+  #
+  # A stop reads nothing at all. A step nobody will finish still has to be closable, whatever ran on
+  # it, and a stop after a failing verdict agrees with krewe rather than differing from it.
+
+  Scenario: Finishing a step nothing checked is refused, and the refusal names the check
+    Given a step taken, restated and approved, naming the scenario "a project carries a brief"
+    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    When the operator finishes step 1 with "shipped as pull request 733"
+    Then the control plane refuses it as the wrong state
+    And the refusal suggests "krewe step check"
+    And step 1 is still taken
+    And step 1 says its result is ""
+
+  Scenario: Finishing a step whose check passed writes the word
+    Given a step taken, restated and approved, naming the scenario "a project carries a brief"
+    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the run answers "1 scenarios (1 passed)" and exits 0
+    And the operator checks step 1
+    When the operator finishes step 1 with "shipped as pull request 733"
+    Then step 1 is still done
+    And step 1 says its result is "shipped as pull request 733"
+
+  # The point of the gate. Krewe says no, the operator says done, and the row keeps both.
+  Scenario: Finishing a step whose check failed writes the word
+    Given a step taken, restated and approved, naming the scenario "a project carries a brief"
+    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the run answers "1 scenarios (0 passed, 1 failed)" and exits 1
+    And the operator checks step 1
+    When the operator finishes step 1 with "the scenario is wrong, not the code"
+    Then step 1 is still done
+    And step 1 reads back as failing
+
+  # What the operator reads when they close a step krewe said no about. It is a record and not an
+  # argument: the line says what was written.
+  Scenario: The caller marks a step done after a failing check and reads what the row records
+    Given the system listens on an address the tool can dial
+    And a step taken, restated and approved, naming the scenario "a project carries a brief"
+    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the run answers "1 scenarios (0 passed, 1 failed)" and exits 1
+    And the operator checks step 1
+    When the caller marks step "1.1" done with "the scenario is wrong, not the code"
+    Then standard output carries "step 1.1 of house-bills is done"
+    And standard output carries "the check said failing, so the row records a disagreement"
+    And the command succeeds
+
+  Scenario: Stopping a step whose check failed is allowed
+    Given a step taken, restated and approved, naming the scenario "a project carries a brief"
+    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the run answers "1 scenarios (0 passed, 1 failed)" and exits 1
+    And the operator checks step 1
+    When the operator stops step 1 with "the approach was wrong"
+    Then step 1 is still stopped
 
   # A project delivers several features at the same time. A website runs an authentication feature
   # A project delivers several features at the same time. A website runs an authentication feature

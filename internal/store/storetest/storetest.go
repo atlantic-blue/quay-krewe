@@ -3884,12 +3884,34 @@ func writePath(t *testing.T, s store.Store, feature string, steps ...store.Step)
 
 // finishStep closes a step the way the system closes one, so a test that needs a done or a stopped
 // step stands one up through the call rather than through a seam of its own.
+//
+// A step going to done is checked first, because the word is refused until somebody read a verdict.
+// The run it records passed: these tests need a closed step, and the gate itself is proved in the
+// cases about finishing rather than here.
 func finishStep(t *testing.T, s store.Store, feature string, number int32, state string) {
 	t.Helper()
+	if state == store.StepDone {
+		recordProof(t, s, feature, number, store.ProofPassing)
+	}
 	if _, err := s.FinishStep(context.Background(), feature, number, store.Finish{
 		State: state, Result: "what came of it", ClosedBy: "operator",
 	}); err != nil {
 		t.Fatalf("FinishStep: %v", err)
+	}
+}
+
+// recordProof stands one run's verdict on a step, which is what gate 3 reads before it lets the word
+// done through.
+func recordProof(t *testing.T, s store.Store, feature string, number int32, state string) {
+	t.Helper()
+	output := "1 scenarios (1 passed)"
+	if state == store.ProofFailing {
+		output = "1 scenarios (0 passed, 1 failed)"
+	}
+	if _, err := s.RecordProof(context.Background(), feature, number, store.ProofResult{
+		State: state, ScenariosRun: 1, Output: output,
+	}); err != nil {
+		t.Fatalf("RecordProof: %v", err)
 	}
 }
 
@@ -4093,6 +4115,7 @@ func runTakeConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 		ctx := context.Background()
 		feature := newFeature(t, s, newProject(t, s, "acme", "house-bills"), "the bills")
 		writePath(t, s, feature.GetId(), store.Step{Number: 1, Title: "the first"})
+		recordProof(t, s, feature.GetId(), 1, store.ProofPassing)
 
 		written, err := s.FinishStep(ctx, feature.GetId(), 1, store.Finish{
 			State: store.StepDone, Result: "shipped as pull request 712", ClosedBy: "operator",
@@ -4138,6 +4161,7 @@ func runTakeConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 		if err != nil {
 			t.Fatalf("TakeStep: %v", err)
 		}
+		recordProof(t, s, feature.GetId(), 1, store.ProofPassing)
 		if _, err := s.FinishStep(ctx, feature.GetId(), 1, store.Finish{
 			State: store.StepDone, Result: "it reads back whole", ClosedBy: "operator",
 		}); err != nil {
@@ -4175,6 +4199,82 @@ func runTakeConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 		}
 	})
 
+	// Gate 3. The operator reads a verdict before speaking the word, so a step nobody ran anything on
+	// is refused and nothing about it moves.
+	t.Run("finishing a step nothing checked is refused, and nothing is written", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		feature := newFeature(t, s, newProject(t, s, "acme", "house-bills"), "the bills")
+		writePath(t, s, feature.GetId(), store.Step{Number: 1, Title: "the first"})
+
+		if _, err := s.FinishStep(ctx, feature.GetId(), 1, store.Finish{
+			State: store.StepDone, Result: "shipped as pull request 712", ClosedBy: "operator",
+		}); !errors.Is(err, store.ErrNotChecked) {
+			t.Fatalf("finishing a step nobody checked answered %v, want ErrNotChecked", err)
+		}
+		// The refusal has to leave the row as it stood. A write that refused its caller and stamped
+		// the row anyway reads as done to everybody else.
+		read, err := s.GetStep(ctx, feature.GetId(), 1)
+		if err != nil {
+			t.Fatalf("GetStep after the refusal: %v", err)
+		}
+		if read.GetState() != store.StepReady {
+			t.Errorf("the refused step reads as %q, want ready", read.GetState())
+		}
+		if read.GetResult() != "" || read.GetFinishedAt() != nil {
+			t.Errorf("the refused step says %q, finished at %v", read.GetResult(), read.GetFinishedAt())
+		}
+		if read.GetClosedBy() != "" {
+			t.Errorf("the refused step says %q closed it, and nobody did", read.GetClosedBy())
+		}
+	})
+
+	// The point of the gate, and the reason it reads the moment and not the verdict. A run that said
+	// no is a run: the word done belongs to the operator, and the row keeps the disagreement.
+	t.Run("finishing a step whose check failed writes the word", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		feature := newFeature(t, s, newProject(t, s, "acme", "house-bills"), "the bills")
+		writePath(t, s, feature.GetId(), store.Step{Number: 1, Title: "the first"})
+		recordProof(t, s, feature.GetId(), 1, store.ProofFailing)
+
+		written, err := s.FinishStep(ctx, feature.GetId(), 1, store.Finish{
+			State: store.StepDone, Result: "the scenario is wrong, not the code", ClosedBy: "operator",
+		})
+		if err != nil {
+			t.Fatalf("finishing a step whose check failed: %v", err)
+		}
+		if written.GetState() != store.StepDone {
+			t.Errorf("the finished step reads as %q, want %q", written.GetState(), store.StepDone)
+		}
+		// The verdict is still what the run reported. A finish that wrote over it would lose the
+		// disagreement the row exists to record.
+		if got := written.GetProofState(); got != store.ProofFailing {
+			t.Errorf("the finished step reads %q, want the %q the run reported", got, store.ProofFailing)
+		}
+	})
+
+	// A step nobody will finish still has to be closable, so a stop reads no verdict at all.
+	t.Run("stopping a step nothing checked closes it", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		feature := newFeature(t, s, newProject(t, s, "acme", "house-bills"), "the bills")
+		writePath(t, s, feature.GetId(), store.Step{Number: 1, Title: "the first"})
+
+		written, err := s.FinishStep(ctx, feature.GetId(), 1, store.Finish{
+			State: store.StepStopped, Result: "the customer withdrew it", ClosedBy: "operator",
+		})
+		if err != nil {
+			t.Fatalf("stopping a step nobody checked: %v", err)
+		}
+		if written.GetState() != store.StepStopped {
+			t.Errorf("the stopped step reads as %q, want %q", written.GetState(), store.StepStopped)
+		}
+		if written.GetProofRanAt() != nil {
+			t.Errorf("the stopped step carries a moment %v, and nothing ran", written.GetProofRanAt())
+		}
+	})
+
 	// Step 3 of one feature and step 3 of another are two steps, on the write that closes one as much
 	// as on the write that takes it.
 	t.Run("finishing a step of one feature leaves the same number in another ready", func(t *testing.T) {
@@ -4187,6 +4287,7 @@ func runTakeConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 			writePath(t, s, feature, store.Step{Number: 3, Title: "the third"})
 		}
 
+		recordProof(t, s, first.GetId(), 3, store.ProofPassing)
 		if _, err := s.FinishStep(ctx, first.GetId(), 3, store.Finish{
 			State: store.StepDone, Result: "shipped", ClosedBy: "operator",
 		}); err != nil {
@@ -4229,6 +4330,7 @@ func runTakeConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 		ctx := context.Background()
 		feature := newFeature(t, s, newProject(t, s, "acme", "house-bills"), "the bills")
 		writePath(t, s, feature.GetId(), store.Step{Number: 1, Title: "the first"})
+		recordProof(t, s, feature.GetId(), 1, store.ProofPassing)
 
 		if _, err := s.FinishStep(ctx, feature.GetId(), 1, store.Finish{
 			State: store.StepDone, Result: "shipped as pull request 712", ClosedBy: "operator",
