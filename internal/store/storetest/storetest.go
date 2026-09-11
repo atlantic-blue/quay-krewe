@@ -4209,6 +4209,152 @@ func runRestatementConformance(t *testing.T, newDataset func(t *testing.T) Opene
 			t.Fatalf("SetRestatement on a missing feature answered %v, want ErrNotFound", err)
 		}
 	})
+
+	// The operator's word, on the text as it stands. The step reads back with it, because the word is
+	// what every later gate reads and a write that answered well and stored nothing reads the same to
+	// its caller and to nobody else.
+	t.Run("an approved restatement reads back with the moment it was approved", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		feature := newFeature(t, s, newProject(t, s, "acme", "house-bills"), "the bills")
+		writePath(t, s, feature.GetId(), store.Step{Number: 1, Title: "the first"})
+		if _, err := s.SetRestatement(ctx, feature.GetId(), 1, "what I understood"); err != nil {
+			t.Fatalf("SetRestatement: %v", err)
+		}
+
+		approved, err := s.ApproveRestatement(ctx, feature.GetId(), 1)
+		if err != nil {
+			t.Fatalf("ApproveRestatement: %v", err)
+		}
+		if !approved.GetRestatementApproved() || approved.GetRestatementApprovedAt() == nil {
+			t.Errorf("the write answered approved=%v at %v",
+				approved.GetRestatementApproved(), approved.GetRestatementApprovedAt())
+		}
+		read, err := s.GetStep(ctx, feature.GetId(), 1)
+		if err != nil {
+			t.Fatalf("GetStep: %v", err)
+		}
+		if !read.GetRestatementApproved() || read.GetRestatementApprovedAt() == nil {
+			t.Errorf("the step reads back approved=%v at %v",
+				read.GetRestatementApproved(), read.GetRestatementApprovedAt())
+		}
+		if read.GetRestatement() != "what I understood" {
+			t.Errorf("the approval moved the text to %q", read.GetRestatement())
+		}
+	})
+
+	// There is nothing to agree to until a session writes something, so the word is refused rather
+	// than recorded over an empty text. A step that reads as approved and says nothing is a record
+	// that the understanding was checked when there was no understanding to check.
+	t.Run("approving a step whose session wrote nothing is refused", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		feature := newFeature(t, s, newProject(t, s, "acme", "house-bills"), "the bills")
+		writePath(t, s, feature.GetId(), store.Step{Number: 1, Title: "the first"})
+
+		if _, err := s.ApproveRestatement(ctx, feature.GetId(), 1); !errors.Is(err, store.ErrNothingRestated) {
+			t.Fatalf("approving a step nobody restated answered %v, want ErrNothingRestated", err)
+		}
+		read, err := s.GetStep(ctx, feature.GetId(), 1)
+		if err != nil {
+			t.Fatalf("GetStep: %v", err)
+		}
+		if read.GetRestatementApproved() || read.GetRestatementApprovedAt() != nil {
+			t.Errorf("the refused write left the step approved at %v", read.GetRestatementApprovedAt())
+		}
+	})
+
+	// Saying it twice is not a mistake to refuse, and the moment moves, which is what an operator who
+	// approved the same text again would expect to read.
+	t.Run("approving an approved restatement moves the moment", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		feature := newFeature(t, s, newProject(t, s, "acme", "house-bills"), "the bills")
+		writePath(t, s, feature.GetId(), store.Step{Number: 1, Title: "the first"})
+		if _, err := s.SetRestatement(ctx, feature.GetId(), 1, "what I understood"); err != nil {
+			t.Fatalf("SetRestatement: %v", err)
+		}
+
+		first, err := s.ApproveRestatement(ctx, feature.GetId(), 1)
+		if err != nil {
+			t.Fatalf("ApproveRestatement: %v", err)
+		}
+		time.Sleep(orderingGap)
+		again, err := s.ApproveRestatement(ctx, feature.GetId(), 1)
+		if err != nil {
+			t.Fatalf("ApproveRestatement again: %v", err)
+		}
+		if !again.GetRestatementApprovedAt().AsTime().After(first.GetRestatementApprovedAt().AsTime()) {
+			t.Fatalf("the second approval reads %v, and the first reads %v",
+				again.GetRestatementApprovedAt().AsTime(), first.GetRestatementApprovedAt().AsTime())
+		}
+	})
+
+	// Approval belongs to one text. A session that restates the step after the operator agreed to it
+	// has written something nobody has read, so the word goes and is spoken again or not at all.
+	t.Run("a restatement written after an approval clears it", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		feature := newFeature(t, s, newProject(t, s, "acme", "house-bills"), "the bills")
+		writePath(t, s, feature.GetId(), store.Step{Number: 1, Title: "the first"})
+		if _, err := s.SetRestatement(ctx, feature.GetId(), 1, "the first reading"); err != nil {
+			t.Fatalf("SetRestatement: %v", err)
+		}
+		if _, err := s.ApproveRestatement(ctx, feature.GetId(), 1); err != nil {
+			t.Fatalf("ApproveRestatement: %v", err)
+		}
+
+		written, err := s.SetRestatement(ctx, feature.GetId(), 1, "the second reading")
+		if err != nil {
+			t.Fatalf("SetRestatement over an approved one: %v", err)
+		}
+		if written.GetRestatementApproved() || written.GetRestatementApprovedAt() != nil {
+			t.Errorf("the rewritten text reads as approved at %v", written.GetRestatementApprovedAt())
+		}
+	})
+
+	// What a session understood and what a run reported are two records. The approval says the
+	// operator read the text, and it says nothing about whether anything was ever run.
+	t.Run("approving a restatement moves nothing about the proof", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		feature := newFeature(t, s, newProject(t, s, "acme", "house-bills"), "the bills")
+		writePath(t, s, feature.GetId(), store.Step{
+			Number: 1, Title: "the first",
+			Proof:         "The operator sets a brief and reads it back.",
+			ProofScenario: "a project carries a brief",
+		})
+		if _, err := s.SetRestatement(ctx, feature.GetId(), 1, "what I understood"); err != nil {
+			t.Fatalf("SetRestatement: %v", err)
+		}
+
+		approved, err := s.ApproveRestatement(ctx, feature.GetId(), 1)
+		if err != nil {
+			t.Fatalf("ApproveRestatement: %v", err)
+		}
+		if approved.GetProof() != "The operator sets a brief and reads it back." {
+			t.Errorf("the approval left the proof reading %q", approved.GetProof())
+		}
+		if approved.GetProofScenario() != "a project carries a brief" {
+			t.Errorf("the approval left the scenario reading %q", approved.GetProofScenario())
+		}
+	})
+
+	// A feature nobody made and a number nobody wrote answer the same way, and neither of them reads
+	// as a step whose session wrote nothing: the step is not there at all.
+	t.Run("approving a step nothing holds is not found", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		feature := newFeature(t, s, newProject(t, s, "acme", "house-bills"), "the bills")
+		writePath(t, s, feature.GetId(), store.Step{Number: 1, Title: "the first"})
+
+		if _, err := s.ApproveRestatement(ctx, feature.GetId(), 7); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("approving a step nobody wrote answered %v, want ErrNotFound", err)
+		}
+		if _, err := s.ApproveRestatement(ctx, "no-such-feature", 1); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("approving a step of a missing feature answered %v, want ErrNotFound", err)
+		}
+	})
 }
 
 // runFeatureConformance holds both stores to the same answers about the narrowed parts of a project.

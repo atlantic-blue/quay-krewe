@@ -1408,6 +1408,90 @@ func (s *Server) TakeStep(ctx context.Context, req *quaycrewv1.TakeStepRequest) 
 	}, nil
 }
 
+// ApproveRestatement records the operator's word on what a session wrote about the step it holds,
+// and sends that session to build it.
+//
+// The approval is what dispatches. That is the whole shape of the gate: a step is taken, a session
+// restates it, and no code exists until a person reads the text and says the word. Nothing else
+// starts the build.
+//
+// The order matters. The approval is recorded before the dispatch, so a dispatch that fails leaves
+// an approved restatement behind it and the operator approves again to send it again. Recorded after,
+// a session would be building a step the record says nobody agreed to.
+//
+// The session that wrote the restatement is the one dispatched. It already holds the conversation, so
+// the text it is given repeats no step body: it read that at take time, and the path file still
+// carries it.
+//
+// The word is spoken over the text in the store, and nothing is refreshed out of the session's file
+// first. The read is what puts the text there, so the operator approves the text they were shown
+// rather than whatever the session wrote since. A step nobody read yet reads as empty here, which is
+// why the refusal names the command that reads one.
+func (s *Server) ApproveRestatement(ctx context.Context, req *quaycrewv1.ApproveRestatementRequest) (
+	*quaycrewv1.ApproveRestatementResponse, error) {
+	if req.GetFeature() == "" {
+		return nil, status.Error(codes.InvalidArgument, "which feature: a step belongs to one, so say its number")
+	}
+	if req.GetNumber() < 1 {
+		return nil, status.Error(codes.InvalidArgument, "a step number counts from one")
+	}
+	// The feature says which project this is, which is what the dispatch is addressed by. A step is
+	// addressed by its feature and a session belongs to a project.
+	feature, err := s.store.GetFeature(ctx, req.GetFeature())
+	if err != nil {
+		return nil, storeError(err, "feature")
+	}
+	approved, err := s.store.ApproveRestatement(ctx, req.GetFeature(), req.GetNumber())
+	if errors.Is(err, store.ErrNothingRestated) {
+		return nil, status.Error(codes.FailedPrecondition, nothingToApproveYet)
+	}
+	if err != nil {
+		return nil, storeError(err, "step")
+	}
+
+	text := buildText(approved)
+	dispatched, err := s.Dispatch(ctx, &quaycrewv1.DispatchRequest{
+		Project: feature.GetProject(), Handle: approved.GetSession(), Text: text, Detach: true,
+	})
+	if err != nil {
+		return nil, err
+	}
+	started, err := s.store.GetSession(ctx, dispatched.GetId())
+	if err != nil {
+		return nil, storeError(err, "session")
+	}
+	return &quaycrewv1.ApproveRestatementResponse{Step: approved, Session: started, Text: text}, nil
+}
+
+// nothingToApproveYet is the refusal for a step whose session wrote nothing. It names the command
+// that reads a restatement, because the operator's next move is to go and read one rather than to
+// type this again.
+const nothingToApproveYet = "this step has no restatement to approve. " +
+	"Take it with krewe step take, then read what came back with krewe step restatement"
+
+// buildText is what the session is given when the operator approves what it wrote: the word, and the
+// one thing it does not already know.
+//
+// It repeats no step body. The session read that at take time, it is still in the path file, and a
+// second copy of a step is a copy that can disagree with the first.
+//
+// It names the scenario because a session that does not know the name writes one krewe cannot find,
+// and the run that proves the step then finds nothing. A step that names no scenario has no such
+// paragraph rather than an empty name: a sentence about a scenario called nothing sends the session
+// to write a scenario called nothing.
+func buildText(step *quaycrewv1.Step) string {
+	blocks := []string{fmt.Sprintf(
+		"Your restatement of step %d is approved. Build this step only. "+
+			"Do not take work from another step.", step.GetNumber())}
+	if step.GetProofScenario() != "" {
+		blocks = append(blocks, fmt.Sprintf(
+			"The scenario named %s must exist and must pass when the step is finished. "+
+				"It must describe the value in %q above, not the shape of the code.",
+			step.GetProofScenario(), labelProof))
+	}
+	return strings.Join(blocks, "\n\n") + "\n"
+}
+
 // closedByOperator is who spoke the word on this call. Krewe closes a step through its own check, and
 // that call writes the other word.
 const closedByOperator = "operator"

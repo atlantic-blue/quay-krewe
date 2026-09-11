@@ -222,6 +222,13 @@ commands:
                                           understands now, and it dispatches nothing. A step whose
                                           session has written nothing yet says so, and names the
                                           session to ask
+  step approve [<address>]                agree to what the session wrote about the step, which is
+    <feature>.<number>                    what starts the build. The same session is sent back to
+                                          build it, with the scenario it has to write named. It
+                                          approves the text as it stands: read it first with step
+                                          restatement, and answer that session with krewe exec where
+                                          it is wrong. A restatement written after this clears the
+                                          approval. A step whose session wrote nothing is refused
   step done [<address>]                   record what came of a step, and close it. The result is
     <feature>.<number> "<result>"         required: nothing can see inside a container, so what you
                                           write is what the next session reads. It touches no

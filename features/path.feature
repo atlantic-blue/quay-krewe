@@ -62,6 +62,13 @@ Feature: A project holds a numbered path of steps
   cannot be read warns and refuses nothing, because the last text a session wrote is still the text
   to read.
 
+  The operator's word on that text is what starts the build. Approving dispatches the same session
+  again, with a short text saying the restatement is approved and naming the scenario that has to
+  pass. It repeats no step body, because that session read the step at take time. The approval is
+  recorded before the dispatch, so a dispatch that fails leaves an approved restatement to approve
+  again. A step whose session wrote nothing is refused, and the refusal names the command that reads
+  one. A session is refused the word altogether: the gate exists so that a person reads the text.
+
   There is no way to empty a path. A document with no step heading is refused, so a wrong file path
   cannot take somebody's path away.
 
@@ -1912,6 +1919,150 @@ Feature: A project holds a numbered path of steps
     Then the restatement read carries "The first reading."
     And the restatement read does not carry "The second reading."
 
+  # The approval is what starts the build. Nothing else does: a step is taken, the session restates
+  # it, and no code exists until a person reads that text and says the word. The same session is sent
+  # back, because it already holds the conversation and needs no step body repeated to it.
+  Scenario: Approving a restatement dispatches the same session with the build text
+    Given the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+
+      What proves it
+      The operator sets a brief and reads it back.
+
+      The scenario that proves it
+      a project carries a brief
+      """
+    When the operator takes step 1
+    And the session writes its restatement:
+      """
+      What this step changes
+      The store holds a project's brief.
+      """
+    And the operator reads step 1
+    And the operator approves step 1's restatement
+    Then step 1's restatement is approved
+    And the session that took step 1 was asked to build it
+    And 1 session was started
+    And the model was asked 2 things in all
+
+  # A session that does not know the name writes a scenario krewe cannot find, and the run that
+  # proves the step then finds nothing. The step body is not repeated: the session read that at take
+  # time, and it is still in the path file.
+  Scenario: The build text names the step's scenario
+    Given the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+
+      What changes and why
+      The design has nowhere to live, so a project cannot carry one.
+
+      What proves it
+      The operator sets a brief and reads it back.
+
+      The scenario that proves it
+      a project carries a brief
+      """
+    When the operator takes step 1
+    And the session writes its restatement:
+      """
+      What this step changes
+      The store holds a project's brief.
+      """
+    And the operator reads step 1
+    And the operator approves step 1's restatement
+    Then the build text carries "a project carries a brief"
+    And the build text carries "Build this step only"
+    And the build text does not carry "The design has nowhere to live, so a project cannot carry one."
+
+  # There is nothing to agree to until the session writes something, and a step that reads as
+  # approved while it says nothing is a record that the understanding was checked when it was not.
+  # The refusal names the command that reads one, so the operator's next move is in front of them.
+  Scenario: Approving a restatement nobody wrote is refused, naming the command that reads one
+    Given the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+      """
+    When the operator takes step 1
+    And the operator approves step 1's restatement
+    Then the control plane refuses it as the wrong state
+    And the refusal suggests "krewe step restatement"
+    And nobody has approved step 1's restatement
+    And the model was asked 1 thing in all
+
+  # Approval is a statement about one text. A session that writes again after the operator agreed has
+  # written something nobody has read, so the word goes with it.
+  Scenario: A restatement written after an approval clears that approval
+    Given the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+      """
+    When the operator takes step 1
+    And the session writes its restatement:
+      """
+      What this step changes
+      The first reading.
+      """
+    And the operator reads step 1
+    And the operator approves step 1's restatement
+    And the session writes its restatement:
+      """
+      What this step changes
+      The second reading.
+      """
+    And the operator reads step 1
+    Then step 1 reads back the restatement "The second reading."
+    And nobody has approved step 1's restatement
+
+  # The gate exists so that a person reads the text. A session that could approve its own restatement
+  # would be agreeing with itself and dispatching itself to build.
+  Scenario: A session cannot approve its own restatement
+    Given the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+      """
+    When the operator takes step 1
+    And the session writes its restatement:
+      """
+      What this step changes
+      The store holds a project's brief.
+      """
+    And the driver asks to approve step 1's restatement
+    Then the driver is refused, told the call is the operator's to make
+    And nobody has approved step 1's restatement
+    And the model was asked 1 thing in all
+
+  # Saying it twice is not a mistake to refuse. The moment moves, which is what an operator who
+  # approved the same text again would expect to read, and the session is sent to build it again.
+  Scenario: Approving an already approved restatement moves the moment
+    Given the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+      """
+    When the operator takes step 1
+    And the session writes its restatement:
+      """
+      What this step changes
+      The store holds a project's brief.
+      """
+    And the operator reads step 1
+    And the operator approves step 1's restatement
+    And the operator approves step 1's restatement
+    Then step 1's restatement is approved
+    And the second approval is later than the first
+
   # One step is one session's. Two takes that both passed would put two sessions on one change.
   Scenario: Taking a step somebody already holds is refused, naming the session
     Given the project's design is "# Bills\n"
@@ -2702,6 +2853,54 @@ Feature: A project holds a numbered path of steps
     Then standard output carries "this session wrote no restatement yet"
     And standard output carries "krewe exec"
     And the command succeeds
+
+  # The word the operator types between reading the text and reading the work. It prints the build
+  # text, so what the session was asked to do is on the screen without a second command, and it says
+  # that a later restatement takes the approval away.
+  Scenario: The caller approves the restatement, and the session is sent to build it
+    Given the system listens on an address the tool can dial
+    And the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+
+      What proves it
+      The operator sets a brief and reads it back.
+
+      The scenario that proves it
+      a project carries a brief
+      """
+    When the operator takes step 1
+    And the session writes its restatement:
+      """
+      What this step changes
+      The store holds a project's brief.
+      """
+    And the caller reads the restatement of step "1.1"
+    And the caller approves the restatement of step "1.1"
+    Then standard output carries "the restatement of step 1.1"
+    And standard output carries "is approved"
+    And standard output carries "Build this step only"
+    And standard output carries "a project carries a brief"
+    And standard output carries "a restatement written after this clears the approval"
+    And the command succeeds
+
+  # A step taken a moment ago has nothing to agree to, so the refusal says what to read rather than
+  # only what went wrong. Nothing is approved and nothing is dispatched.
+  Scenario: The caller approves a restatement nobody wrote and is refused
+    Given the system listens on an address the tool can dial
+    And the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+      """
+    When the operator takes step 1
+    And the caller approves the restatement of step "1.1"
+    Then standard error says "krewe step restatement"
+    And standard error says "nothing was approved and nothing was started"
+    And the command fails
 
   # A step is named as <feature>.<number>, so 2.3 is step 3 of feature 2 and nothing else.
   Scenario: The caller takes step 3 of feature 2
