@@ -402,6 +402,79 @@ func initializeCommandSteps(sc *godog.ScenarioContext) {
 			return nil
 		})
 
+	// The trust command is the one that hands the word done over, so the raise is the only write it
+	// makes. Every other word of the tool that writes is refused in it, read off the lines the file
+	// writes out to be typed.
+	sc.Step(`^the installed command "([^"]*)" runs no command that writes other than "([^"]*)"$`,
+		func(ctx context.Context, name, allowed string) error {
+			body, err := installedCommand(ctx, name)
+			if err != nil {
+				return err
+			}
+			for _, line := range runLine.FindAllStringSubmatch(body, -1) {
+				typed := strings.TrimSpace(line[1])
+				for _, writing := range writingCommands {
+					if writing == allowed || !strings.HasPrefix(typed, writing) {
+						continue
+					}
+					return fmt.Errorf("%s.md runs %q, and %q is the only write it makes", name, typed, allowed)
+				}
+			}
+			return nil
+		})
+
+	// A no is an answer, and the file says what the answer left behind. A file that went quiet on a no
+	// leaves the operator reading the record again to find out whether anything moved.
+	sc.Step(`^the installed command "([^"]*)" says a no leaves the level where it was$`,
+		func(ctx context.Context, name string) error {
+			body, err := installedCommand(ctx, name)
+			if err != nil {
+				return err
+			}
+			if !strings.Contains(body, "stays where it was") {
+				return fmt.Errorf("%s.md never says what a no leaves behind", name)
+			}
+			return nil
+		})
+
+	// A raise with no offer standing is refused by the control plane. So the file says how far off
+	// the offer is, rather than asking a question the system will not honour.
+	sc.Step(`^the installed command "([^"]*)" says how many more agreements the offer needs$`,
+		func(ctx context.Context, name string) error {
+			body, err := installedCommand(ctx, name)
+			if err != nil {
+				return err
+			}
+			if !strings.Contains(body, "more agreements") {
+				return fmt.Errorf("%s.md never says how far off the offer is", name)
+			}
+			return nil
+		})
+
+	sc.Step(`^the installed command "([^"]*)" says it lowers no level$`,
+		func(ctx context.Context, name string) error {
+			body, err := installedCommand(ctx, name)
+			if err != nil {
+				return err
+			}
+			if !strings.Contains(body, "never lowers a level") {
+				return fmt.Errorf("%s.md never says that it lowers no level", name)
+			}
+			return nil
+		})
+
+	sc.Step(`^the installed command "([^"]*)" says a project with no design has no ladder$`,
+		func(ctx context.Context, name string) error {
+			body, err := installedCommand(ctx, name)
+			if err != nil {
+				return err
+			}
+			if !strings.Contains(body, "no ladder") {
+				return fmt.Errorf("%s.md never says what a project with no design gets instead", name)
+			}
+			return nil
+		})
+
 	sc.Step(`^standard output names "([^"]*)" before "([^"]*)"$`,
 		func(ctx context.Context, first, second string) error {
 			said := toolFrom(ctx).stdout
@@ -451,6 +524,11 @@ var writingCommands = []string{
 	"krewe hook import", "krewe hook attach", "krewe hook detach",
 	"krewe commands install",
 }
+
+// runLine is a command a file writes out to be typed, which is an indented line: that is how every
+// file in the set says run this. A command named in prose or in an inline span is one the file tells
+// the operator about, and the way back down is exactly that.
+var runLine = regexp.MustCompile(`(?m)^ {4,}(krewe [^\n]*)$`)
 
 // capWithANumber is krewe path cap carrying a number, which is the form that writes the cap. The
 // number is a digit or the placeholder a command file writes in place of one.

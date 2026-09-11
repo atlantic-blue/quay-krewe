@@ -1162,3 +1162,47 @@ column.**
 - The cost is stated: the operator reads the step, then types the take themselves. A readout that
   named the take would put a writing command one paste away from a word typed to look at a project.
   It is the operator's to say which they would rather have.
+
+## Settled on 2026-09-11, building S-35, where a contract and the code disagreed
+
+Three entries. Two are the shape the last seven slices recorded: the contract names something the
+code does not carry, and the code wins. The third is the cost of what this suite can prove.
+
+**The file subtracts the run from the threshold, because no command prints how far off the offer
+is.**
+- Status: settled, and the contract asks for the number without saying where it comes from.
+- SLASH-7 reads "With no offer standing, it says how many more agreements the offer needs. It asks
+  nothing."
+- `runTrust` in `cmd/krewe/trust.go` prints the run and the threshold as two numbers on one line,
+  from a format that reads "%s in a row, against a threshold of %d". Nothing anywhere prints the
+  difference, and `sayTheStandingOffer` prints only where the row says an offer stands.
+- So the file reads both numbers off that output and subtracts one from the other. That is the one
+  piece of arithmetic it does, and both numbers come from a command that was run. It counts no
+  agreement of its own, the way `/krewe:status` counts no step of its own.
+- The alternative is a number in the tool, which is a change to what `krewe trust` prints and
+  belongs to COMMAND-17 rather than to a markdown file.
+
+**The way back down is named in prose, and a command a file runs is a line it writes out.**
+- Status: settled, and the contract asks the command to name a word that writes.
+- SLASH-7 reads "It never lowers a level. A wrong close does that, through `krewe step reopen`."
+  `krewe step reopen` is in the list of words that only write, which `/krewe:status` may not name at
+  all. So this file has to name a writing command and must never run it.
+- The two are read apart the way S-33 read a verb apart: a command a file writes out to be typed is
+  an indented line, and that is how every file in the set says run this. `krewe trust raise` is
+  written out. `krewe step reopen` is named in a sentence, in the three things the file says before
+  it asks for the yes.
+- `TestTheTrustCommandRunsNoCommandThatWritesButTheRaise` reads the indented lines only, so the
+  raise is the one write this command makes and every other writing word is refused in it. The
+  mutation that moves the reopen into an indented line is refused by that test and by the scenario.
+
+**Whether a model runs this conversation well is not proved, and no scenario here pretends to.**
+- Status: settled for this slice, and it is the cost rather than a defect.
+- SLASH-7's acceptance criteria read as runs: "With an offer standing, answering yes raises the
+  level, and `krewe trust` then says level 1", and "Answering no leaves the level where it was".
+- No scenario in `features/` starts a model. The suite runs the real tool in its own process, and
+  what it can read is the file the install put on the machine. So what is proved is that the file
+  says the raise waits for a yes, that a no leaves the level where it was, and that the only write
+  it makes is the raise.
+- A scenario that drove a model would prove the model and not the file, and it would be the first
+  one in this repository to need one. The level itself is proved where it is written: TRUST-2 and
+  the store tests hold the raise, and the control plane refuses a raise no offer stands behind.

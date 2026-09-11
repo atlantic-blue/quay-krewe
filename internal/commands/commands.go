@@ -59,7 +59,7 @@ const UnknownBuild = "unknown"
 // order is the order the listing prints, which is the order the commands are met in rather than the
 // order a directory read gives back. Every slice that adds a command adds its name here, and
 // TestEveryCommandHasAPlaceInTheListing refuses a file this list does not name.
-var order = []string{"init", "design", "status"}
+var order = []string{"init", "design", "status", "trust"}
 
 // Order is that list, so a test can hold it against the set this build carries.
 func Order() []string { return append([]string(nil), order...) }

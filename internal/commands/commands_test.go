@@ -11,16 +11,22 @@ import (
 	"github.com/atlantic-blue/quay-krewe/internal/manual"
 )
 
-// Every test here runs over the whole embedded set rather than over a count of it. The set holds one
-// file today and grows to four, one command per slice, so a test that asserts four fails today and a
-// test that asserts one fails the moment the next command ships. What holds at every size is that
-// every file in the set obeys the rules.
+// Every test here runs over the whole embedded set rather than over a count of it. The set grew one
+// file per slice, and what holds at every size is that every file in the set obeys the rules.
 
-// The one place a count is the point: an embed that matched nothing would make every rule below hold
-// over no files at all, and report a clean run.
+// The two places a count is the point. An embed that matched nothing would make every rule below
+// hold over no files at all, and report a clean run. And the set is the four commands SLASH-1 names,
+// so a fifth file shipped without a contract behind it is caught here rather than by an operator
+// reading a listing.
 func TestTheEmbeddedSetIsNotEmpty(t *testing.T) {
 	if len(commands.All()) == 0 {
 		t.Fatal("this build carries no commands, so every rule over the set proves nothing")
+	}
+}
+
+func TestTheEmbeddedSetHoldsTheFourCommandsOfTheContract(t *testing.T) {
+	if held := len(commands.All()); held != 4 {
+		t.Fatalf("this build carries %d commands, and the contract names four", held)
 	}
 }
 
@@ -96,7 +102,7 @@ func TestTheListingNamesTheCommandsInTheOrderTheyAreMetIn(t *testing.T) {
 		return -1
 	}
 
-	met := []string{"init", "design", "status"}
+	met := []string{"init", "design", "status", "trust"}
 	for _, name := range met {
 		if at(name) < 0 {
 			t.Fatalf("this build carries no %s command", name)
@@ -269,15 +275,115 @@ func TestTheStatusCommandNamesTheCommandThatWritesAPath(t *testing.T) {
 	}
 }
 
+// The trust command reads the record, and the raise is the operator's answer to an offer krewe made.
+// A file that named only one of the two would either print a ladder nobody can climb, or raise a
+// level nobody read first.
+func TestTheTrustCommandReadsTheRecordAndRaisesIt(t *testing.T) {
+	body := trustBody(t)
+
+	for _, named := range []string{
+		"krewe trust <workspace>/<project>",
+		"krewe trust raise <workspace>/<project>",
+	} {
+		if !strings.Contains(body, named) {
+			t.Errorf("trust.md never runs %q", named)
+		}
+	}
+}
+
+// Raising the level moves the word done from the operator to krewe, which is the one place in this
+// system where the operator hands something over. So the yes sits in the step that raises, and in no
+// other step: a yes asked earlier, for something else, is not the operator handing that over.
+//
+// The part before the first step is left out of the count. It says what the command does, and what
+// it says there is that a yes is asked where an offer stands.
+func TestTheTrustCommandAsksForAYesOnlyInTheStepThatRaises(t *testing.T) {
+	steps := strings.Split(trustBody(t), "\n## ")[1:]
+
+	asked := make([]string, 0, 1)
+	for _, step := range steps {
+		if asksForAYes.MatchString(step) {
+			asked = append(asked, step)
+		}
+	}
+	if len(asked) != 1 {
+		t.Fatalf("trust.md asks for a yes in %d of its %d steps, want the one that raises",
+			len(asked), len(steps))
+	}
+	if !strings.Contains(asked[0], "krewe trust raise") {
+		t.Errorf("trust.md asks for a yes in a step that raises nothing:\n%s", asked[0])
+	}
+}
+
+// runLine is a command a file writes out to be typed, which is an indented line: that is how every
+// file in the set says run this. A command named in prose or in an inline span is one the file tells
+// the operator about, and the way back down is exactly that.
+var runLine = regexp.MustCompile(`(?m)^ {4,}(krewe [^\n]*)$`)
+
+// The raise is the only write this command makes. Everything else it does is a read, so a second
+// writing command in the file would act on a word the operator typed to look at the record.
+func TestTheTrustCommandRunsNoCommandThatWritesButTheRaise(t *testing.T) {
+	for _, line := range runLine.FindAllStringSubmatch(trustBody(t), -1) {
+		typed := strings.TrimSpace(line[1])
+		for _, writing := range writingCommands {
+			if writing == "krewe trust raise" || !strings.HasPrefix(typed, writing) {
+				continue
+			}
+			t.Errorf("trust.md runs %q, and the raise is the only write this command makes", typed)
+		}
+	}
+}
+
+// The way down is a command the operator types on a step krewe closed wrongly, and it drops a level.
+// The file names it, because a person who cannot find the way back stops handing the word over at
+// all. It never runs it: nothing here lowers a level, and a command file that offered to would be
+// undoing the operator's own yes.
+func TestTheTrustCommandNamesTheWayBackDownAndNeverRunsIt(t *testing.T) {
+	body := trustBody(t)
+
+	if !strings.Contains(body, "krewe step reopen") {
+		t.Error("trust.md never names krewe step reopen, so the way back down is left to be looked up")
+	}
+	if !strings.Contains(body, "never lowers a level") {
+		t.Error("trust.md never says that it lowers no level")
+	}
+	for _, line := range runLine.FindAllStringSubmatch(body, -1) {
+		if strings.HasPrefix(strings.TrimSpace(line[1]), "krewe step reopen") {
+			t.Errorf("trust.md runs %q, and it lowers no level", strings.TrimSpace(line[1]))
+		}
+	}
+}
+
+// A project with no design has taken no step, so it agreed with nothing. The one line it gets names
+// the command that writes a design, rather than a ladder of zeroes that reads as a project that
+// tried and earned nothing.
+func TestTheTrustCommandNamesTheCommandThatWritesADesign(t *testing.T) {
+	if !strings.Contains(trustBody(t), "/krewe:design") {
+		t.Error("trust.md never names /krewe:design, so a project with no design is left looking it up")
+	}
+}
+
 // statusBody is the status command as this build carries it.
 func statusBody(t *testing.T) string {
 	t.Helper()
+	return commandBody(t, "status")
+}
+
+// trustBody is the trust command as this build carries it.
+func trustBody(t *testing.T) string {
+	t.Helper()
+	return commandBody(t, "trust")
+}
+
+// commandBody is one command of the set, read out of the binary rather than off a machine.
+func commandBody(t *testing.T, name string) string {
+	t.Helper()
 	for _, one := range commands.All() {
-		if one.Name == "status" {
+		if one.Name == name {
 			return one.Body
 		}
 	}
-	t.Fatal("this build carries no status command")
+	t.Fatalf("this build carries no %s command", name)
 	return ""
 }
 

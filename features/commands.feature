@@ -190,9 +190,58 @@ Feature: Krewe puts its own slash commands in the operator's terminal
     And the installed command "status" names "/krewe:design"
     And the installed command "status" says a project with no path has no readout
 
+  # /krewe:trust is where the operator hands the word done over, and it is the only command in the
+  # set that changes who closes a step. So the file reads the record first, prints the ladder, and
+  # asks before it raises anything.
+  Scenario: The trust command ships with the set, and carries the marker and one description
+    When the operator installs the slash commands
+    Then the command succeeds
+    And the installed command "trust" carries the marker of this build
+    And the installed command "trust" describes itself in one line
+
+  Scenario: The trust command reads the record before it offers anything
+    When the operator installs the slash commands
+    Then the command succeeds
+    And the installed command "trust" names "krewe trust <workspace>/<project>"
+    And the installed command "trust" names "krewe trust raise <workspace>/<project>"
+
+  # The one this part of the slice exists for. Raising the level moves the word done from the
+  # operator to krewe, so the yes sits in the step that raises and the file says what a no leaves
+  # behind.
+  Scenario: The trust command asks for a yes before it raises
+    When the operator installs the slash commands
+    Then the command succeeds
+    And the installed command "trust" asks for a yes where it runs "krewe trust raise"
+    And the installed command "trust" says a no leaves the level where it was
+
+  # A raise with no offer standing is refused by the control plane, so a question asked there is a
+  # question the system will not honour. The file says how far off the offer is instead.
+  Scenario: With no offer standing the trust command says what the offer needs
+    When the operator installs the slash commands
+    Then the command succeeds
+    And the installed command "trust" says how many more agreements the offer needs
+
+  # The way back down is a command the operator types on a step krewe closed wrongly. The file names
+  # it, because a person who cannot find it stops handing the word over at all. It never runs it.
+  Scenario: The trust command names the way back down and lowers nothing itself
+    When the operator installs the slash commands
+    Then the command succeeds
+    And the installed command "trust" names "krewe step reopen"
+    And the installed command "trust" says it lowers no level
+    And the installed command "trust" runs no command that writes other than "krewe trust raise"
+
+  # A project with no design agreed with nothing, so there is no ladder to print. A ladder of zeroes
+  # reads as a project that tried and earned nothing.
+  Scenario: A project with no design is named the command that writes one
+    When the operator installs the slash commands
+    Then the command succeeds
+    And the installed command "trust" names "/krewe:design"
+    And the installed command "trust" says a project with no design has no ladder
+
   # The order the commands are met in, which is not the order a directory read gives back.
-  Scenario: The listing names init, then design, then status
+  Scenario: The listing names init, then design, then status, then trust
     When the operator asks which slash commands this build carries
     Then the command succeeds
     And standard output names "/krewe:init" before "/krewe:design"
     And standard output names "/krewe:design" before "/krewe:status"
+    And standard output names "/krewe:status" before "/krewe:trust"
