@@ -137,12 +137,6 @@ Feature: Krewe puts its own slash commands in the operator's terminal
     And the installed command "design" carries the marker of this build
     And the installed command "design" describes itself in one line
 
-  # The order the commands are met in, which is not the order a directory read gives back.
-  Scenario: The listing names init first and design second
-    When the operator asks which slash commands this build carries
-    Then the command succeeds
-    And standard output names "/krewe:init" before "/krewe:design"
-
   # The design work belongs to a session in a sandbox. The command makes sure that session holds the
   # design skill, dispatches it, and then reads back what it wrote.
   Scenario: The design command dispatches a session that holds the design skill
@@ -162,3 +156,43 @@ Feature: Krewe puts its own slash commands in the operator's terminal
     And the installed command "design" names "krewe design approve"
     And the installed command "design" asks for a yes where it runs "krewe design approve"
     And the installed command "design" says a no leaves the design unapproved
+
+  # /krewe:status is the readout, and it is the one where a helpful extra command would be a write.
+  # The operator types it to look at the project, so anything it runs has to be safe to run without
+  # thinking about it. It reads, it prints, and it acts on nothing.
+  Scenario: The status command ships with the set, and carries the marker and one description
+    When the operator installs the slash commands
+    Then the command succeeds
+    And the installed command "status" carries the marker of this build
+    And the installed command "status" describes itself in one line
+
+  Scenario: The status command reads the path, the sessions and the design
+    When the operator installs the slash commands
+    Then the command succeeds
+    And the installed command "status" names "krewe path <workspace>/<project>"
+    And the installed command "status" names "krewe sessions <workspace>/<project>"
+    And the installed command "status" names "krewe design <workspace>/<project>"
+    And the installed command "status" names "krewe trust <workspace>/<project>"
+
+  # The one this part of the slice exists for. A readout that took a step, approved a restatement or
+  # raised a trust level would act on a word the operator typed to look at something.
+  Scenario: The status command runs no command that writes, and asks for no yes
+    When the operator installs the slash commands
+    Then the command succeeds
+    And the installed command "status" runs no command that writes
+    And the installed command "status" asks for no yes
+
+  # Nothing there is nothing, and it is not a count of zero. A readout of zeros reads as a project
+  # where nobody is working, which is a different thing from a project nobody has broken into steps.
+  Scenario: A project with no path is named the command that writes one
+    When the operator installs the slash commands
+    Then the command succeeds
+    And the installed command "status" names "/krewe:design"
+    And the installed command "status" says a project with no path has no readout
+
+  # The order the commands are met in, which is not the order a directory read gives back.
+  Scenario: The listing names init, then design, then status
+    When the operator asks which slash commands this build carries
+    Then the command succeeds
+    And standard output names "/krewe:init" before "/krewe:design"
+    And standard output names "/krewe:design" before "/krewe:status"

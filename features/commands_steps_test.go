@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/atlantic-blue/quay-krewe/internal/commands"
@@ -350,6 +351,57 @@ func initializeCommandSteps(sc *godog.ScenarioContext) {
 			return nil
 		})
 
+	// The status command is a readout. Every word of the tool that only writes is refused in it, so a
+	// readout cannot take a step, approve a restatement or raise a trust level.
+	//
+	// krewe path cap is not in the list, because the same word reads: with no number after it the
+	// manual says it prints the cap and writes nothing. The form carrying a number is refused below.
+	//
+	// The list is a copy of the one in internal/commands, which reads the files in the binary. This
+	// one reads the file the install put on the machine, which is what an operator opens.
+	sc.Step(`^the installed command "([^"]*)" runs no command that writes$`,
+		func(ctx context.Context, name string) error {
+			body, err := installedCommand(ctx, name)
+			if err != nil {
+				return err
+			}
+			for _, writing := range writingCommands {
+				if strings.Contains(body, writing) {
+					return fmt.Errorf("%s.md runs %q, and the status command writes nothing", name, writing)
+				}
+			}
+			if found := capWithANumber.FindString(body); found != "" {
+				return fmt.Errorf("%s.md runs %q, which writes the cap", name, strings.TrimSpace(found))
+			}
+			return nil
+		})
+
+	// Nothing to agree to, so nothing to ask. A readout that stopped for an answer would be one more
+	// thing to get through, where the point is to type one word and read the state.
+	sc.Step(`^the installed command "([^"]*)" asks for no yes$`,
+		func(ctx context.Context, name string) error {
+			body, err := installedCommand(ctx, name)
+			if err != nil {
+				return err
+			}
+			if found := asksForAYes.FindString(body); found != "" {
+				return fmt.Errorf("%s.md asks for a %q, and it approves nothing", name, found)
+			}
+			return nil
+		})
+
+	sc.Step(`^the installed command "([^"]*)" says a project with no path has no readout$`,
+		func(ctx context.Context, name string) error {
+			body, err := installedCommand(ctx, name)
+			if err != nil {
+				return err
+			}
+			if !strings.Contains(body, "no readout") {
+				return fmt.Errorf("%s.md never says what a project with no path gets instead", name)
+			}
+			return nil
+		})
+
 	sc.Step(`^standard output names "([^"]*)" before "([^"]*)"$`,
 		func(ctx context.Context, first, second string) error {
 			said := toolFrom(ctx).stdout
@@ -373,6 +425,39 @@ func initializeCommandSteps(sc *godog.ScenarioContext) {
 		return nil
 	})
 }
+
+// writingCommands is every word of the tool that only writes, read over a command file that must
+// run none of them. It is a copy of the list in internal/commands: each suite reads its own, the
+// way the four design writes already do.
+var writingCommands = []string{
+	"krewe use",
+	"krewe workspace create", "krewe workspace delete",
+	"krewe project create", "krewe project delete", "krewe project repository",
+	"krewe target",
+	"krewe exec",
+	"krewe archive", "krewe unarchive", "krewe label", "krewe mode", "krewe stop", "krewe drain",
+	"krewe volume cp", "krewe volume delete",
+	"krewe context set", "krewe context edit", "krewe context clear",
+	"krewe design brief", "krewe design set", "krewe design edit", "krewe design contracts",
+	"krewe design approve", "krewe design proof",
+	"krewe feature add", "krewe feature intention", "krewe feature done", "krewe feature stop",
+	"krewe feature open",
+	"krewe path set",
+	"krewe step take", "krewe step approve", "krewe step check", "krewe step done",
+	"krewe step stop", "krewe step reopen",
+	"krewe trust raise", "krewe trust threshold",
+	"krewe secret set", "krewe secret mount",
+	"krewe skill import", "krewe skill attach", "krewe skill detach",
+	"krewe hook import", "krewe hook attach", "krewe hook detach",
+	"krewe commands install",
+}
+
+// capWithANumber is krewe path cap carrying a number, which is the form that writes the cap. The
+// number is a digit or the placeholder a command file writes in place of one.
+var capWithANumber = regexp.MustCompile(`krewe path cap(?:\s+\S+)?\s+(?:\d+|<number>)`)
+
+// asksForAYes is the word a command file uses where it waits for the operator to agree.
+var asksForAYes = regexp.MustCompile(`(?i)\byes\b`)
 
 // errorsJoined keeps the first thing that went wrong while a scenario tidies up after itself.
 func errorsJoined(errs ...error) error {
