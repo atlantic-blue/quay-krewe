@@ -61,6 +61,7 @@ const (
 	ControlPlaneService_ApproveRestatement_FullMethodName       = "/quaycrew.v1.ControlPlaneService/ApproveRestatement"
 	ControlPlaneService_SetStepsInFlightCap_FullMethodName      = "/quaycrew.v1.ControlPlaneService/SetStepsInFlightCap"
 	ControlPlaneService_SetProofCommand_FullMethodName          = "/quaycrew.v1.ControlPlaneService/SetProofCommand"
+	ControlPlaneService_CheckStep_FullMethodName                = "/quaycrew.v1.ControlPlaneService/CheckStep"
 	ControlPlaneService_FinishStep_FullMethodName               = "/quaycrew.v1.ControlPlaneService/FinishStep"
 	ControlPlaneService_ListFeatures_FullMethodName             = "/quaycrew.v1.ControlPlaneService/ListFeatures"
 	ControlPlaneService_AddFeature_FullMethodName               = "/quaycrew.v1.ControlPlaneService/AddFeature"
@@ -179,6 +180,16 @@ type ControlPlaneServiceClient interface {
 	// The driver is refused it. A session that could set the command that proves its own work would
 	// choose what proves it, and the check would stop being a check.
 	SetProofCommand(ctx context.Context, in *SetProofCommandRequest, opts ...grpc.CallOption) (*SetProofCommandResponse, error)
+	// Running the scenario the step promised, inside the sandbox of the session that holds it, and
+	// recording what it reported.
+	//
+	// No model starts and no token is spent: it is an exec in a container that already exists. The
+	// verdict is passing only where the run exited zero, the pattern matched, and the count is above
+	// zero, because a name filter that matches nothing prints success in most runners.
+	//
+	// The driver may call it. Running the check grants nothing and writes no approval, so a session
+	// that runs its own check has proved nothing about itself that the operator cannot read.
+	CheckStep(ctx context.Context, in *CheckStepRequest, opts ...grpc.CallOption) (*CheckStepResponse, error)
 	// Recording what came of a step: done, or stopped, and what somebody wrote about it. It touches no
 	// session, because the step and the session that took it are separate records.
 	FinishStep(ctx context.Context, in *FinishStepRequest, opts ...grpc.CallOption) (*FinishStepResponse, error)
@@ -657,6 +668,16 @@ func (c *controlPlaneServiceClient) SetProofCommand(ctx context.Context, in *Set
 	return out, nil
 }
 
+func (c *controlPlaneServiceClient) CheckStep(ctx context.Context, in *CheckStepRequest, opts ...grpc.CallOption) (*CheckStepResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CheckStepResponse)
+	err := c.cc.Invoke(ctx, ControlPlaneService_CheckStep_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *controlPlaneServiceClient) FinishStep(ctx context.Context, in *FinishStepRequest, opts ...grpc.CallOption) (*FinishStepResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(FinishStepResponse)
@@ -992,6 +1013,16 @@ type ControlPlaneServiceServer interface {
 	// The driver is refused it. A session that could set the command that proves its own work would
 	// choose what proves it, and the check would stop being a check.
 	SetProofCommand(context.Context, *SetProofCommandRequest) (*SetProofCommandResponse, error)
+	// Running the scenario the step promised, inside the sandbox of the session that holds it, and
+	// recording what it reported.
+	//
+	// No model starts and no token is spent: it is an exec in a container that already exists. The
+	// verdict is passing only where the run exited zero, the pattern matched, and the count is above
+	// zero, because a name filter that matches nothing prints success in most runners.
+	//
+	// The driver may call it. Running the check grants nothing and writes no approval, so a session
+	// that runs its own check has proved nothing about itself that the operator cannot read.
+	CheckStep(context.Context, *CheckStepRequest) (*CheckStepResponse, error)
 	// Recording what came of a step: done, or stopped, and what somebody wrote about it. It touches no
 	// session, because the step and the session that took it are separate records.
 	FinishStep(context.Context, *FinishStepRequest) (*FinishStepResponse, error)
@@ -1175,6 +1206,9 @@ func (UnimplementedControlPlaneServiceServer) SetStepsInFlightCap(context.Contex
 }
 func (UnimplementedControlPlaneServiceServer) SetProofCommand(context.Context, *SetProofCommandRequest) (*SetProofCommandResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SetProofCommand not implemented")
+}
+func (UnimplementedControlPlaneServiceServer) CheckStep(context.Context, *CheckStepRequest) (*CheckStepResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CheckStep not implemented")
 }
 func (UnimplementedControlPlaneServiceServer) FinishStep(context.Context, *FinishStepRequest) (*FinishStepResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method FinishStep not implemented")
@@ -2022,6 +2056,24 @@ func _ControlPlaneService_SetProofCommand_Handler(srv interface{}, ctx context.C
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ControlPlaneService_CheckStep_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CheckStepRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ControlPlaneServiceServer).CheckStep(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ControlPlaneService_CheckStep_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ControlPlaneServiceServer).CheckStep(ctx, req.(*CheckStepRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _ControlPlaneService_FinishStep_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(FinishStepRequest)
 	if err := dec(in); err != nil {
@@ -2592,6 +2644,10 @@ var ControlPlaneService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SetProofCommand",
 			Handler:    _ControlPlaneService_SetProofCommand_Handler,
+		},
+		{
+			MethodName: "CheckStep",
+			Handler:    _ControlPlaneService_CheckStep_Handler,
 		},
 		{
 			MethodName: "FinishStep",

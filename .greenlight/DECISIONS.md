@@ -502,3 +502,45 @@ it has now. In every one the code on `main` wins and the sentence is recorded as
 - This slice answers the proof pattern and the proof budget the same way, for the same reason: an
   empty pattern reads no count out of any output, and a budget of zero ends a run before it starts.
   The command stays empty, and empty is what it means there: this project proves nothing yet.
+
+## Settled on 2026-09-11, building S-20, where a contract and the code disagreed
+
+Three entries. In each one the code on `main` wins and the sentence in the design document is
+recorded as stale.
+
+**The proof result columns ship in migration 0074, not 0073 and not 0068.**
+- Status: settled, and the contract text is stale.
+- TABLE-2 says "the columns migration `0073` adds, for the proof result", and the graph's partial
+  contract note for S-20 says 0068. Both numbers are taken. 0072 added the four restatement columns
+  in S-16, and 0073 added the three proof command columns in S-19, one slice before this one. The
+  next free number is 0074.
+- A migration number is the file name a system records in `schema_migrations`, so a second file under
+  a number already applied never runs at all.
+- What follows: TABLE-2 also says migration `0074` adds `closed_by` and `operator_agreed` for the
+  trust ladder. `closed_by` is already on the table and the ladder has not shipped, so that slice
+  takes the next free number when it comes rather than the one written down.
+
+**A step is addressed by its feature and its number, never by its project.**
+- Status: settled, and the contract text is stale about a shape that moved before this slice.
+- STORE-13 writes `RecordProof(ctx, project string, number int32, ...)` and WIRE-14 writes
+  `CheckStepRequest { string project = 1; int32 number = 2; }`. Every contract written before the
+  four level revision addresses a step that way.
+- A path belongs to a feature now, and step numbers restart in each feature, so a project and a
+  number name as many steps as the project has features. The store, the wire and the command line all
+  take the feature, and this slice follows them: `RecordProof(ctx, feature, number, result)` and
+  `CheckStepRequest { feature, number }`.
+- The command line still reads `<feature>.<number>` through `stepAddressed`, so nothing about what a
+  person types changes.
+
+**The output keeps 4,000 characters of the run, and the line saying what was cut sits above them.**
+- Status: settled, and the contracts say it this way.
+- STORE-13 reads "proof_output keeps the last 4,000 characters. When the output was cut, the first
+  line says how much was dropped", which is what shipped: the record is that line, then the last
+  4,000 characters of the run.
+- The alternative is a record of exactly 4,000 characters with the line inside the count. It was
+  rejected because the number in the line would then depend on the length of the line that states it,
+  which settles only by iterating, and a number that is out by the width of its own text is worse
+  than a record four thousand characters long plus one line.
+- What krewe has to say about a run goes under the output rather than above it, for the same reason
+  the cut line goes above: the trim keeps the end, so a note written above a long run would be the
+  first thing dropped. "The pattern found no count" is the last line of the record, where it survives.

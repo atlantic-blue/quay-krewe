@@ -201,16 +201,20 @@ func drawPath(out io.Writer, grouped []pathGroup) {
 	}
 }
 
-// stepCells is how many cells a step row carries: the number, the title, the state, the session
-// holding it, and how long ago it was taken.
-const stepCells = 5
+// stepCells is how many cells a step row carries: the number, the title, the state, what krewe`s own
+// run of the scenario reported, the session holding it, and how long ago it was taken.
+const stepCells = 6
 
 // stepRow is one step as the listing prints it.
+//
+// The verdict sits beside the state because the two answer one question together: a step that reads
+// done and unproven is a step somebody closed without anybody running its scenario.
 func stepRow(step *quaycrewv1.Step) []string {
 	return []string{
 		strconv.FormatInt(int64(step.GetNumber()), 10),
 		step.GetTitle(),
 		step.GetState(),
+		proofOn(step),
 		sessionOn(step),
 		display.Age(step.GetTakenAt()),
 	}
@@ -299,6 +303,16 @@ func nextLine(next int32) string {
 	return fmt.Sprintf("next: step %d", next)
 }
 
+// proofOn is what krewe's own run of this step's scenario reported. A step nobody checked reads
+// unproven, which is the word the store keeps and not a stand in for a missing cell.
+func proofOn(step *quaycrewv1.Step) string {
+	if step.GetProofState() == "" {
+		return "unproven"
+	}
+	return step.GetProofState()
+}
+
+// sessionOn is the session holding a step, and a dash where nobody holds it. A dash rather than an
 // sessionOn is the session holding a step, and a dash where nobody holds it. A dash rather than an
 // empty cell, because an empty cell in the middle of a row reads as a column that failed to render.
 func sessionOn(step *quaycrewv1.Step) string {

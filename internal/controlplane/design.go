@@ -1261,6 +1261,12 @@ func stepBlock(step *quaycrewv1.Step, milestone string) string {
 		"milestone: " + milestone,
 		"state: " + step.GetState(),
 	}
+	// What krewe's own run of the scenario last reported, above the result and under the state. It is
+	// left out while nobody has run one, because a line reading unproven on every step of a path says
+	// nothing and costs a read on each of them.
+	if line := proofLine(step); line != "" {
+		lines = append(lines, line)
+	}
 	// What came of a finished step, under its state. This is what makes a session start from what is
 	// true: a session on step 4 reads what steps 1 to 3 produced. Nothing can see inside a container,
 	// so this line is what somebody wrote and there is nothing else to write.
@@ -1285,6 +1291,20 @@ func stepBlock(step *quaycrewv1.Step, milestone string) string {
 	return strings.Join(lines, "\n")
 }
 
+// proofLine is what krewe's own run of this step's scenario reported, and the empty string while
+// nobody has run one.
+//
+// The count is on the line with the verdict because the two are one fact: a run that passed while
+// reporting no scenario is a run that proved nothing, and a reader who saw only the word would take
+// the step for proved.
+func proofLine(step *quaycrewv1.Step) string {
+	if step.GetProofState() == "" || step.GetProofState() == store.ProofUnproven {
+		return ""
+	}
+	return fmt.Sprintf("proof: %s, %s", step.GetProofState(), display.Scenarios(step.GetProofScenariosRun()))
+}
+
+// ListSteps reads a feature's path and the milestones it is grouped into, or every feature's path
 // ListSteps reads a feature's path and the milestones it is grouped into, or every feature's path
 // when it names none.
 //

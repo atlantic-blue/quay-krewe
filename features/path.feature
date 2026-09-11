@@ -69,6 +69,14 @@ Feature: A project holds a numbered path of steps
   again. A step whose session wrote nothing is refused, and the refusal names the command that reads
   one. A session is refused the word altogether: the gate exists so that a person reads the text.
 
+  Krewe runs the scenario the step promised, inside the sandbox of the session that holds it, and
+  states a verdict. It replaces the token in the project's proof command with the step's own scenario
+  name, reads the exit status, and reads how many scenarios ran with the project's pattern. A run that
+  reports none is a failure whatever the status says, because a name filter that matches nothing
+  prints success in most runners. No model starts and no token is spent: it is one command in a
+  container that already exists. A failing run is a record and not a gap, so the count, the last of
+  the output and the moment are kept either way.
+
   There is no way to empty a path. A document with no step heading is refused, so a wrong file path
   cannot take somebody's path away.
 
@@ -3211,6 +3219,174 @@ Feature: A project holds a numbered path of steps
     Then standard error says "usage: krewe step done"
     And the command fails
 
+  # Krewe runs the scenario the step promised and states a verdict. The run is an exec in a container
+  # that already exists, so it costs no model token, and what it reads back is an exit status and a
+  # count. The count is the whole reason this is worth running: a name filter that matches nothing
+  # prints success in most runners, so a check that read the status alone would report a passing
+  # verdict on a scenario that never ran.
+
+  Scenario: A check runs the named scenario and keeps what the run reported
+    Given a step taken, restated and approved, naming the scenario "a project carries a brief"
+    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the run answers "1 scenarios (1 passed)" and exits 0
+    When the operator checks step 1
+    Then the run was given "go test ./features/... -run 'a project carries a brief'"
+    And step 1 reads back as passing
+    And step 1 ran 1 scenario
+    And step 1's output carries "1 scenarios (1 passed)"
+    And step 1 carries the moment it was checked
+    And krewe closed nothing
+
+  # The one that decides whether any of this is worth having. The runner exited zero and ran nothing
+  # at all, which is what a scenario name nobody wrote looks like from outside.
+  Scenario: A run that exits zero and reports no scenario is failing
+    Given a step taken, restated and approved, naming the scenario "a name nobody wrote"
+    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the run answers "0 scenarios (0 passed)\nok  	quay-krewe/features	0.4s" and exits 0
+    When the operator checks step 1
+    Then step 1 reads back as failing
+    And step 1 ran 0 scenarios
+
+  Scenario: A run that exits zero and reports one scenario is passing
+    Given a step taken, restated and approved, naming the scenario "a project carries a brief"
+    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the run answers "1 scenarios (1 passed)" and exits 0
+    When the operator checks step 1
+    Then step 1 reads back as passing
+    And step 1 ran 1 scenario
+
+  # The output is kept whatever the verdict, because the end of a failing run is what the session is
+  # sent back to read.
+  Scenario: A run that exits one is failing, and the output is kept
+    Given a step taken, restated and approved, naming the scenario "a project carries a brief"
+    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the run answers "1 scenarios (0 passed, 1 failed)\nthe brief read back empty" and exits 1
+    When the operator checks step 1
+    Then step 1 reads back as failing
+    And step 1 ran 1 scenario
+    And step 1's output carries "the brief read back empty"
+
+  # A run that never ends is not an error either. It is a verdict, and the output says what it passed,
+  # because a step that reads failing with nothing under it sends somebody to run it again by hand.
+  Scenario: A run that passes its budget is failing, and says the budget it passed
+    Given a step taken, restated and approved, naming the scenario "a project carries a brief"
+    And the project's proof command is "go test ./features/... -run '{scenario}'" inside 1 second
+    And the run never answers
+    When the operator checks step 1
+    Then step 1 reads back as failing
+    And step 1's output carries "passed its budget of 1 seconds"
+
+  # Nothing is run, so the refusal costs one line and starts nothing. Each one names where the next
+  # move is, because a person who reads it is about to go and make it.
+  Scenario: A check on a step that names no scenario is refused, and says where to name one
+    Given a step taken, restated and approved, naming the scenario ""
+    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    When the operator checks step 1
+    Then the control plane refuses it as the wrong state
+    And the refusal suggests "The scenario that proves it"
+    And step 1 reads back as unproven
+
+  Scenario: A check before the restatement is approved is refused
+    Given a step taken and restated, naming the scenario "a project carries a brief"
+    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    When the operator checks step 1
+    Then the control plane refuses it as the wrong state
+    And the refusal suggests "krewe step approve"
+    And step 1 reads back as unproven
+    And nothing was run
+
+  Scenario: A check on a project with no proof command is refused, naming the command that sets one
+    Given a step taken, restated and approved, naming the scenario "a project carries a brief"
+    When the operator checks step 1
+    Then the control plane refuses it as the wrong state
+    And the refusal suggests "krewe design proof"
+    And step 1 reads back as unproven
+    And nothing was run
+
+  # The end of the run is what a person reads, because the reason it failed is at the end. The line
+  # above it says what is missing, so nobody reads a cut output as the whole of it.
+  Scenario: A run of 12,000 characters keeps its last 4,000 and says how much was cut
+    Given a step taken, restated and approved, naming the scenario "a project carries a brief"
+    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the run answers 12000 characters and exits 1
+    When the operator checks step 1
+    Then step 1's output keeps 4000 characters of the run
+    And step 1's output carries "the first 8000 characters of this run were cut"
+    And step 1's output carries "the end of the run"
+
+  # A count nobody could read is not a scenario that failed. The output says so, because a verdict
+  # with no reason under it sends somebody to read a suite that ran perfectly well.
+  Scenario: A pattern that finds no count says so, and the verdict is failing
+    Given a step taken, restated and approved, naming the scenario "a project carries a brief"
+    And the project's proof command is "make one {scenario}" counting with "ran ([0-9]+)"
+    And the run answers "1 scenarios (1 passed)" and exits 0
+    When the operator checks step 1
+    Then step 1 reads back as failing
+    And step 1's output carries "found no count in this output"
+
+  # The check is an exec in a container that already exists. A check that woke a model would cost a
+  # step as much as building it did, and the whole point of reading a status and a count is that it
+  # costs neither.
+  Scenario: A check asks no model anything
+    Given a step taken, restated and approved, naming the scenario "a project carries a brief"
+    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the run answers "1 scenarios (1 passed)" and exits 0
+    When the operator checks step 1
+    Then step 1 reads back as passing
+    And the check asked no model anything
+
+  # The session reads the path in its own working directory, so what krewe found is in front of the
+  # next session rather than in a listing somebody has to go and read.
+  Scenario: A checked step carries its verdict in the path a session reads
+    Given a step taken, restated and approved, naming the scenario "a project carries a brief"
+    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the run answers "2 scenarios (2 passed)" and exits 0
+    When the operator checks step 1
+    And the operator dispatches "and again" to the same session
+    Then the session's path file carries "proof: passing, 2 scenarios"
+
+  Scenario: A step nobody checked carries no proof line in the path a session reads
+    Given a step taken, restated and approved, naming the scenario "a project carries a brief"
+    When the operator dispatches "and again" to the same session
+    Then the session's path file does not carry "proof:"
+
+  # What the caller types, and what it puts on the screen: the command before the wait, so nobody
+  # watches a run they cannot see, then the verdict and the count.
+  Scenario: The caller checks a step and reads the command, the verdict and the count
+    Given the system listens on an address the tool can dial
+    And a step taken, restated and approved, naming the scenario "a project carries a brief"
+    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the run answers "1 scenarios (1 passed)" and exits 0
+    When the caller checks step "1.1"
+    Then standard output carries "go test ./features/... -run 'a project carries a brief'"
+    And standard output carries "verdict: passing, 1 scenario ran"
+    And the command succeeds
+
+  # A failing verdict is printed rather than refused: the run happened and it said something. The
+  # exit status is what a script reads, so it is not zero.
+  Scenario: A failing check prints the end of the output and exits non zero
+    Given the system listens on an address the tool can dial
+    And a step taken, restated and approved, naming the scenario "a project carries a brief"
+    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the run answers "1 scenarios (0 passed, 1 failed)\nthe brief read back empty" and exits 1
+    When the caller checks step "1.1"
+    Then standard output carries "verdict: failing"
+    And standard output carries "the brief read back empty"
+    And the command fails
+
+  # The verdict sits beside the state in the listing, because the two answer one question together: a
+  # step that reads done and unproven is a step somebody closed without anybody running its scenario.
+  Scenario: The path listing says what each step's last run reported
+    Given the system listens on an address the tool can dial
+    And a step taken, restated and approved, naming the scenario "a project carries a brief"
+    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the run answers "1 scenarios (1 passed)" and exits 0
+    When the operator checks step 1
+    And the caller reads the path of feature 1
+    Then standard output carries "passing"
+    And the command succeeds
+
+  # A project delivers several features at the same time. A website runs an authentication feature
   # A project delivers several features at the same time. A website runs an authentication feature
   # and a payment feature at once: authentication ships sign up, then sign in, then reset, and
   # payment ships checkout, then refunds. Two paths, and neither waits for the other. A feature is

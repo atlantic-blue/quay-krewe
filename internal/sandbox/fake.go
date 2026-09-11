@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 )
 
 // FakeProvider hands out a FakeSandbox and records what it was asked to create. For tests.
@@ -266,7 +267,7 @@ func (p readerProcess) Wait() error       { return p.err }
 func (p readerProcess) Stderr() string    { return p.stderr }
 
 // Exec records the spec and returns a process streaming the canned Output.
-func (f *FakeSandbox) Exec(_ context.Context, spec Spec) (Process, error) {
+func (f *FakeSandbox) Exec(ctx context.Context, spec Spec) (Process, error) {
 	f.LastSpec = spec
 	f.Ran = append(f.Ran, spec)
 	if f.Err != nil {
@@ -282,11 +283,41 @@ func (f *FakeSandbox) Exec(_ context.Context, spec Spec) (Process, error) {
 		return readerProcess{r: strings.NewReader("/usr/bin/" + binary)}, nil
 	}
 	if reply, set := replyTo(f.Replies, spec); set {
+		if reply.Delay > 0 {
+			return slowProcess{
+				readerProcess: readerProcess{r: strings.NewReader(reply.Out), stderr: reply.Stderr, err: reply.Err},
+				takes:         reply.Delay,
+				ctx:           ctx,
+			}, nil
+		}
 		return readerProcess{r: strings.NewReader(reply.Out), stderr: reply.Stderr, err: reply.Err}, nil
 	}
 	return readerProcess{r: strings.NewReader(f.Output), stderr: f.Stderr, err: f.ExitErr}, nil
 }
 
+// slowProcess is a command that takes time, so a caller watching the clock has something to watch.
+//
+// The wait is against the caller's own context, which is what a run under a budget gives it. A
+// context that ends first answers with its own error, the way a container exec killed by its deadline
+// does, and the command never reports what it would have printed.
+type slowProcess struct {
+	readerProcess
+	takes time.Duration
+	ctx   context.Context
+}
+
+func (p slowProcess) Wait() error {
+	timer := time.NewTimer(p.takes)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return p.err
+	case <-p.ctx.Done():
+		return p.ctx.Err()
+	}
+}
+
+// Reply is what one command answers, matched on a fragment of the command line rather than on the
 // Reply is what one command answers, matched on a fragment of the command line rather than on the
 // whole of it: the paths in a command are made by the system and a scenario should not have to know
 // them to say what git said.
@@ -297,6 +328,10 @@ type Reply struct {
 	Out    string
 	Stderr string
 	Err    error
+	// Delay is how long this command takes, so a scenario can be a command that runs past the budget
+	// the caller gave it. The wait is in Wait rather than in Exec, which is where the real thing puts
+	// it: a container exec hands back a process straight away and the command runs after that.
+	Delay time.Duration
 }
 
 // replyTo is the canned answer for this command, and false where none was set for it.

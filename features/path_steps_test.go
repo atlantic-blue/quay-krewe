@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	quaycrewv1 "github.com/atlantic-blue/quay-krewe/gen/quaycrew/v1"
@@ -44,6 +45,11 @@ type pathWorld struct {
 	// the step, the session dispatched, and the text that session was given. Every one is kept rather
 	// than the last, because the scenario about approving twice holds the two stamps to each other.
 	approvals []*quaycrewv1.ApproveRestatementResponse
+	// checked is what the last check of a step answered, and askedBefore is how many things the model
+	// had been asked when that check started. A check asks it nothing, and a count taken before is the
+	// only way to say so in a scenario whose setup already asked it three times.
+	checked     *quaycrewv1.CheckStepResponse
+	askedBefore int
 	// recorded is the path as it stood before a scenario closed the feature, so a later read is
 	// compared against what was there rather than against what the scenario meant to write. A step
 	// somebody took has already moved, and this is what says closing the feature moved nothing more.
@@ -126,6 +132,7 @@ func milestoneNumbered(ctx context.Context, number int32) (*quaycrewv1.Milestone
 
 func initializePathSteps(sc *godog.ScenarioContext) {
 	initializeFeatureSteps(sc)
+	initializeProofRunSteps(sc)
 	sc.Before(func(ctx context.Context, _ *godog.Scenario) (context.Context, error) {
 		return context.WithValue(ctx, pathKey{}, &pathWorld{}), nil
 	})
@@ -2133,4 +2140,338 @@ func setFeatureIntention(ctx context.Context, number int32, text string) error {
 	}
 	f.warnings = resp.GetWarnings()
 	return nil
+}
+
+// What krewe's own run of a step's scenario reported. The run goes through the sandbox the session
+// already has, so these scenarios set what one command answers on that sandbox and then read the
+// verdict off the step.
+//
+// Nothing here asks a model. That is the property the scenarios are about as much as the verdict is:
+// a check is one command in a container that already exists, and a scenario that woke a model would
+// be specifying something else.
+func initializeProofRunSteps(sc *godog.ScenarioContext) {
+	// The whole way to a step that may be checked, in one line, because nine scenarios need it and
+	// the eight lines it takes are about getting there rather than about the check.
+	sc.Step(`^a step taken, restated and approved, naming the scenario "([^"]*)"$`,
+		func(ctx context.Context, scenario string) error {
+			return aStepReadyToCheck(ctx, scenario, true)
+		})
+
+	sc.Step(`^a step taken and restated, naming the scenario "([^"]*)"$`,
+		func(ctx context.Context, scenario string) error {
+			return aStepReadyToCheck(ctx, scenario, false)
+		})
+
+	sc.Step(`^the project's proof command is "([^"]*)" inside (\d+) seconds?$`,
+		func(ctx context.Context, command string, seconds int) error {
+			return setProof(ctx, command, "", int32(seconds))
+		})
+
+	// What the command inside the sandbox answers. It is set on the sandbox the session already has,
+	// rather than on the provider, because the take made that sandbox before this step runs.
+	sc.Step(`^the run answers "([^"]*)" and exits (\d+)$`,
+		func(ctx context.Context, output string, code int) error {
+			return theRunAnswers(ctx, sandbox.Reply{
+				Match: theProofCommandRuns, Out: unescape(output), Err: exitedWith(code)})
+		})
+
+	// One letter repeated, with a line at the end nothing else carries, so a run that kept the front
+	// rather than the end fails here rather than passing on a length that matched.
+	sc.Step(`^the run answers (\d+) characters and exits (\d+)$`,
+		func(ctx context.Context, length, code int) error {
+			// The count is in the ending, so the run reports one scenario and krewe adds nothing under
+			// the output. A note appended to it would move the number of characters that were cut, and
+			// the scenario names that number.
+			ending := "\n1 scenarios (0 passed, 1 failed)\nthe end of the run\n"
+			return theRunAnswers(ctx, sandbox.Reply{
+				Match: theProofCommandRuns,
+				Out:   strings.Repeat("a", length-len(ending)) + ending,
+				Err:   exitedWith(code),
+			})
+		})
+
+	// A command that runs on past the budget it was given. The delay is longer than any budget a
+	// scenario sets, so what ends the run is the budget and never the clock on this machine.
+	sc.Step(`^the run never answers$`, func(ctx context.Context) error {
+		return theRunAnswers(ctx, sandbox.Reply{
+			Match: theProofCommandRuns, Out: "still going", Delay: time.Minute})
+	})
+
+	sc.Step(`^the operator checks step (\d+)$`, func(ctx context.Context, number int) error {
+		w, p := worldFrom(ctx), pathFrom(ctx)
+		held, err := theFeature(ctx)
+		if err != nil {
+			return err
+		}
+		p.askedBefore = w.runner.count()
+		resp, err := w.client.CheckStep(ctx, &quaycrewv1.CheckStepRequest{
+			Feature: held.GetId(), Number: int32(number),
+		})
+		w.lastErr = err
+		if err != nil {
+			return nil
+		}
+		p.checked = resp
+		return nil
+	})
+
+	sc.Step(`^the caller checks step "([^"]*)"$`, func(ctx context.Context, said string) error {
+		return runTool(ctx, "step", "check", whereTheProjectIs(ctx), said)
+	})
+
+	// Read off the command the sandbox was actually given, because the substitution is the whole of
+	// what this call composes: a run of the template proves nothing about one step, and a run of a
+	// command with the wrong name in it finds nothing and reports it as a failure.
+	sc.Step(`^the run was given "([^"]*)"$`, func(ctx context.Context, want string) error {
+		ran, err := whatTheSandboxRan(ctx)
+		if err != nil {
+			return err
+		}
+		if !strings.Contains(ran, want) {
+			return fmt.Errorf("the sandbox was given %q, want it to carry %q", ran, want)
+		}
+		return nil
+	})
+
+	// The proof command and nothing else. A session`s sandbox is given its own setup when it starts,
+	// so a step that read every command ever run in there would fail on work that has nothing to do
+	// with the check.
+	sc.Step(`^nothing was run$`, func(ctx context.Context) error {
+		ran, err := whatTheSandboxRan(ctx)
+		if err == nil && strings.Contains(ran, theProofCommandRuns) {
+			return fmt.Errorf("the sandbox was given %q, and no scenario was meant to run", ran)
+		}
+		return nil
+	})
+
+	// Counted from before the check, because the setup already asked the model three times: taking the
+	// step, reading the restatement and approving it each dispatch one exec.
+	sc.Step(`^the check asked no model anything$`, func(ctx context.Context) error {
+		w, p := worldFrom(ctx), pathFrom(ctx)
+		if p.askedBefore == 0 {
+			return fmt.Errorf("no check was run, so there is nothing to count against")
+		}
+		if got := w.runner.count(); got != p.askedBefore {
+			return fmt.Errorf("the model was asked %d things, and %d of them were before the check",
+				got, p.askedBefore)
+		}
+		return nil
+	})
+
+	// The word that closes a step is the operator`s until the trust ladder exists, so a check states a
+	// verdict and closes nothing whatever the verdict says.
+	sc.Step(`^krewe closed nothing$`, func(ctx context.Context) error {
+		p := pathFrom(ctx)
+		if p.checked == nil {
+			return fmt.Errorf("no check was run, so nothing answered")
+		}
+		if p.checked.GetClosedByKrewe() {
+			return fmt.Errorf("the check answered that krewe closed the step")
+		}
+		step, err := stepAsItStands(ctx, p.checked.GetStep().GetNumber())
+		if err != nil {
+			return err
+		}
+		if got := step.GetState(); got != "taken" {
+			return fmt.Errorf("the step reads %q after a check, and the check closes nothing", got)
+		}
+		return nil
+	})
+
+	// Read out of the store rather than off the answer to the check, because a call that answered
+	// with a verdict and wrote nothing reads the same to its caller and to nobody else.
+	sc.Step(`^step (\d+) reads back as (passing|failing|unproven)$`,
+		func(ctx context.Context, number int, want string) error {
+			step, err := stepAsItStands(ctx, int32(number))
+			if err != nil {
+				return err
+			}
+			if got := step.GetProofState(); got != want {
+				return fmt.Errorf("step %d reads back as %q, want %q", number, got, want)
+			}
+			return nil
+		})
+
+	sc.Step(`^step (\d+) ran (\d+) scenarios?$`, func(ctx context.Context, number, want int) error {
+		step, err := stepAsItStands(ctx, int32(number))
+		if err != nil {
+			return err
+		}
+		if got := step.GetProofScenariosRun(); got != int32(want) {
+			return fmt.Errorf("step %d ran %d scenarios, want %d", number, got, want)
+		}
+		return nil
+	})
+
+	sc.Step(`^step (\d+)'s output carries "([^"]*)"$`, func(ctx context.Context, number int, want string) error {
+		step, err := stepAsItStands(ctx, int32(number))
+		if err != nil {
+			return err
+		}
+		if !strings.Contains(step.GetProofOutput(), unescape(want)) {
+			return fmt.Errorf("step %d's output is %q, want it to carry %q",
+				number, lastOf(step.GetProofOutput()), unescape(want))
+		}
+		return nil
+	})
+
+	// The run itself, not the whole of what is stored: the line saying what was cut sits above it and
+	// is not part of the output the run printed.
+	sc.Step(`^step (\d+)'s output keeps (\d+) characters of the run$`,
+		func(ctx context.Context, number, want int) error {
+			step, err := stepAsItStands(ctx, int32(number))
+			if err != nil {
+				return err
+			}
+			_, kept, found := strings.Cut(step.GetProofOutput(), "\n")
+			if !found {
+				return fmt.Errorf("step %d's output carries no line above it: %q",
+					number, lastOf(step.GetProofOutput()))
+			}
+			if len(kept) != want {
+				return fmt.Errorf("step %d keeps %d characters of the run, want %d", number, len(kept), want)
+			}
+			return nil
+		})
+
+	sc.Step(`^step (\d+) carries the moment it was checked$`, func(ctx context.Context, number int) error {
+		step, err := stepAsItStands(ctx, int32(number))
+		if err != nil {
+			return err
+		}
+		if step.GetProofRanAt() == nil {
+			return fmt.Errorf("step %d carries no moment, so nothing records that a run happened", number)
+		}
+		return nil
+	})
+}
+
+// theProofCommandRuns is the fragment every proof command in these scenarios carries, which is what
+// the sandbox matches its answer on. The commands differ in what follows it, and a scenario should
+// not have to repeat the whole command line to say what the run printed.
+const theProofCommandRuns = "-run"
+
+// exitedWith is a command that failed, and nothing at all for one that exited zero. A shell reports a
+// failure as an exit status, and the double answers the same way.
+func exitedWith(code int) error {
+	if code == 0 {
+		return nil
+	}
+	return fmt.Errorf("exit status %d", code)
+}
+
+// aStepReadyToCheck is a project with an approved design, a path of one step naming a scenario, and a
+// session holding that step having restated it.
+//
+// The restatement is written into the session's own memory file and read back by an exec, which is
+// how a restatement reaches a step: it travels through a file because a model writes files and cannot
+// make a call.
+func aStepReadyToCheck(ctx context.Context, scenario string, approve bool) error {
+	w := worldFrom(ctx)
+	if _, err := w.client.SetDesign(ctx, &quaycrewv1.SetDesignRequest{
+		Project: w.projectID, Body: "# Bills\n"}); err != nil {
+		return err
+	}
+	if _, err := w.client.ApproveDesign(ctx, &quaycrewv1.ApproveDesignRequest{
+		Project: w.projectID}); err != nil {
+		return err
+	}
+	document := "## 1. The store holds a project's brief\n"
+	if scenario != "" {
+		document += "\nThe scenario that proves it\n" + scenario + "\n"
+	}
+	if err := setPath(ctx, document); err != nil {
+		return err
+	}
+	held, err := theFeature(ctx)
+	if err != nil {
+		return err
+	}
+	if err := takeStep(ctx, held.GetId(), 1); err != nil {
+		return err
+	}
+	if w.lastErr != nil {
+		return fmt.Errorf("the take was refused: %w", w.lastErr)
+	}
+	if err := writeRestatement(ctx, "What this step changes\nThe store holds a project's brief."); err != nil {
+		return err
+	}
+	// The exec is what reads the section out of the session's file and onto the step. Without it the
+	// text sits in a file nothing has read, and the approval below would have nothing to approve.
+	previous, err := w.lastExec()
+	if err != nil {
+		return err
+	}
+	if err := w.dispatch(ctx, w.projectID, previous.handle, "and again"); err != nil {
+		return err
+	}
+	if !approve {
+		return nil
+	}
+	resp, err := w.client.ApproveRestatement(ctx, &quaycrewv1.ApproveRestatementRequest{
+		Feature: held.GetId(), Number: 1})
+	if err != nil {
+		return err
+	}
+	pathFrom(ctx).approvals = append(pathFrom(ctx).approvals, resp)
+	return w.settled(ctx)
+}
+
+// theRunAnswers makes one command answer this way inside the sandbox the session holding the step
+// already has.
+//
+// It is set on that sandbox rather than on the provider, because the take made the sandbox before
+// this step runs and a provider set afterwards would hand its answers to the next one made.
+func theRunAnswers(ctx context.Context, reply sandbox.Reply) error {
+	box, err := theSandboxOfTheStep(ctx)
+	if err != nil {
+		return err
+	}
+	box.Replies = append(box.Replies, reply)
+	return nil
+}
+
+// whatTheSandboxRan is every command that sandbox was given, joined, so a scenario reads what ran and
+// one that says nothing ran reads the same list empty.
+func whatTheSandboxRan(ctx context.Context) (string, error) {
+	box, err := theSandboxOfTheStep(ctx)
+	if err != nil {
+		return "", err
+	}
+	lines := make([]string, 0, len(box.Ran))
+	for _, spec := range box.Ran {
+		lines = append(lines, strings.Join(spec.Argv, " "))
+	}
+	return strings.Join(lines, "\n"), nil
+}
+
+// theSandboxOfTheStep is the sandbox of the session holding the step the last take started. It is
+// asked of the provider by name, the way the control plane asks for it, so a scenario and the call it
+// is about are looking at one container.
+func theSandboxOfTheStep(ctx context.Context) (*sandbox.FakeSandbox, error) {
+	w, p := worldFrom(ctx), pathFrom(ctx)
+	if p.take == nil {
+		return nil, fmt.Errorf("no step was taken, so no session holds one")
+	}
+	box, running, err := w.provider.Existing(ctx, p.take.GetSession().GetId())
+	if err != nil {
+		return nil, err
+	}
+	if !running {
+		return nil, fmt.Errorf("the session that took the step has no sandbox")
+	}
+	held, is := box.(*sandbox.FakeSandbox)
+	if !is {
+		return nil, fmt.Errorf("the session's sandbox is a %T rather than the double", box)
+	}
+	return held, nil
+}
+
+// lastOf is the end of a long text, for a failure message: a run of twelve thousand characters
+// printed whole says nothing a reader can find the fault in.
+func lastOf(text string) string {
+	if len(text) <= 200 {
+		return text
+	}
+	return "..." + text[len(text)-200:]
 }

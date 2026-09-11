@@ -787,6 +787,10 @@ func (m *Memory) SetPath(_ context.Context, feature string, milestones []Milesto
 			Contracts:     step.Contracts,
 			ContractScope: step.ContractScope,
 			State:         StepReady,
+			// The word a step is born with, written here because the column is born with it there. A
+			// step left at the empty string would read as a fourth proof state out of this store and
+			// as `unproven` out of the other.
+			ProofState: ProofUnproven,
 		}
 		if was, err := m.stepLocked(feature, step.Number); err == nil {
 			keepTheRecord(writing, was)
@@ -1055,6 +1059,32 @@ func (m *Memory) ApproveRestatement(_ context.Context, feature string, number in
 }
 
 // stepLocked is one step of a feature's path, or ErrNotFound. The caller holds the lock.
+// RecordProof records what one run of the step's scenario reported.
+//
+// The four columns are written together, whatever the result, and the moment is stamped on a failing
+// run as well. A failing run is a record, and a step that was checked and failed is a different thing
+// from a step nobody checked.
+//
+// The output is trimmed here the way Postgres trims it, through the one function both call, so a long
+// run reads back the same out of either store.
+func (m *Memory) RecordProof(_ context.Context, feature string, number int32, result ProofResult) (
+	*quaycrewv1.Step, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, err := m.featureLocked(feature); err != nil {
+		return nil, err
+	}
+	held, err := m.stepLocked(feature, number)
+	if err != nil {
+		return nil, err
+	}
+	held.ProofState = result.State
+	held.ProofScenariosRun = result.ScenariosRun
+	held.ProofOutput = KeptProofOutput(result.Output)
+	held.ProofRanAt = timestamppb.New(time.Now().UTC())
+	return proto.Clone(held).(*quaycrewv1.Step), nil
+}
+
 func (m *Memory) stepLocked(feature string, number int32) (*quaycrewv1.Step, error) {
 	for _, step := range m.steps[feature] {
 		if step.GetNumber() == number {

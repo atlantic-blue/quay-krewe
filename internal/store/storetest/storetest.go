@@ -1850,6 +1850,7 @@ func RunConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 	runPathConformance(t, newDataset)
 	runTakeConformance(t, newDataset)
 	runRestatementConformance(t, newDataset)
+	runProofResultConformance(t, newDataset)
 	runFeatureConformance(t, newDataset)
 }
 
@@ -4550,6 +4551,255 @@ func runRestatementConformance(t *testing.T, newDataset func(t *testing.T) Opene
 	})
 }
 
+// What krewe's own run of a step's scenario reported. The store keeps the four columns together and
+// judges nothing: which run passes is the control plane's rule, and a second judgement here would be
+// a second place for it to drift.
+func runProofResultConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
+	t.Helper()
+
+	// The word every step is born with, out of both stores. A step left at the empty string in one of
+	// them would read as a fourth state to everything downstream.
+	t.Run("a step nobody checked is unproven and has run nothing", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		feature := newFeature(t, s, newProject(t, s, "acme", "house-bills"), "the bills")
+		writePath(t, s, feature.GetId(), store.Step{Number: 1, Title: "the first"})
+
+		read, err := s.GetStep(ctx, feature.GetId(), 1)
+		if err != nil {
+			t.Fatalf("GetStep: %v", err)
+		}
+		if got := read.GetProofState(); got != store.ProofUnproven {
+			t.Errorf("a step nobody checked reads %q, want %q", got, store.ProofUnproven)
+		}
+		if got := read.GetProofScenariosRun(); got != 0 {
+			t.Errorf("it reads %d scenarios run, and nothing ran", got)
+		}
+		if read.GetProofOutput() != "" {
+			t.Errorf("it reads back output %q, and nothing ran", read.GetProofOutput())
+		}
+		if read.GetProofRanAt() != nil {
+			t.Errorf("it carries a moment %v, and nothing ran", read.GetProofRanAt())
+		}
+	})
+
+	t.Run("a passing run reads back with its count, its output and its moment", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		feature := newFeature(t, s, newProject(t, s, "acme", "house-bills"), "the bills")
+		writePath(t, s, feature.GetId(), store.Step{Number: 1, Title: "the first"})
+
+		written, err := s.RecordProof(ctx, feature.GetId(), 1, store.ProofResult{
+			State: store.ProofPassing, ScenariosRun: 1, Output: "1 scenarios (1 passed)"})
+		if err != nil {
+			t.Fatalf("RecordProof: %v", err)
+		}
+		if got := written.GetProofState(); got != store.ProofPassing {
+			t.Errorf("the write answered %q, want %q", got, store.ProofPassing)
+		}
+		// Read again, because a write that answered well and stored nothing reads the same to its
+		// caller and to nobody else.
+		read, err := s.GetStep(ctx, feature.GetId(), 1)
+		if err != nil {
+			t.Fatalf("GetStep: %v", err)
+		}
+		if got := read.GetProofState(); got != store.ProofPassing {
+			t.Errorf("the step reads back %q, want %q", got, store.ProofPassing)
+		}
+		if got := read.GetProofScenariosRun(); got != 1 {
+			t.Errorf("it reads back %d scenarios run, want 1", got)
+		}
+		if got := read.GetProofOutput(); got != "1 scenarios (1 passed)" {
+			t.Errorf("it reads back the output %q", got)
+		}
+		if read.GetProofRanAt() == nil {
+			t.Error("it reads back with no moment, so nothing records that a run happened")
+		}
+	})
+
+	// A failing run is a record and not a gap. The moment is what the gate reads, so a step whose
+	// check failed can still be closed by somebody who disagrees with the verdict.
+	t.Run("a failing run reads back with its moment and its output", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		feature := newFeature(t, s, newProject(t, s, "acme", "house-bills"), "the bills")
+		writePath(t, s, feature.GetId(), store.Step{Number: 1, Title: "the first"})
+
+		written, err := s.RecordProof(ctx, feature.GetId(), 1, store.ProofResult{
+			State: store.ProofFailing, ScenariosRun: 0, Output: "0 scenarios (0 passed)"})
+		if err != nil {
+			t.Fatalf("RecordProof: %v", err)
+		}
+		if got := written.GetProofState(); got != store.ProofFailing {
+			t.Errorf("the write answered %q, want %q", got, store.ProofFailing)
+		}
+		if written.GetProofRanAt() == nil {
+			t.Error("a failing run carries no moment, so the gate reads it as a step nobody checked")
+		}
+		if got := written.GetProofOutput(); got != "0 scenarios (0 passed)" {
+			t.Errorf("the failing run reads back the output %q", got)
+		}
+	})
+
+	// A second run is the record, whole. A store that kept the passing count beside a failing verdict
+	// would put a step in a state no run ever reported.
+	t.Run("a second run replaces the whole record", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		feature := newFeature(t, s, newProject(t, s, "acme", "house-bills"), "the bills")
+		writePath(t, s, feature.GetId(), store.Step{Number: 1, Title: "the first"})
+
+		if _, err := s.RecordProof(ctx, feature.GetId(), 1, store.ProofResult{
+			State: store.ProofPassing, ScenariosRun: 3, Output: "3 scenarios (3 passed)"}); err != nil {
+			t.Fatalf("RecordProof: %v", err)
+		}
+		written, err := s.RecordProof(ctx, feature.GetId(), 1, store.ProofResult{
+			State: store.ProofFailing, ScenariosRun: 0, Output: "0 scenarios"})
+		if err != nil {
+			t.Fatalf("RecordProof again: %v", err)
+		}
+		if got := written.GetProofScenariosRun(); got != 0 {
+			t.Errorf("the second run reads back %d scenarios, want the 0 it reported", got)
+		}
+		if got := written.GetProofOutput(); got != "0 scenarios" {
+			t.Errorf("the second run reads back the output %q", got)
+		}
+	})
+
+	// The end of a long run is what a person reads, because the reason it failed is at the end of it.
+	// The line above says what is missing, so nobody reads a cut output as the whole of it.
+	t.Run("a run of 12,000 characters keeps its last 4,000 and says how much was cut", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		feature := newFeature(t, s, newProject(t, s, "acme", "house-bills"), "the bills")
+		writePath(t, s, feature.GetId(), store.Step{Number: 1, Title: "the first"})
+
+		// One letter repeated, with the end written last, so a store that kept the front rather than
+		// the end fails here rather than passing on a length that matched.
+		long := strings.Repeat("a", 12_000-len("the end")) + "the end"
+		written, err := s.RecordProof(ctx, feature.GetId(), 1, store.ProofResult{
+			State: store.ProofFailing, Output: long})
+		if err != nil {
+			t.Fatalf("RecordProof: %v", err)
+		}
+		kept := written.GetProofOutput()
+		first, rest, found := strings.Cut(kept, "\n")
+		if !found {
+			t.Fatalf("the output carries no line above it: %q", kept)
+		}
+		if len(rest) != store.ProofOutputKept {
+			t.Errorf("the output keeps %d characters of the run, want %d", len(rest), store.ProofOutputKept)
+		}
+		if !strings.HasSuffix(rest, "the end") {
+			t.Error("the output kept the front of the run rather than the end of it")
+		}
+		if !strings.Contains(first, "8000") {
+			t.Errorf("the first line reads %q, and 8000 characters were cut", first)
+		}
+		// And out of the store as well as out of the write, because the trim is the record and not
+		// the answer to one call.
+		read, err := s.GetStep(ctx, feature.GetId(), 1)
+		if err != nil {
+			t.Fatalf("GetStep: %v", err)
+		}
+		if read.GetProofOutput() != kept {
+			t.Errorf("the step reads back %d characters, and the write answered %d",
+				len(read.GetProofOutput()), len(kept))
+		}
+	})
+
+	t.Run("a run that fits is kept whole", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		feature := newFeature(t, s, newProject(t, s, "acme", "house-bills"), "the bills")
+		writePath(t, s, feature.GetId(), store.Step{Number: 1, Title: "the first"})
+
+		exact := strings.Repeat("b", store.ProofOutputKept)
+		written, err := s.RecordProof(ctx, feature.GetId(), 1, store.ProofResult{
+			State: store.ProofPassing, ScenariosRun: 1, Output: exact})
+		if err != nil {
+			t.Fatalf("RecordProof: %v", err)
+		}
+		if written.GetProofOutput() != exact {
+			t.Errorf("a run of exactly %d characters reads back %d, and nothing was cut",
+				store.ProofOutputKept, len(written.GetProofOutput()))
+		}
+	})
+
+	// What a session understood and what a run reported are two records. A check that cleared the
+	// approval would send the operator to agree to the same text again after every failing run.
+	t.Run("recording a run leaves the restatement and its approval where they are", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		feature := newFeature(t, s, newProject(t, s, "acme", "house-bills"), "the bills")
+		writePath(t, s, feature.GetId(), store.Step{Number: 1, Title: "the first"})
+		if _, err := s.SetRestatement(ctx, feature.GetId(), 1, "what I understood"); err != nil {
+			t.Fatalf("SetRestatement: %v", err)
+		}
+		if _, err := s.ApproveRestatement(ctx, feature.GetId(), 1); err != nil {
+			t.Fatalf("ApproveRestatement: %v", err)
+		}
+
+		written, err := s.RecordProof(ctx, feature.GetId(), 1, store.ProofResult{
+			State: store.ProofFailing, Output: "0 scenarios"})
+		if err != nil {
+			t.Fatalf("RecordProof: %v", err)
+		}
+		if written.GetRestatement() != "what I understood" {
+			t.Errorf("the run left the restatement reading %q", written.GetRestatement())
+		}
+		if !written.GetRestatementApproved() {
+			t.Error("the run cleared the operator's word on the restatement")
+		}
+	})
+
+	// A path written again keeps what the system owns, and a verdict is the system's. An operator who
+	// fixes a typo in a step title has not unproved the step.
+	t.Run("writing the path again keeps what the last run reported", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		feature := newFeature(t, s, newProject(t, s, "acme", "house-bills"), "the bills")
+		writePath(t, s, feature.GetId(), store.Step{Number: 1, Title: "the first"})
+		if _, err := s.RecordProof(ctx, feature.GetId(), 1, store.ProofResult{
+			State: store.ProofPassing, ScenariosRun: 2, Output: "2 scenarios (2 passed)"}); err != nil {
+			t.Fatalf("RecordProof: %v", err)
+		}
+
+		writePath(t, s, feature.GetId(), store.Step{Number: 1, Title: "the first, spelled right"})
+		read, err := s.GetStep(ctx, feature.GetId(), 1)
+		if err != nil {
+			t.Fatalf("GetStep: %v", err)
+		}
+		if got := read.GetProofState(); got != store.ProofPassing {
+			t.Errorf("the step reads %q after the path was written again", got)
+		}
+		if got := read.GetProofScenariosRun(); got != 2 {
+			t.Errorf("it reads %d scenarios run, want the 2 the run reported", got)
+		}
+		if read.GetProofRanAt() == nil {
+			t.Error("the path write took the moment the run happened with it")
+		}
+	})
+
+	// A feature nobody made and a number nobody wrote answer the same way, so a caller that typed a
+	// number the path does not hold is told that rather than told a run was recorded.
+	t.Run("recording a run against a step nothing holds is not found", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		feature := newFeature(t, s, newProject(t, s, "acme", "house-bills"), "the bills")
+		writePath(t, s, feature.GetId(), store.Step{Number: 1, Title: "the first"})
+
+		result := store.ProofResult{State: store.ProofPassing, ScenariosRun: 1}
+		if _, err := s.RecordProof(ctx, feature.GetId(), 7, result); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("recording against a step nobody wrote answered %v, want ErrNotFound", err)
+		}
+		if _, err := s.RecordProof(ctx, "no-such-feature", 1, result); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("recording against a missing feature answered %v, want ErrNotFound", err)
+		}
+	})
+}
+
+// runFeatureConformance holds both stores to the same answers about the narrowed parts of a project.
 // runFeatureConformance holds both stores to the same answers about the narrowed parts of a project.
 func runFeatureConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 	t.Helper()

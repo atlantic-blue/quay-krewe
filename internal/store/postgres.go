@@ -931,7 +931,8 @@ func (p *Postgres) SetProofCommand(ctx context.Context, project string, settings
 const stepColumns = `s.feature, s.number, s.title, s.intention, s.touches, s.proof, ` +
 	`s.proof_scenario, s.after, s.milestone, s.contracts, s.contract_scope, ` +
 	`s.state, s.session, s.result, s.closed_by, s.taken_at, s.finished_at, ` +
-	`s.restatement, s.restated_at, s.restatement_approved, s.restatement_approved_at`
+	`s.restatement, s.restated_at, s.restatement_approved, s.restatement_approved_at, ` +
+	`s.proof_state, s.proof_scenarios_run, s.proof_output, s.proof_ran_at`
 
 // stepJoins is the join every path read goes through: a step to its feature, that feature to its
 // project, and that project to its workspace.
@@ -949,16 +950,17 @@ func scanStep(row pgx.Row) (*quaycrewv1.Step, error) {
 		feature, title, intention, touches, proof string
 		scenario, state, session, result          string
 		contracts, contractScope, closedBy        string
-		restatement                               string
-		number, after, milestone                  int32
+		restatement, proofState, proofOutput      string
+		number, after, milestone, scenariosRun    int32
 		approved                                  bool
 		takenAt, finishedAt                       *time.Time
-		restatedAt, approvedAt                    *time.Time
+		restatedAt, approvedAt, proofRanAt        *time.Time
 	)
 	if err := row.Scan(&feature, &number, &title, &intention, &touches, &proof,
 		&scenario, &after, &milestone, &contracts, &contractScope,
 		&state, &session, &result, &closedBy, &takenAt, &finishedAt,
-		&restatement, &restatedAt, &approved, &approvedAt); err != nil {
+		&restatement, &restatedAt, &approved, &approvedAt,
+		&proofState, &scenariosRun, &proofOutput, &proofRanAt); err != nil {
 		return nil, err
 	}
 	step := &quaycrewv1.Step{
@@ -980,6 +982,10 @@ func scanStep(row pgx.Row) (*quaycrewv1.Step, error) {
 
 		Restatement:         restatement,
 		RestatementApproved: approved,
+
+		ProofState:        proofState,
+		ProofScenariosRun: scenariosRun,
+		ProofOutput:       proofOutput,
 	}
 	if takenAt != nil {
 		step.TakenAt = timestamppb.New(*takenAt)
@@ -992,6 +998,9 @@ func scanStep(row pgx.Row) (*quaycrewv1.Step, error) {
 	}
 	if approvedAt != nil {
 		step.RestatementApprovedAt = timestamppb.New(*approvedAt)
+	}
+	if proofRanAt != nil {
+		step.ProofRanAt = timestamppb.New(*proofRanAt)
 	}
 	return step, nil
 }
@@ -1448,6 +1457,38 @@ func (p *Postgres) ApproveRestatement(ctx context.Context, feature string, numbe
 	}
 	if err != nil {
 		return nil, fmt.Errorf("approve the restatement: %w", err)
+	}
+	return step, nil
+}
+
+// RecordProof records what one run of the step's scenario reported.
+//
+// The four columns are written in one statement, whatever the run said, and the moment is stamped
+// beside them. A run that failed is a record: the gate that refuses a finish before anybody read a
+// verdict asks whether a run happened, not whether it passed.
+//
+// The output is trimmed through the function the memory store also calls, rather than in the
+// statement, so a long run reads back the same out of either store.
+//
+// Nothing about the restatement moves. What a session understood and what a run reported are two
+// records, and a second check written over the first would take the operator's word with it.
+func (p *Postgres) RecordProof(ctx context.Context, feature string, number int32, result ProofResult) (
+	*quaycrewv1.Step, error) {
+	if err := p.featureExists(ctx, feature); err != nil {
+		return nil, err
+	}
+	step, err := scanStep(p.pool.QueryRow(ctx, `
+		update feature_steps s
+		set proof_state = $3, proof_scenarios_run = $4, proof_output = $5,
+			proof_ran_at = now(), updated_at = now()
+		where s.feature = $1 and s.number = $2
+		returning `+stepColumns,
+		feature, number, result.State, result.ScenariosRun, KeptProofOutput(result.Output)))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("record the proof: %w", err)
 	}
 	return step, nil
 }

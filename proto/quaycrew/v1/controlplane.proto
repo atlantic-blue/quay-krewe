@@ -742,17 +742,36 @@ message Step {
   bool restatement_approved = 16;
   // restatement_approved_at is when that word was spoken, unset while restatement_approved is false.
   google.protobuf.Timestamp restatement_approved_at = 17;
+  // proof_state is what krewe's own run of the scenario last reported: unproven, passing or failing.
+  // A step nobody checked is unproven, and that is what every step is born as.
+  //
+  // It is passing only where the run exited zero, the pattern matched, and the count is above zero.
+  // Krewe judges nothing else: whether the scenario describes the value the step promised is what the
+  // operator judges when the operator approves the design.
+  string proof_state = 18;
+  // proof_scenarios_run is how many scenarios the last run reported, read out of its output with the
+  // project's own pattern. Zero means nothing ran, and zero never passes: a name filter that matches
+  // nothing prints success in most runners.
+  int32 proof_scenarios_run = 19;
+  // proof_output is the last 4,000 characters of the last run, with one line above them saying how
+  // much was cut when it was cut.
+  //
+  // It is data and never code. It carries whatever the run printed, and nothing executes it and
+  // nothing renders it into a memory file.
+  string proof_output = 20;
+  // proof_ran_at is when krewe last ran the scenario, unset until it runs one. It says a step was
+  // checked at all, which is a different thing from a step whose check failed.
+  google.protobuf.Timestamp proof_ran_at = 21;
   // closed_by is who spoke the word that finished the step: operator, or krewe. It is empty while the
   // step is ready or taken.
   //
-  // The number is 22 rather than 18 because the fields between them belong to the proof result,
-  // which reaches the wire later.
+  // The number is 22 rather than 18 because 18 to 21 belong to the proof result.
   string closed_by = 22;
   // milestone is which milestone of the feature this step belongs to. Zero means the step belongs to
   // no milestone, and zero is never a milestone row.
   //
-  // The number is 24 rather than 18 because the fields between them belong to the proof result,
-  // which reaches the wire later.
+  // The number is 24 rather than 18 because 18 to 21 belong to the proof result, and 22 and 23 to
+  // the words that close a step.
   int32 milestone = 24;
   // contracts is the contracts this step builds, one identifier per line. It is empty for a step
   // that names none, and krewe then hands that step no contract.
@@ -852,6 +871,31 @@ message TakeStepResponse {
   // is the count the write made rather than one read a moment later.
   int32 in_flight = 5;
   int32 steps_in_flight_cap = 6;
+}
+
+// CheckStepRequest asks krewe to run the scenario this step promised, inside the sandbox of the
+// session that holds it.
+//
+// The step is addressed by its feature and its number, the way every other step call is. The design
+// document addresses it by the project, and that sentence is older than the level the path moved to.
+message CheckStepRequest {
+  string feature = 1;
+  int32 number = 2;
+}
+// CheckStepResponse is the step after the run, the project's design, and whether krewe closed the
+// step itself.
+//
+// A failing run is not an error. It is a verdict, and it comes back here with the count and the last
+// of the output on the step, because a caller prints a verdict rather than a refusal.
+//
+// closed_by_krewe is false until the trust ladder exists. The warnings say what the operator has to
+// know about the answer: today there are none, and the reclaimed session that krewe started a
+// container for is what they carry first.
+message CheckStepResponse {
+  Step step = 1;
+  Design design = 2;
+  bool closed_by_krewe = 3;
+  repeated string warnings = 4;
 }
 
 // ApproveRestatementRequest is the operator's word on what the session wrote about a step.
@@ -1585,6 +1629,17 @@ service ControlPlaneService {
   // The driver is refused it. A session that could set the command that proves its own work would
   // choose what proves it, and the check would stop being a check.
   rpc SetProofCommand(SetProofCommandRequest) returns (SetProofCommandResponse);
+
+  // Running the scenario the step promised, inside the sandbox of the session that holds it, and
+  // recording what it reported.
+  //
+  // No model starts and no token is spent: it is an exec in a container that already exists. The
+  // verdict is passing only where the run exited zero, the pattern matched, and the count is above
+  // zero, because a name filter that matches nothing prints success in most runners.
+  //
+  // The driver may call it. Running the check grants nothing and writes no approval, so a session
+  // that runs its own check has proved nothing about itself that the operator cannot read.
+  rpc CheckStep(CheckStepRequest) returns (CheckStepResponse);
 
   // Recording what came of a step: done, or stopped, and what somebody wrote about it. It touches no
   // session, because the step and the session that took it are separate records.

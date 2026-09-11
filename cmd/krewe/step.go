@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	quaycrewv1 "github.com/atlantic-blue/quay-krewe/gen/quaycrew/v1"
+	"github.com/atlantic-blue/quay-krewe/internal/display"
 	"github.com/atlantic-blue/quay-krewe/internal/workspace"
 )
 
@@ -19,6 +20,7 @@ import (
 const stepUsage = "usage: krewe step take [<address>] <feature>.<number>" +
 	"\n       krewe step restatement [<address>] <feature>.<number>" +
 	"\n       krewe step approve [<address>] <feature>.<number>" +
+	"\n       krewe step check [<address>] <feature>.<number>" +
 	"\n       krewe step done [<address>] <feature>.<number> \"<result>\"" +
 	"\n       krewe step stop [<address>] <feature>.<number> \"<reason>\""
 
@@ -31,6 +33,9 @@ func runStep(ctx context.Context, client quaycrewv1.ControlPlaneServiceClient, a
 	}
 	if len(args) > 0 && args[0] == "approve" {
 		return runStepApprove(ctx, client, args[1:], out)
+	}
+	if len(args) > 0 && args[0] == "check" {
+		return runStepCheck(ctx, client, args[1:], out)
 	}
 	if len(args) > 0 && (args[0] == "done" || args[0] == "stop") {
 		return runStepFinish(ctx, client, args[0], args[1:], out)
@@ -186,6 +191,90 @@ func runStepApprove(ctx context.Context, client quaycrewv1.ControlPlaneServiceCl
 	return nil
 }
 
+// runStepCheck runs the scenario the step promised and prints what the run reported.
+//
+// It prints the command before it waits, so the operator reads what runs rather than watching a
+// command they cannot see. The line is composed here from the step and the design, the way krewe
+// design proof already composes one, because a template is not what runs.
+//
+// A failing verdict is printed and not refused: the run happened and it said something, and the
+// operator reads the count and the end of the output. The command still exits non zero, so a script
+// reads the verdict without parsing the page.
+//
+// It waits for the run. A proof run takes as long as the project's suite takes, and this says so
+// while it waits.
+func runStepCheck(ctx context.Context, client quaycrewv1.ControlPlaneServiceClient, args []string, out io.Writer) error {
+	if len(args) == 0 || len(args) > 2 {
+		return fmt.Errorf("usage: krewe step check [<address>] <feature>.<number>")
+	}
+	typed, said := "", args[0]
+	if len(args) == 2 {
+		typed, said = args[0], args[1]
+	}
+	located, err := designProject(ctx, client, typed)
+	if err != nil {
+		return err
+	}
+	features, err := featuresOf(ctx, client, located.ProjectID)
+	if err != nil {
+		return err
+	}
+	held, number, err := stepAddressed(said, features, located.Path.Project)
+	if err != nil {
+		return err
+	}
+	sayWhatWillRun(ctx, client, located.ProjectID, held.GetId(), number, out)
+
+	resp, err := client.CheckStep(ctx, &quaycrewv1.CheckStepRequest{Feature: held.GetId(), Number: number})
+	if err != nil {
+		return fmt.Errorf("%w\n\nnothing was run and nothing was recorded", err)
+	}
+	step := resp.GetStep()
+	fmt.Fprintf(out, "\nstep %d.%d of %s: %s\n",
+		held.GetNumber(), step.GetNumber(), located.Path.Project, step.GetTitle())
+	fmt.Fprintf(out, "verdict: %s, %s ran\n", step.GetProofState(), display.Scenarios(step.GetProofScenariosRun()))
+	sayWarnings(out, resp.GetWarnings())
+	if output := strings.TrimRight(step.GetProofOutput(), "\n"); output != "" {
+		fmt.Fprintf(out, "\n%s\n", output)
+	}
+	if step.GetProofState() != proofPassing {
+		// The reason is on the screen above this line, so nothing prints it again underneath. What is
+		// left to say is the exit status, which is what a script reads.
+		return fmt.Errorf("%w: step %d.%d did not pass", ErrSaid, held.GetNumber(), step.GetNumber())
+	}
+	return nil
+}
+
+// proofPassing is the one verdict that is not a failure. The word is the control plane's and it is
+// read off the wire, so it is named here rather than compared inline.
+const proofPassing = "passing"
+
+// sayWhatWillRun prints the command this check is about to run, with the step's own scenario name
+// where the token is.
+//
+// It says nothing where there is nothing to compose: a step that names no scenario, or a project with
+// no proof command, is refused by the call underneath and the refusal says what to do about it. So
+// this holds no gate of its own, and a rule it repeated would be a second place for the rule to live.
+//
+// Nothing here fails the check. A read that fails leaves the operator without the line and with the
+// verdict, which is the answer they typed the command for.
+func sayWhatWillRun(ctx context.Context, client quaycrewv1.ControlPlaneServiceClient,
+	project, feature string, number int32, out io.Writer) {
+	design, err := client.GetDesign(ctx, &quaycrewv1.GetDesignRequest{Project: project})
+	if err != nil {
+		return
+	}
+	command := design.GetDesign().GetProofCommand()
+	read, err := client.GetStep(ctx, &quaycrewv1.GetStepRequest{Feature: feature, Number: number})
+	if err != nil || command == "" || read.GetStep().GetProofScenario() == "" {
+		return
+	}
+	fmt.Fprintf(out, "the check runs:\n  %s\n",
+		strings.ReplaceAll(command, scenarioToken, read.GetStep().GetProofScenario()))
+	fmt.Fprintf(out, "\nthis waits for the run, and starts no model\n")
+}
+
+// whenItWasWritten is how a moment prints here, and it is the one krewe design already prints an
 // whenItWasWritten is how a moment prints here, and it is the one krewe design already prints an
 // approval at: the operator reads the two on one screen.
 const whenItWasWritten = "2006-01-02 15:04"
