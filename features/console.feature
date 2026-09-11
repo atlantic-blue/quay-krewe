@@ -409,3 +409,26 @@ Feature: The operator sees the system from the console
       | exec    |
       | execs   |
       | history |
+
+  # The path of a project, read where the operator already stands. Until now the answer to "what is
+  # left, and what is waiting on me" was a command line away.
+  Scenario: The path of a project opens by name
+    Given the project's path is:
+      """
+      ## 1. The store holds a project's brief
+      ## 2. The design reaches the session
+      ## 3. The riskiest assumption is measured
+      """
+    When the operator opens the console on the project's path
+    Then the console lists 3 steps
+
+  # The letters p and s open projects and sessions, so this view is reached by a word rather than by
+  # a letter, and both spellings land on it.
+  Scenario: The word steps opens the same view
+    Given the project's path is:
+      """
+      ## 1. The store holds a project's brief
+      """
+    When the operator opens the console by typing "steps"
+    Then the console is showing the path
+    And the console lists 1 step
