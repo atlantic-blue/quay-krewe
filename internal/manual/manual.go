@@ -258,7 +258,10 @@ commands:
                                           passes only where the run exits zero and reports a scenario
                                           above zero, because a name filter that matches nothing
                                           prints success in most runners. A failing verdict is
-                                          printed rather than refused, and the command exits non zero
+                                          printed rather than refused, and the command exits non
+                                          zero. At trust level 1 a run that passed also closes the
+                                          step, and the output says krewe closed it. A run that
+                                          failed closes nothing, at any level
   step done [<address>]                   record what came of a step, and close it. The result is
     <feature>.<number> "<result>"         required: nothing can see inside a container, so what you
                                           write is what the next session reads. It refuses until
