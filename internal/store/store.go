@@ -112,6 +112,17 @@ var ErrStepsTouchTheSameFile = errors.New("store: a step in flight already write
 // text nobody read.
 var ErrNothingRestated = errors.New("store: there is no restatement to approve")
 
+// ErrRestatementNotApproved says nobody approved what the session wrote about this step, so the check
+// refuses: a step whose restatement carries no approval has built nothing yet.
+var ErrRestatementNotApproved = errors.New("store: nobody approved this step's restatement")
+
+// ErrNoScenarioNamed says the step names no scenario, so there is nothing for krewe to run.
+var ErrNoScenarioNamed = errors.New("store: this step names no scenario")
+
+// ErrNoProofCommand says the project carries no proof command, so krewe has nothing to run a scenario
+// with.
+var ErrNoProofCommand = errors.New("store: this project has no proof command")
+
 // DefaultStepsInFlightCap is how many steps a project nobody configured may hold in state taken at
 // one time. It is the default of the column, repeated here for the stores to answer with when a
 // project carries no design row at all.
@@ -147,6 +158,48 @@ type ProofSettings struct {
 	Command        string
 	CountPattern   string
 	TimeoutSeconds int32
+}
+
+// The three words a step's proof state is one of. A step nobody checked is unproven, which is what
+// every step is born as, and the other two are what a run reported.
+//
+// They are named here because the store writes them and four other places read them, and a word one
+// of those spelled for itself would read as a step that never passed anything.
+const (
+	ProofUnproven = "unproven"
+	ProofPassing  = "passing"
+	ProofFailing  = "failing"
+)
+
+// ProofOutputKept is how much of a run's output a step keeps: the last 4,000 characters, because the
+// reason a run failed is at the end of it. A run that printed more carries one line above them saying
+// how much was dropped, so nobody reads a cut output as the whole of it.
+const ProofOutputKept = 4_000
+
+// ProofResult is what one run of the scenario reported: the verdict, how many scenarios ran, and what
+// the run printed.
+//
+// The store keeps what it is given. Which run passes is the control plane's rule, and a second
+// judgement here would be a second place for it to drift.
+type ProofResult struct {
+	State        string
+	ScenariosRun int32
+	Output       string
+}
+
+// KeptProofOutput is the output as a step keeps it: whole while it fits, and otherwise the last
+// ProofOutputKept characters under one line saying how many came before them.
+//
+// Both stores call it, so the two cannot disagree about what a long run reads back as. The line is
+// above the output rather than below it, because a reader who stops after one line has to learn that
+// what follows is the end of a run and not the whole of it.
+func KeptProofOutput(output string) string {
+	if len(output) <= ProofOutputKept {
+		return output
+	}
+	cut := len(output) - ProofOutputKept
+	return fmt.Sprintf("[the first %d characters of this run were cut, the last %d are kept]\n%s",
+		cut, ProofOutputKept, output[cut:])
 }
 
 // StepInFlight is one step in state taken, and the feature it sits in. The feature travels with it
@@ -311,8 +364,8 @@ func protectedSteps(held []*quaycrewv1.Step, incoming []Step) []ProtectedStep {
 }
 
 // keepTheRecord carries what the system owns from the step as it stands onto the step the document
-// declares: the state, the session that took it, the result, who closed it, the stamps and what the
-// session restated.
+// declares: the state, the session that took it, the result, who closed it, the stamps, what the
+// session restated and what the last run of its scenario reported.
 //
 // The document is what a caller may set, and none of these are on it. A write that took them from
 // the document would let somebody declare work that never happened, and one that left them behind
@@ -328,6 +381,10 @@ func keepTheRecord(writing, held *quaycrewv1.Step) {
 	writing.RestatedAt = held.GetRestatedAt()
 	writing.RestatementApproved = held.GetRestatementApproved()
 	writing.RestatementApprovedAt = held.GetRestatementApprovedAt()
+	writing.ProofState = held.GetProofState()
+	writing.ProofScenariosRun = held.GetProofScenariosRun()
+	writing.ProofOutput = held.GetProofOutput()
+	writing.ProofRanAt = held.GetProofRanAt()
 }
 
 // Step is what a caller may set about one step of a path.
@@ -726,6 +783,20 @@ type Store interface {
 	// Approving one that is already approved is allowed, and it moves the stamp. Nothing about the
 	// proof columns moves: what a session understood and what a run reported are two records.
 	ApproveRestatement(ctx context.Context, feature string, number int32) (*quaycrewv1.Step, error)
+	// RecordProof records what one run of the step's scenario reported, and returns the step after
+	// the write. A feature that does not exist and a path that holds no step of that number are both
+	// ErrNotFound.
+	//
+	// The four proof columns are written together, whatever the result. A failing run is a record and
+	// not a gap, and the moment is stamped on a failing run too, so the gate that refuses a finish
+	// before anybody read a verdict opens either way.
+	//
+	// The output is kept as KeptProofOutput keeps it: whole while it fits, and otherwise the last
+	// characters under a line saying how many came before them.
+	//
+	// The state written is the one the caller computed. The store judges nothing about a run, and a
+	// second judgement here would be a second place for the rule to drift.
+	RecordProof(ctx context.Context, feature string, number int32, result ProofResult) (*quaycrewv1.Step, error)
 
 	// ListFeatures returns a project's features in number order, or every project's when the
 	// identifier is empty, ordered by project and then by number. A project with no feature is an

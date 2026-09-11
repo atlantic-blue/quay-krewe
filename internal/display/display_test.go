@@ -67,3 +67,21 @@ func TestLooksLikeIdentifier(t *testing.T) {
 		}
 	}
 }
+
+// A count reads as a record rather than as something generated, so one scenario is one scenario. The
+// path document and the command line both print this, which is why it is one function.
+func TestScenariosReadsInTheSingularForOne(t *testing.T) {
+	for _, one := range []struct {
+		count int32
+		want  string
+	}{
+		{0, "0 scenarios"},
+		{1, "1 scenario"},
+		{2, "2 scenarios"},
+		{940, "940 scenarios"},
+	} {
+		if got := Scenarios(one.count); got != one.want {
+			t.Errorf("a run of %d reads %q, want %q", one.count, got, one.want)
+		}
+	}
+}

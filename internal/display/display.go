@@ -2,6 +2,8 @@
 // command line tool shorten and label things the same way.
 package display
 
+import "fmt"
+
 // shortIDLength is eight hex characters of a twelve byte identifier: four billion values, and a row
 // that reads as a row rather than a wall of hex. Actions use the full value.
 const shortIDLength = 8
@@ -46,4 +48,17 @@ func Name(name, id string) string {
 		return "-"
 	}
 	return ShortID(id)
+}
+
+// Scenarios is how many scenarios a run reported, as a line says it, in the singular where it
+// reported one.
+//
+// It is here rather than in either caller because the path document a session reads and the verdict
+// the command line prints say the same thing, and a reader who finds "1 scenarios" under a step reads
+// the whole line as generated rather than as a record.
+func Scenarios(count int32) string {
+	if count == 1 {
+		return "1 scenario"
+	}
+	return fmt.Sprintf("%d scenarios", count)
 }
