@@ -19,8 +19,9 @@ Feature: Krewe puts its own slash commands in the operator's terminal
   words takes an address: the files belong to the machine rather than to a project.
 
   These scenarios run the real tool in its own process, against a command directory of their own, so
-  what is proved is what an operator gets. What each file has to say for itself, and that every verb
-  a file names is a verb the tool has, are read over the whole embedded set in internal/commands.
+  what is proved is what an operator gets. The rules that hold over every file, and that every verb a
+  file names is a verb the tool has, are read over the whole embedded set in internal/commands. What
+  one command says for itself is read here, out of the file the install put on the machine.
 
   Background:
     Given a running control plane
@@ -119,3 +120,45 @@ Feature: Krewe puts its own slash commands in the operator's terminal
     Then the command fails
     And standard error says "the operator's to make"
     And nothing at all was written into that directory
+
+  # /krewe:design is the command that carries the design conversation, and it is the one where
+  # writing the design in the operator's own terminal would look like helpfulness. It is the wrong
+  # place: a design written there has no sandbox, no record of what was read, and no session to
+  # answer for it afterwards. So the file is read for the two shapes that would break the rule.
+  Scenario: The design command writes no design body and no path
+    When the operator installs the slash commands
+    Then the command succeeds
+    And the installed command "design" runs no command that writes a design or a path
+    And the installed command "design" carries no design document of its own
+
+  Scenario: The design command ships with the set, and carries the marker and one description
+    When the operator installs the slash commands
+    Then the command succeeds
+    And the installed command "design" carries the marker of this build
+    And the installed command "design" describes itself in one line
+
+  # The order the commands are met in, which is not the order a directory read gives back.
+  Scenario: The listing names init first and design second
+    When the operator asks which slash commands this build carries
+    Then the command succeeds
+    And standard output names "/krewe:init" before "/krewe:design"
+
+  # The design work belongs to a session in a sandbox. The command makes sure that session holds the
+  # design skill, dispatches it, and then reads back what it wrote.
+  Scenario: The design command dispatches a session that holds the design skill
+    When the operator installs the slash commands
+    Then the command succeeds
+    And the installed command "design" names "krewe skill list"
+    And the installed command "design" names "krewe skill attach"
+    And the installed command "design" names "krewe exec --dispatch"
+    And the installed command "design" names "krewe sessions"
+    And the installed command "design" names "krewe design <workspace>/<project>"
+
+  # Approval is the operator's word. The yes sits beside the command that gives it, so taking the
+  # question out of that step is what this scenario reads.
+  Scenario: The design command asks for a yes before it approves
+    When the operator installs the slash commands
+    Then the command succeeds
+    And the installed command "design" names "krewe design approve"
+    And the installed command "design" asks for a yes where it runs "krewe design approve"
+    And the installed command "design" says a no leaves the design unapproved
