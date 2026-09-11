@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/atlantic-blue/quay-krewe/internal/sandbox"
 	"github.com/cucumber/godog"
 )
 
@@ -37,6 +38,10 @@ type toolWorld struct {
 	stderr   string
 	exitCode int
 	ran      bool
+	// env is what a scenario adds to the tool's own environment. A machine running this suite may
+	// itself be a session, so the session identifier is cleared for every run by default, and a
+	// scenario about what a session may do puts it back here.
+	env []string
 }
 
 func toolFrom(ctx context.Context) *toolWorld {
@@ -171,7 +176,11 @@ func runBinaryInHome(ctx context.Context, binary, home, in string, args ...strin
 		"QC_TOKEN="+worldFrom(ctx).token,
 		"KREWE_HOME="+home,
 		"HOME="+home,
+		// The operator, not a session. The machine running this suite may be a session itself, and a
+		// tool that read that identifier would answer a scenario as though the operator were one.
+		sandbox.SessionIDEnv+"=",
 	)
+	command.Env = append(command.Env, t.env...)
 	var out, said bytes.Buffer
 	command.Stdin = strings.NewReader(in)
 	command.Stdout, command.Stderr = &out, &said
