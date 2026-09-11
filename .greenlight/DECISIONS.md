@@ -613,3 +613,33 @@ recorded as stale.
   what is next through `ListSteps`, which is what prints the line today.
 - Nothing here forecloses those fields. They are added with the write that fills them, so no reader
   ever sees a field that is always zero.
+
+## Settled on 2026-09-11, building S-23, where a contract and the code disagreed
+
+Two entries. In each one the code on `main` wins and the sentence in the design document is recorded
+as stale.
+
+**`krewe step show` names a step as `<feature>.<number>`, never as a bare number.**
+- Status: settled, and the contract text is stale about a shape that moved before this slice.
+- COMMAND-16 writes the command as `krewe step show [<address>] <number>`. Every contract written
+  before the four level revision addresses a step that way.
+- A path belongs to a feature now, and step numbers restart in each feature, so a project and a
+  number name as many steps as the project has features. Every other step word reads the token
+  through `stepAddressed`, which refuses a bare number rather than guessing at one, and refuses it
+  even where the project holds exactly one feature.
+- So this word reads the same token. Its usage line, its manual entry and its refusal all say
+  `<feature>.<number>`, and a bare number is refused with the form and the project's open features.
+- This is the same disagreement S-20 recorded about `CheckStep` and S-22 recorded about
+  `FinishStep`. Nothing about what a person types changes.
+
+**The closer line is left out of the output, rather than printed with what the column holds today.**
+- Status: settled for this slice, and the line ships with the trust record in S-25.
+- COMMAND-16 ends its output with "the proof state, the count, the run time, who closed it, and the
+  result", and its third acceptance criterion reads "Showing a step krewe closed says krewe closed
+  it".
+- `closed_by` is on the step already and `FinishStep` writes `operator` into it, so a line reading
+  "closed by the operator" could print today. It would be half the cell: krewe closes no step until
+  the ladder ships, and the agreement beside it is what makes the word worth reading.
+- So the line is left out whole rather than printed as a word that can only ever say one thing. It
+  is the rule the blocks follow: a cell with nothing to say is left out with its label, and a reader
+  who learns that a line says nothing stops reading the lines that do.

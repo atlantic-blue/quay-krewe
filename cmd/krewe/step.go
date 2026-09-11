@@ -18,6 +18,7 @@ import (
 // prints what came back, so the console and the command line ask for the same words.
 
 const stepUsage = "usage: krewe step take [<address>] <feature>.<number>" +
+	"\n       krewe step show [<address>] <feature>.<number>" +
 	"\n       krewe step restatement [<address>] <feature>.<number>" +
 	"\n       krewe step approve [<address>] <feature>.<number>" +
 	"\n       krewe step check [<address>] <feature>.<number>" +
@@ -27,6 +28,9 @@ const stepUsage = "usage: krewe step take [<address>] <feature>.<number>" +
 func runStep(ctx context.Context, client quaycrewv1.ControlPlaneServiceClient, args []string, out io.Writer) error {
 	if len(args) > 0 && args[0] == "take" {
 		return runStepTake(ctx, client, args[1:], out)
+	}
+	if len(args) > 0 && args[0] == "show" {
+		return runStepShow(ctx, client, args[1:], out)
 	}
 	if len(args) > 0 && args[0] == "restatement" {
 		return runStepRestatement(ctx, client, args[1:], out)
@@ -91,6 +95,130 @@ func runStepTake(ctx context.Context, client quaycrewv1.ControlPlaneServiceClien
 	// landed between this call and that one.
 	fmt.Fprintf(out, "\n%d of %d steps in flight\n", resp.GetInFlight(), resp.GetStepsInFlightCap())
 	return nil
+}
+
+// runStepShow prints one step whole: what the operator wrote under it, where it stands, and what
+// krewe's last run of its scenario reported.
+//
+// It exists for what a row of krewe path cannot hold. That listing gives each step one line, and an
+// intention, a list of files and the end of a failed run do not fit on one.
+//
+// It records nothing of its own and it runs no scenario. The read underneath refreshes the
+// restatement from the session's own file, which is the read krewe step restatement already makes,
+// and the restatement is not printed here: that command prints it.
+func runStepShow(ctx context.Context, client quaycrewv1.ControlPlaneServiceClient, args []string, out io.Writer) error {
+	if len(args) == 0 || len(args) > 2 {
+		return fmt.Errorf("usage: krewe step show [<address>] <feature>.<number>")
+	}
+	typed, said := "", args[0]
+	if len(args) == 2 {
+		typed, said = args[0], args[1]
+	}
+	located, err := designProject(ctx, client, typed)
+	if err != nil {
+		return err
+	}
+	features, err := featuresOf(ctx, client, located.ProjectID)
+	if err != nil {
+		return err
+	}
+	held, number, err := stepAddressed(said, features, located.Path.Project)
+	if err != nil {
+		return err
+	}
+	// A number the path does not have is refused here, with how many steps the path has. The count is
+	// the control plane's, and it is what tells the operator whether they typed the wrong number or
+	// the wrong feature.
+	resp, err := client.GetStep(ctx, &quaycrewv1.GetStepRequest{Feature: held.GetId(), Number: number})
+	if err != nil {
+		return err
+	}
+	step := resp.GetStep()
+	fmt.Fprintf(out, "step %d.%d of %s: %s\n",
+		held.GetNumber(), step.GetNumber(), located.Path.Project, step.GetTitle())
+	for _, block := range whatTheStepSays(step) {
+		fmt.Fprintf(out, "\n%s\n%s\n", block.label, block.text)
+	}
+	fmt.Fprintf(out, "\nstate: %s\n", step.GetState())
+	if step.GetSession() != "" {
+		fmt.Fprintf(out, "session: %s\n", step.GetSession())
+	}
+	fmt.Fprintf(out, "%s\n", whatTheLastRunSaid(step))
+	// Under the proof line, so the operator reads why a check failed without running it again.
+	if output := strings.TrimRight(step.GetProofOutput(), "\n"); output != "" {
+		fmt.Fprintf(out, "\n%s\n", output)
+	}
+	if step.GetResult() != "" {
+		fmt.Fprintf(out, "\nresult: %s\n", step.GetResult())
+	}
+	return nil
+}
+
+// The labels a step block carries, which are the path document's own. A step reads back in the words
+// it was written in, so an operator comparing this output against the document they wrote finds the
+// same headings in the same order.
+const (
+	labelIntention = "What changes and why"
+	labelTouches   = "What this touches"
+	labelProof     = "What proves it"
+	labelScenario  = "The scenario that proves it"
+	labelAfter     = "After"
+)
+
+// stepBlock is one labelled block of a step, as the document writes it.
+type stepBlock struct {
+	label string
+	text  string
+}
+
+// whatTheStepSays is the blocks under this step, in the order the document writes them.
+//
+// A block with nothing in it is left out with its label, the way the path document a session reads
+// leaves one out: a label with nothing under it is a line the reader spends a look on to learn that
+// it says nothing.
+//
+// A step that waits for nobody carries a zero, and zero is nothing to wait for, so that block is left
+// out on the same rule rather than printed as the digit.
+func whatTheStepSays(step *quaycrewv1.Step) []stepBlock {
+	waitsFor := ""
+	if step.GetAfter() > 0 {
+		waitsFor = strconv.Itoa(int(step.GetAfter()))
+	}
+	blocks := make([]stepBlock, 0, 5)
+	for _, block := range []stepBlock{
+		{labelIntention, step.GetIntention()},
+		{labelTouches, step.GetTouches()},
+		{labelProof, step.GetProof()},
+		{labelScenario, step.GetProofScenario()},
+		{labelAfter, waitsFor},
+	} {
+		if block.text == "" {
+			continue
+		}
+		blocks = append(blocks, block)
+	}
+	return blocks
+}
+
+// whatTheLastRunSaid is the line under the state: the verdict krewe's own run of this step's scenario
+// reported, the count it read out of that run, and when it ran.
+//
+// A step nobody ran reads unproven, and that line is printed rather than left out. A path listing
+// leaves it out because a word repeated down a column says nothing, and one step on the screen is a
+// question about that step: whether anybody checked it is half of what was asked.
+func whatTheLastRunSaid(step *quaycrewv1.Step) string {
+	state := step.GetProofState()
+	if state == "" {
+		state = proofUnproven
+	}
+	if state == proofUnproven {
+		return "proof: " + proofUnproven
+	}
+	said := fmt.Sprintf("proof: %s, %s ran", state, display.Scenarios(step.GetProofScenariosRun()))
+	if ran := step.GetProofRanAt(); ran != nil {
+		said += " at " + ran.AsTime().Format(whenItWasWritten)
+	}
+	return said
 }
 
 // runStepRestatement prints what the session wrote about the step it holds.
@@ -249,11 +377,12 @@ func runStepCheck(ctx context.Context, client quaycrewv1.ControlPlaneServiceClie
 // reads as. The words are the control plane's and they are read off the wire, so they are named here
 // rather than compared inline.
 //
-// A step nobody checked reads as neither of them, which is why the two are separate words: unproven
-// is a step with no run on it, and that state is refused before it reaches this command.
+// A step nobody checked reads as proofUnproven, which is a different thing from a step whose run
+// said no. The check refuses that state before it reaches a verdict, and krewe step show prints it.
 const (
-	proofPassing = "passing"
-	proofFailing = "failing"
+	proofPassing  = "passing"
+	proofFailing  = "failing"
+	proofUnproven = "unproven"
 )
 
 // sayWhatWillRun prints the command this check is about to run, with the step's own scenario name

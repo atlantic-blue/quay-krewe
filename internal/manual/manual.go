@@ -224,6 +224,13 @@ commands:
                                           somebody already holds the step, and a refusal starts
                                           nothing. Several steps run at once, up to the project's
                                           cap, and the last line says how many are in flight
+  step show [<address>]                   one step whole: what changes and why, what it touches,
+    <feature>.<number>                    what proves it and the scenario name, then the state, the
+                                          session and what the last check reported. The end of a
+                                          failed run prints under the proof line, so you read why
+                                          it failed without running it again. A block the step
+                                          left empty is left out with its label. It records
+                                          nothing and it runs no check
   step restatement [<address>]            what the session wrote about the step it holds, before it
     <feature>.<number>                    builds anything: the six parts it was asked for, when it
                                           wrote them, and whether they are approved. It reads the

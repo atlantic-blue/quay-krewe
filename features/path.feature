@@ -3535,6 +3535,113 @@ Feature: A project holds a numbered path of steps
     When the operator stops step 1 with "the approach was wrong"
     Then step 1 is still stopped
 
+  # One step whole, which is what a row of the listing cannot hold. The listing gives each step one
+  # line, and an intention, a list of files and the end of a failed run do not fit on one, so the
+  # operator had nowhere to read them.
+  #
+  # It is a read. It records nothing, it runs no scenario, and it starts no model, so the operator
+  # reads a step as often as they want to.
+  #
+  # A block the step left empty is left out with its label, the way the path document a session reads
+  # leaves one out. A label with nothing under it is a line the reader spends a look on to learn that
+  # it says nothing.
+
+  Scenario: Showing a step prints its intention, its touches, its proof and its scenario whole
+    Given the system listens on an address the tool can dial
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+
+      What changes and why
+      The store keeps the brief, so a session reads it.
+
+      ## 2. The design reaches the session
+
+      What changes and why
+      A session opens the design in its own file.
+
+      What this touches
+      internal/sandbox/context.go
+
+      What proves it
+      The session reads the design back, whole.
+
+      The scenario that proves it
+      a design reaches the session
+
+      After
+      1
+      """
+    When the caller shows step "1.2"
+    Then standard output carries "step 1.2 of house-bills: The design reaches the session"
+    And standard output carries "What changes and why"
+    And standard output carries "A session opens the design in its own file."
+    And standard output carries "What this touches"
+    And standard output carries "internal/sandbox/context.go"
+    And standard output carries "What proves it"
+    And standard output carries "The session reads the design back, whole."
+    And standard output carries "The scenario that proves it"
+    And standard output carries "a design reaches the session"
+    And standard output carries "After"
+    And standard output carries "state: ready"
+    And standard output carries "proof: unproven"
+    And the command succeeds
+
+  # The end of the run is the reason it failed, so it prints under the proof line. Without it the
+  # operator runs the check again to read something krewe already holds.
+  Scenario: Showing a step that failed its check prints the last of the output
+    Given the system listens on an address the tool can dial
+    And a step taken, restated and approved, naming the scenario "a project carries a brief"
+    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the run answers "1 scenarios (0 passed, 1 failed)\nthe brief read back empty" and exits 1
+    And the operator checks step 1
+    When the caller shows step "1.1"
+    Then standard output carries "proof: failing, 1 scenario ran"
+    And standard output carries "the brief read back empty"
+    And the command succeeds
+
+  # A refusal reading only that nothing was found leaves the operator guessing whether they typed the
+  # wrong number or the wrong feature. The count answers both.
+  Scenario: Showing a number the path does not have is refused, saying how many steps there are
+    Given the system listens on an address the tool can dial
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+      ## 2. The store holds a project's design
+      """
+    When the caller shows step "1.5"
+    Then standard error says "no step 5"
+    And standard error says "it has 2 steps"
+    And the command fails
+
+  Scenario: Showing a step records nothing and runs no check
+    Given the system listens on an address the tool can dial
+    And a step taken, restated and approved, naming the scenario "a project carries a brief"
+    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    When the caller shows step "1.1"
+    And the caller shows step "1.1"
+    Then step 1 is still taken
+    And step 1 reads back as unproven
+    And step 1's restatement is still approved
+    And step 1 says its result is ""
+    And nothing was run
+    And the command succeeds
+
+  Scenario: A step with an empty block leaves that block out, with its label
+    Given the system listens on an address the tool can dial
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+
+      What changes and why
+      The store keeps the brief, so a session reads it.
+      """
+    When the caller shows step "1.1"
+    Then standard output carries "What changes and why"
+    And standard output does not carry "What this touches"
+    And standard output does not carry "The scenario that proves it"
+    And the command succeeds
+
   # A project delivers several features at the same time. A website runs an authentication feature
   # A project delivers several features at the same time. A website runs an authentication feature
   # and a payment feature at once: authentication ships sign up, then sign in, then reset, and

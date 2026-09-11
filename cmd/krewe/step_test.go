@@ -235,3 +235,116 @@ func containersMadeFor(provider *sandbox.FakeProvider, session string) int {
 	}
 	return made
 }
+
+// What `krewe step show` puts on the screen: the blocks the operator wrote, then where the step
+// stands, then what the last run said about it. The scenarios in features/path.feature drive the real
+// binary; this holds the order, which is what a reader scanning down the output depends on.
+
+// aStepToShow is a project holding a path of two steps, the second of which carries every block a
+// step can carry and waits for the first.
+//
+// Nothing takes it, so what prints is what the operator wrote plus where the step stands. That is the
+// state most of a path is in, and it is the one a listing says least about.
+func aStepToShow(t *testing.T) quaycrewv1.ControlPlaneServiceClient {
+	t.Helper()
+	held := store.NewMemory()
+	server := controlplane.NewServer(controlplane.Config{
+		Store: held, Runner: &model.FakeRunner{Reply: "ok"},
+		Provider: &sandbox.FakeProvider{}, Secrets: secrets.NewMemory(),
+	})
+	client := testClientFor(t, server)
+	mustRun(t, client, "workspace", "create", "acme")
+	mustRun(t, client, "project", "create", "house-bills")
+	mustRun(t, client, "feature", "add", "the bills")
+
+	path := filepath.Join(t.TempDir(), "path.md")
+	document := "## 1. The store holds a project's brief\n" +
+		"\n## 2. The design reaches the session\n" +
+		"\nWhat changes and why\nA session opens the design in its own file.\n" +
+		"\nWhat this touches\ninternal/sandbox/context.go\n" +
+		"\nWhat proves it\nThe session reads the design back, whole.\n" +
+		"\nThe scenario that proves it\na design reaches the session\n" +
+		"\nAfter\n1\n"
+	if err := os.WriteFile(path, []byte(document), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mustRun(t, client, "path", "set", "1", flagFile, path)
+	return client
+}
+
+// The blocks first, then where the step stands. What the step is for is what the operator opened this
+// for, and the state answers a smaller question, so a reader finds the intention above it.
+//
+// A step nobody took prints no session line. The line would carry nothing, and a label with nothing
+// under it is a line the reader spends a look on to learn that it says nothing.
+func TestShowPrintsTheBlocksAboveWhereTheStepStands(t *testing.T) {
+	client := aStepToShow(t)
+
+	printed := mustRun(t, client, "step", "show", "1.2")
+
+	for _, want := range []string{
+		"step 1.2 of house-bills: The design reaches the session",
+		"What changes and why\nA session opens the design in its own file.",
+		"What this touches\ninternal/sandbox/context.go",
+		"What proves it\nThe session reads the design back, whole.",
+		"The scenario that proves it\na design reaches the session",
+		"After\n1",
+		"state: ready",
+		"proof: unproven",
+	} {
+		if !strings.Contains(printed, want) {
+			t.Errorf("the show printed %q, want it to carry %q", printed, want)
+		}
+	}
+	if strings.Index(printed, "What changes and why") > strings.Index(printed, "state: ready") {
+		t.Errorf("the state is printed above the blocks: %q", printed)
+	}
+	if strings.Contains(printed, "session:") {
+		t.Errorf("a step nobody took printed a session line: %q", printed)
+	}
+}
+
+// The end of a failed run prints under the proof line, so the operator reads why the check said no
+// without running it again, and reads the verdict before the output rather than after it.
+func TestShowPrintsTheEndOfAFailedRunUnderTheProofLine(t *testing.T) {
+	client, _, _ := aStepToCheck(t, sandbox.Reply{
+		Match: "-run",
+		Out:   "1 scenarios (0 passed, 1 failed)\nthe brief read back empty",
+		Err:   errors.New("exit status 1"),
+	})
+	var checked bytes.Buffer
+	if err := run(context.Background(), client, []string{"step", "check", "1.1"}, &checked, ""); err == nil {
+		t.Fatal("the check reported success on a run that failed, so there is no verdict to show")
+	}
+
+	printed := mustRun(t, client, "step", "show", "1.1")
+
+	for _, want := range []string{
+		"proof: failing, 1 scenario ran at ",
+		"the brief read back empty",
+		"session: ",
+	} {
+		if !strings.Contains(printed, want) {
+			t.Errorf("the show printed %q, want it to carry %q", printed, want)
+		}
+	}
+	if strings.Index(printed, "proof: failing") > strings.Index(printed, "the brief read back empty") {
+		t.Errorf("the end of the run is printed above the proof line: %q", printed)
+	}
+}
+
+// The way off the old form, on this word too. A bare number was a whole step address before the path
+// belonged to a feature, and a command that guessed at one would be wrong the moment the project held
+// a second feature.
+func TestShowRefusesABareStepNumber(t *testing.T) {
+	client := aStepToShow(t)
+
+	var out bytes.Buffer
+	err := run(context.Background(), client, []string{"step", "show", "2"}, &out, "")
+	if err == nil {
+		t.Fatal("a bare step number was read as a step, so the operator was shown a step they did not name")
+	}
+	if !strings.Contains(err.Error(), "name a step as <feature>.<number>") {
+		t.Errorf("the refusal reads %v, want it to name the form", err)
+	}
+}
