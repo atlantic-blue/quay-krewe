@@ -643,3 +643,38 @@ as stale.
 - So the line is left out whole rather than printed as a word that can only ever say one thing. It
   is the rule the blocks follow: a cell with nothing to say is left out with its label, and a reader
   who learns that a line says nothing stops reading the lines that do.
+
+## Settled on 2026-09-11, building S-24, where a contract and the code disagreed
+
+Two entries. In each one the code on `main` wins and the sentence in the contract is recorded as
+stale.
+
+**A stopped step is taken again through `TakeStep`, so the state check lets two words through.**
+- Status: settled, and the contract text disagrees with itself.
+- STORE-0 writes "`ErrStepNotReady`: the step is not in state `ready`, so nobody can take it", and
+  STORE-8 lists the same error "when the step is not in state `ready`". `main` reads exactly that:
+  `TakeStep` refuses every state but `ready`.
+- STORE-8's own acceptance criteria then ask for "Taking a stopped step again leaves its proof state
+  at `unproven`", which that check makes unreachable. COMMAND-14 says both halves in one sentence: "A
+  stopped step is not ready. Taking it again starts it clean."
+- The design document settles it. Its rules read "Taking a step in state `taken` or `done` is
+  refused", naming two states and not three, and "Taking a step again after it was stopped sets
+  `proof_state` to 'unproven'".
+- So a take goes through from `ready` and from `stopped`, and is refused from `taken` and from
+  `done`. `store.TakeableStates` holds the two words in one place, because a state one store allowed
+  would let the same take pass in memory and refuse in Postgres.
+- Nothing else moves. A stopped step is still not what `krewe path` names as next: `nextStep` reads
+  `ready` alone, so retaking a stopped step stays a thing the operator types on purpose.
+
+**A step is addressed by its feature, so gate 2 reads `after` inside that feature.**
+- Status: settled, and the contract text is stale about a shape that moved before this slice.
+- STORE-8 writes the signature against a project, and WIRE-9 writes
+  `TakeStepRequest { string project = 1; int32 number = 2; }`. Every contract written before the four
+  level revision addresses a step that way. `main` takes the feature everywhere, and S-20 recorded the
+  same disagreement.
+- It matters more here than elsewhere, because one method now reads at two levels. The cap and the
+  file collision join the steps to the features on the project and read every feature of it. The
+  predecessor is keyed by this feature and the number `after` names, and joins nothing.
+- STORE-8 states the rule the code follows: "`after` and `ErrPredecessorNotDone` stay inside the
+  feature. A step waits for a lower step of its own path, and never for a step of another feature."
+  Read across the project, authentication and payment could not run at once at all.

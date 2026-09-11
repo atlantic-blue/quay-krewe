@@ -220,10 +220,14 @@ commands:
     <feature>.<number>                    named as 2.3, which is step 3 of feature 2, and a bare
                                           number is refused. The session is given that step whole:
                                           what changes, what it touches and what proves it. It is
-                                          refused while the design carries no approval, and while
-                                          somebody already holds the step, and a refusal starts
-                                          nothing. Several steps run at once, up to the project's
-                                          cap, and the last line says how many are in flight
+                                          refused while the design carries no approval, while
+                                          somebody already holds the step, and while the step it
+                                          waits for is not done. That refusal names the step in the
+                                          way and the state it is in. A refusal starts nothing.
+                                          Several steps run at once, up to the project's cap, and
+                                          the last line says how many are in flight. A step that
+                                          stopped is taken again by naming it, and the second
+                                          attempt starts with no restatement and no verdict
   step show [<address>]                   one step whole: what changes and why, what it touches,
     <feature>.<number>                    what proves it and the scenario name, then the state, the
                                           session and what the last check reported. The end of a

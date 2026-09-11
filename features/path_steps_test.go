@@ -599,6 +599,22 @@ func initializePathSteps(sc *godog.ScenarioContext) {
 			return finishStep(ctx, int32(number), state, "what came of it")
 		})
 
+	// The same setup where the scenario runs two features, so the step it closes is the step of the
+	// feature it names rather than the one a scenario means when it names none.
+	sc.Step(`^step (\d+) of feature (\d+) is recorded as (done|stopped)$`,
+		func(ctx context.Context, number, feature int, state string) error {
+			held, err := featureOfProject(ctx, int32(feature))
+			if err != nil {
+				return err
+			}
+			if state == "done" {
+				if err := recordAVerdictOf(ctx, held.GetId(), int32(number), store.ProofPassing); err != nil {
+					return err
+				}
+			}
+			return finishStepOf(ctx, held.GetId(), int32(number), state, "what came of it")
+		})
+
 	// A verdict on a step, written where krewe's own check writes one.
 	//
 	// It goes straight into the store, past the control plane, because a real check needs the session
@@ -850,6 +866,39 @@ func initializePathSteps(sc *godog.ScenarioContext) {
 
 	// Both the word and its moment, because a write that cleared one and left the other says the
 	// step was approved at a time nobody approved it.
+	// Read out of the store, for the reason the assertions above it are: the claim is about the row
+	// the next session is judged against, and not about a file.
+	sc.Step(`^step (\d+) reads back no restatement$`, func(ctx context.Context, number int) error {
+		step, err := stepAsItStands(ctx, int32(number))
+		if err != nil {
+			return err
+		}
+		if step.GetRestatement() != "" || step.GetRestatedAt() != nil {
+			return fmt.Errorf("step %d restates %q, written at %v",
+				number, step.GetRestatement(), step.GetRestatedAt())
+		}
+		return nil
+	})
+
+	// Every proof column, because one left behind is a verdict the new attempt did not earn. The
+	// moment is what gate 3 reads, so a step carrying one could be marked done with nothing run.
+	sc.Step(`^step (\d+) has no verdict on it$`, func(ctx context.Context, number int) error {
+		step, err := stepAsItStands(ctx, int32(number))
+		if err != nil {
+			return err
+		}
+		if step.GetProofState() != store.ProofUnproven {
+			return fmt.Errorf("step %d reads %q, want %q",
+				number, step.GetProofState(), store.ProofUnproven)
+		}
+		if step.GetProofRanAt() != nil || step.GetProofScenariosRun() != 0 ||
+			step.GetProofOutput() != "" {
+			return fmt.Errorf("step %d carries a run at %v, %d scenarios and the output %q",
+				number, step.GetProofRanAt(), step.GetProofScenariosRun(), step.GetProofOutput())
+		}
+		return nil
+	})
+
 	sc.Step(`^nobody has approved step (\d+)'s restatement$`, func(ctx context.Context, number int) error {
 		step, err := stepAsItStands(ctx, int32(number))
 		if err != nil {
@@ -1604,11 +1653,17 @@ func recordAVerdict(ctx context.Context, number int32, state string) error {
 	if err != nil {
 		return err
 	}
+	return recordAVerdictOf(ctx, held.GetId(), number, state)
+}
+
+// recordAVerdictOf writes one run's verdict onto a step of the feature it names, which is what the
+// scenarios running two features need.
+func recordAVerdictOf(ctx context.Context, feature string, number int32, state string) error {
 	output := "1 scenarios (1 passed)"
 	if state == store.ProofFailing {
 		output = "1 scenarios (0 passed, 1 failed)"
 	}
-	_, err = worldFrom(ctx).store.RecordProof(ctx, held.GetId(), number, store.ProofResult{
+	_, err := worldFrom(ctx).store.RecordProof(ctx, feature, number, store.ProofResult{
 		State: state, ScenariosRun: 1, Output: output,
 	})
 	return err

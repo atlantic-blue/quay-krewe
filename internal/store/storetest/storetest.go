@@ -2685,6 +2685,7 @@ func runPathConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 			store.Step{Number: 1, Title: "the first"},
 			store.Step{Number: 2, Title: "the second", After: 1},
 			store.Step{Number: 3, Title: "the third", After: 2})
+		finishStep(t, s, feature.GetId(), 1, store.StepDone)
 		if _, _, err := s.TakeStep(ctx, feature.GetId(), 2, "session-one"); err != nil {
 			t.Fatalf("TakeStep: %v", err)
 		}
@@ -2723,6 +2724,7 @@ func runPathConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 		writePath(t, s, feature.GetId(),
 			store.Step{Number: 1, Title: "the first"},
 			store.Step{Number: 2, Title: "the second", After: 1})
+		finishStep(t, s, feature.GetId(), 1, store.StepDone)
 		if _, _, err := s.TakeStep(ctx, feature.GetId(), 2, "session-one"); err != nil {
 			t.Fatalf("TakeStep: %v", err)
 		}
@@ -2785,10 +2787,15 @@ func runPathConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 			store.Step{Number: 1, Title: "the first"},
 			store.Step{Number: 2, Title: "the second", After: 1},
 			store.Step{Number: 3, Title: "the third", After: 2})
+		// Every step before this one is closed, because a take waits for the step it comes after.
+		finishStep(t, s, feature.GetId(), 1, store.StepDone)
+		if _, _, err := s.TakeStep(ctx, feature.GetId(), 2, "session-two"); err != nil {
+			t.Fatalf("TakeStep on step 2: %v", err)
+		}
+		finishStep(t, s, feature.GetId(), 2, store.StepDone)
 		if _, _, err := s.TakeStep(ctx, feature.GetId(), 3, "session-one"); err != nil {
 			t.Fatalf("TakeStep: %v", err)
 		}
-		finishStep(t, s, feature.GetId(), 1, store.StepDone)
 
 		_, err := s.SetPath(ctx, feature.GetId(), nil, []store.Step{{Number: 2, Title: "the second"}})
 		if !errors.Is(err, store.ErrPathHoldsTakenSteps) {
@@ -2813,6 +2820,7 @@ func runPathConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 			store.Step{Number: 1, Title: "sign up"},
 			store.Step{Number: 2, Title: "sign in", After: 1})
 		writePath(t, s, second.GetId(), store.Step{Number: 1, Title: "checkout"})
+		finishStep(t, s, first.GetId(), 1, store.StepDone)
 		if _, _, err := s.TakeStep(ctx, first.GetId(), 2, "session-one"); err != nil {
 			t.Fatalf("TakeStep: %v", err)
 		}
@@ -2893,6 +2901,7 @@ func runPathConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 		writePath(t, s, feature.GetId(),
 			store.Step{Number: 1, Title: "the first"},
 			store.Step{Number: 2, Title: "the second", Intention: "as written", After: 1})
+		finishStep(t, s, feature.GetId(), 1, store.StepDone)
 		taken, _, err := s.TakeStep(ctx, feature.GetId(), 2, "session-one")
 		if err != nil {
 			t.Fatalf("TakeStep: %v", err)
@@ -3615,6 +3624,244 @@ func runPathConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 		}
 	})
 
+	// Gate 2. The path is a chain, and a chain that lets the next link start before the one before it
+	// closed is no chain at all.
+	t.Run("a take is refused while the step it waits for is not done, naming that step and its state",
+		func(t *testing.T) {
+			s := newDataset(t)(t)
+			ctx := context.Background()
+			feature := newFeature(t, s, newProject(t, s, "acme", "house-bills"), "the bills")
+			writePath(t, s, feature.GetId(),
+				store.Step{Number: 1, Title: "the first"},
+				store.Step{Number: 2, Title: "the second", After: 1},
+				store.Step{Number: 3, Title: "the third", After: 2})
+			finishStep(t, s, feature.GetId(), 1, store.StepDone)
+			if _, _, err := s.TakeStep(ctx, feature.GetId(), 2, "session-two"); err != nil {
+				t.Fatalf("TakeStep on step 2: %v", err)
+			}
+
+			_, _, err := s.TakeStep(ctx, feature.GetId(), 3, "session-three")
+			if !errors.Is(err, store.ErrPredecessorNotDone) {
+				t.Fatalf("the take ahead of step 2 answered %v, want ErrPredecessorNotDone", err)
+			}
+			var waiting *store.PredecessorError
+			if !errors.As(err, &waiting) {
+				t.Fatalf("the refusal is %v, and it names no step for the caller to print", err)
+			}
+			if waiting.Number != 2 {
+				t.Errorf("the refusal names step %d, want step 2", waiting.Number)
+			}
+			// The state as well as the number, because it decides the operator's move: a step in
+			// flight is one to wait for, and a stopped one is one to rewrite the path around.
+			if waiting.State != store.StepTaken {
+				t.Errorf("the refusal says step 2 is %q, want %q", waiting.State, store.StepTaken)
+			}
+			read, err := s.GetStep(ctx, feature.GetId(), 3)
+			if err != nil {
+				t.Fatalf("GetStep after the refusal: %v", err)
+			}
+			if read.GetState() != store.StepReady || read.GetSession() != "" {
+				t.Fatalf("the refused take left step 3 as %q held by %q",
+					read.GetState(), read.GetSession())
+			}
+		})
+
+	// The word the gate reads. Done is the operator's word and a verdict is krewe's, and a step the
+	// operator closed over a failing run is closed: the row keeps the disagreement and the path moves.
+	t.Run("a take goes through once the step it waits for is done, whatever the verdict was",
+		func(t *testing.T) {
+			s := newDataset(t)(t)
+			ctx := context.Background()
+			feature := newFeature(t, s, newProject(t, s, "acme", "house-bills"), "the bills")
+			writePath(t, s, feature.GetId(),
+				store.Step{Number: 1, Title: "the first"},
+				store.Step{Number: 2, Title: "the second", After: 1})
+			if _, _, err := s.TakeStep(ctx, feature.GetId(), 1, "session-one"); err != nil {
+				t.Fatalf("TakeStep on step 1: %v", err)
+			}
+			recordProof(t, s, feature.GetId(), 1, store.ProofFailing)
+			if _, err := s.FinishStep(ctx, feature.GetId(), 1, store.Finish{
+				State: store.StepDone, Result: "it goes in anyway", ClosedBy: "operator",
+			}); err != nil {
+				t.Fatalf("FinishStep on step 1: %v", err)
+			}
+
+			taken, _, err := s.TakeStep(ctx, feature.GetId(), 2, "session-two")
+			if err != nil {
+				t.Fatalf("the take after a failing check the operator closed answered %v", err)
+			}
+			if taken.GetState() != store.StepTaken || taken.GetSession() != "session-two" {
+				t.Fatalf("step 2 reads as %q held by %q, want taken by session-two",
+					taken.GetState(), taken.GetSession())
+			}
+			// The verdict on step 1 is untouched by the take on step 2, so the gate read the state.
+			before, err := s.GetStep(ctx, feature.GetId(), 1)
+			if err != nil {
+				t.Fatalf("GetStep on step 1: %v", err)
+			}
+			if before.GetProofState() != store.ProofFailing {
+				t.Fatalf("step 1 reads %q, want the failing verdict it closed over", before.GetProofState())
+			}
+		})
+
+	// The other half of the same word. A step in flight, and a step nobody will finish, both hold the
+	// next one, so the state travels with the refusal.
+	t.Run("a take is refused while the step it waits for is stopped", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		feature := newFeature(t, s, newProject(t, s, "acme", "house-bills"), "the bills")
+		writePath(t, s, feature.GetId(),
+			store.Step{Number: 1, Title: "the first"},
+			store.Step{Number: 2, Title: "the second", After: 1})
+		finishStep(t, s, feature.GetId(), 1, store.StepStopped)
+
+		_, _, err := s.TakeStep(ctx, feature.GetId(), 2, "session-two")
+		var waiting *store.PredecessorError
+		if !errors.As(err, &waiting) {
+			t.Fatalf("the take after a stopped step answered %v, want ErrPredecessorNotDone", err)
+		}
+		if waiting.Number != 1 || waiting.State != store.StepStopped {
+			t.Errorf("the refusal says step %d is %q, want step 1 stopped", waiting.Number, waiting.State)
+		}
+	})
+
+	// Zero is how a step says it waits for nobody, and a path where the first step waited for
+	// something would never start.
+	t.Run("a take on a step that waits for nobody goes through", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		feature := newFeature(t, s, newProject(t, s, "acme", "house-bills"), "the bills")
+		writePath(t, s, feature.GetId(),
+			store.Step{Number: 1, Title: "the first"},
+			store.Step{Number: 2, Title: "the second", After: 0})
+
+		if _, _, err := s.TakeStep(ctx, feature.GetId(), 2, "session-two"); err != nil {
+			t.Fatalf("the take on a step that waits for nobody answered %v", err)
+		}
+	})
+
+	// The way past a step nobody will finish, and the only one: there is no override flag. The
+	// operator points the ready step at another step and the path moves on.
+	t.Run("pointing a ready step at another step moves the path past a stopped one", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		feature := newFeature(t, s, newProject(t, s, "acme", "house-bills"), "the bills")
+		writePath(t, s, feature.GetId(),
+			store.Step{Number: 1, Title: "the first"},
+			store.Step{Number: 2, Title: "the second", After: 1},
+			store.Step{Number: 3, Title: "the third", After: 2})
+		finishStep(t, s, feature.GetId(), 1, store.StepDone)
+		if _, _, err := s.TakeStep(ctx, feature.GetId(), 2, "session-two"); err != nil {
+			t.Fatalf("TakeStep on step 2: %v", err)
+		}
+		finishStep(t, s, feature.GetId(), 2, store.StepStopped)
+		if _, _, err := s.TakeStep(ctx, feature.GetId(), 3, "session-three"); !errors.Is(
+			err, store.ErrPredecessorNotDone) {
+			t.Fatalf("the take behind a stopped step answered %v, want ErrPredecessorNotDone", err)
+		}
+
+		writePath(t, s, feature.GetId(),
+			store.Step{Number: 1, Title: "the first"},
+			store.Step{Number: 2, Title: "the second", After: 1},
+			store.Step{Number: 3, Title: "the third", After: 1})
+
+		if _, _, err := s.TakeStep(ctx, feature.GetId(), 3, "session-three"); err != nil {
+			t.Fatalf("the take after the path was pointed past the stopped step answered %v", err)
+		}
+		stopped, err := s.GetStep(ctx, feature.GetId(), 2)
+		if err != nil {
+			t.Fatalf("GetStep on step 2: %v", err)
+		}
+		if stopped.GetState() != store.StepStopped {
+			t.Fatalf("step 2 reads %q, and rewriting the path around it moves nothing", stopped.GetState())
+		}
+	})
+
+	// A second attempt proves itself again. An approval carried over from the attempt that stopped
+	// would send the new session straight past the gate that reads one.
+	t.Run("a step taken again after a stop starts unproven, with no restatement and no approval",
+		func(t *testing.T) {
+			s := newDataset(t)(t)
+			ctx := context.Background()
+			feature := newFeature(t, s, newProject(t, s, "acme", "house-bills"), "the bills")
+			writePath(t, s, feature.GetId(), store.Step{Number: 1, Title: "the first"})
+			if _, _, err := s.TakeStep(ctx, feature.GetId(), 1, "session-one"); err != nil {
+				t.Fatalf("TakeStep: %v", err)
+			}
+			if _, err := s.SetRestatement(ctx, feature.GetId(), 1, "what I think it says"); err != nil {
+				t.Fatalf("SetRestatement: %v", err)
+			}
+			if _, err := s.ApproveRestatement(ctx, feature.GetId(), 1); err != nil {
+				t.Fatalf("ApproveRestatement: %v", err)
+			}
+			recordProof(t, s, feature.GetId(), 1, store.ProofFailing)
+			finishStep(t, s, feature.GetId(), 1, store.StepStopped)
+
+			again, _, err := s.TakeStep(ctx, feature.GetId(), 1, "session-two")
+			if err != nil {
+				t.Fatalf("taking a stopped step again answered %v", err)
+			}
+			if again.GetState() != store.StepTaken || again.GetSession() != "session-two" {
+				t.Fatalf("the retaken step reads as %q held by %q, want taken by session-two",
+					again.GetState(), again.GetSession())
+			}
+			// Read back rather than trusted from the write, because what the row holds is what the
+			// next session is judged against.
+			read, err := s.GetStep(ctx, feature.GetId(), 1)
+			if err != nil {
+				t.Fatalf("GetStep after the retake: %v", err)
+			}
+			for _, one := range []*quaycrewv1.Step{again, read} {
+				if one.GetRestatement() != "" || one.GetRestatedAt() != nil {
+					t.Errorf("the retaken step carries the restatement %q written at %v",
+						one.GetRestatement(), one.GetRestatedAt())
+				}
+				if one.GetRestatementApproved() || one.GetRestatementApprovedAt() != nil {
+					t.Errorf("the retaken step reads as approved at %v, and nobody approved this attempt",
+						one.GetRestatementApprovedAt())
+				}
+				if one.GetProofState() != store.ProofUnproven {
+					t.Errorf("the retaken step reads %q, want %q", one.GetProofState(), store.ProofUnproven)
+				}
+				if one.GetProofScenariosRun() != 0 || one.GetProofOutput() != "" ||
+					one.GetProofRanAt() != nil {
+					t.Errorf("the retaken step carries %d scenarios, the output %q and a run at %v",
+						one.GetProofScenariosRun(), one.GetProofOutput(), one.GetProofRanAt())
+				}
+			}
+		})
+
+	// After stays inside the feature. Read across the project, payment would wait for authentication
+	// and the two features could not run at once at all, which is what the second feature is for.
+	t.Run("a step of one feature is not held by a step of another", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		project := newProject(t, s, "acme", "house-bills")
+		first := newFeature(t, s, project, "authentication")
+		second := newFeature(t, s, project, "payment")
+		writePath(t, s, first.GetId(),
+			store.Step{Number: 1, Title: "sign up"},
+			store.Step{Number: 2, Title: "sign in", After: 1})
+		writePath(t, s, second.GetId(),
+			store.Step{Number: 1, Title: "checkout"},
+			store.Step{Number: 2, Title: "refund", After: 1})
+		if _, _, err := s.TakeStep(ctx, first.GetId(), 1, "session-one"); err != nil {
+			t.Fatalf("TakeStep on step 1 of authentication: %v", err)
+		}
+
+		// Step 1 of payment is a different step from step 1 of authentication, so closing it is what
+		// lets step 2 of payment through while authentication's step 1 is still in flight.
+		finishStep(t, s, second.GetId(), 1, store.StepDone)
+		if _, _, err := s.TakeStep(ctx, second.GetId(), 2, "session-two"); err != nil {
+			t.Fatalf("the take on payment behind authentication's open step answered %v", err)
+		}
+		// And the reverse: authentication's own step 2 is still held by authentication's step 1.
+		if _, _, err := s.TakeStep(ctx, first.GetId(), 2, "session-three"); !errors.Is(
+			err, store.ErrPredecessorNotDone) {
+			t.Fatalf("the take on authentication's step 2 answered %v, want ErrPredecessorNotDone", err)
+		}
+	})
+
 	// The rule this slice exists for. Two sessions on one file write over each other, and what a step
 	// says it writes is the only thing the system has to see the collision coming.
 	t.Run("a take on a file a step in flight writes is refused, naming the file and that step", func(t *testing.T) {
@@ -4049,6 +4296,9 @@ func runTakeConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 	})
 
 	// Several steps may be in flight. Nothing here refuses a second take on a different step.
+	//
+	// Two steps of one path run at once when both wait for the same closed step. A path is a chain by
+	// default, so the branch is what the document says rather than what the numbering implies.
 	t.Run("two steps of one path are taken at once", func(t *testing.T) {
 		s := newDataset(t)(t)
 		ctx := context.Background()
@@ -4057,20 +4307,25 @@ func runTakeConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 		if _, err := s.SetPath(ctx, feature.GetId(), nil, []store.Step{
 			{Number: 1, Title: "the first"},
 			{Number: 2, Title: "the second", After: 1},
+			{Number: 3, Title: "the third", After: 1},
 		}); err != nil {
 			t.Fatalf("SetPath: %v", err)
 		}
-		if _, _, err := s.TakeStep(ctx, feature.GetId(), 1, "session-one"); err != nil {
-			t.Fatalf("TakeStep on step 1: %v", err)
-		}
+		finishStep(t, s, feature.GetId(), 1, store.StepDone)
 		if _, _, err := s.TakeStep(ctx, feature.GetId(), 2, "session-two"); err != nil {
 			t.Fatalf("TakeStep on step 2: %v", err)
+		}
+		if _, _, err := s.TakeStep(ctx, feature.GetId(), 3, "session-three"); err != nil {
+			t.Fatalf("TakeStep on step 3: %v", err)
 		}
 		read, err := s.ListSteps(ctx, feature.GetId())
 		if err != nil {
 			t.Fatalf("ListSteps: %v", err)
 		}
-		for at, want := range []string{"session-one", "session-two"} {
+		for at, want := range []string{"", "session-two", "session-three"} {
+			if want == "" {
+				continue
+			}
 			if read[at].GetState() != store.StepTaken || read[at].GetSession() != want {
 				t.Errorf("step %d reads as %q held by %q, want taken by %q",
 					read[at].GetNumber(), read[at].GetState(), read[at].GetSession(), want)

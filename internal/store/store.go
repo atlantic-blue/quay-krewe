@@ -105,6 +105,50 @@ var ErrTooManyStepsInFlight = errors.New("store: the project already has as many
 // write one file at the same moment.
 var ErrStepsTouchTheSameFile = errors.New("store: a step in flight already writes that file")
 
+// ErrPredecessorNotDone is returned when the step named by after is not in state done. This is gate
+// 2. A PredecessorError carries that step and its state, and answers errors.Is for this.
+//
+// It reads the state and never the proof state. Done is the operator's word, so a step whose check
+// failed and which the operator then closed opens this gate: the row records the disagreement and
+// the path carries on. A gate reading a passing proof would hold the path on krewe's verdict and
+// take the decision off the person whose decision it is.
+//
+// The check and the write are one statement, for the reason ErrNothingToApprove is one: a read of
+// the predecessor followed by a write would let the step it names be stopped between the two, and
+// the take would land on a path that moved.
+//
+// It stays inside the feature. A step waits for a lower step of its own path and never for a step of
+// another feature, which is the one thing here that is not read across the whole project: the cap
+// and the file check are both the project's, and this one is the path's.
+var ErrPredecessorNotDone = errors.New("store: the step this one waits for is not done")
+
+// PredecessorError names the step this one waits for and the state that step is in.
+//
+// The state travels with the number because the operator's move depends on it: a step in flight is
+// one to wait for, and a stopped step is one to rewrite the path around. A refusal saying only that
+// the path is blocked leaves them with nothing to type.
+type PredecessorError struct {
+	// Number is the step this one waits for, in the same feature.
+	Number int32
+	// State is the state that step is in, and PredecessorMissing when the path holds no such step.
+	State string
+}
+
+// PredecessorMissing is the state a predecessor reads as when the path holds no step of that number.
+//
+// The control plane refuses a path document whose After names a step the document does not have, so
+// nothing reaching the store through it can land here. It is a word rather than a silent pass because
+// a path that lost the step it waits for has to refuse the take rather than read as unblocked.
+const PredecessorMissing = "not in this path"
+
+func (e *PredecessorError) Error() string {
+	return fmt.Sprintf("%s: step %d is %s", ErrPredecessorNotDone.Error(), e.Number, e.State)
+}
+
+// Is makes errors.Is(err, ErrPredecessorNotDone) answer, so a caller that only wants to know which
+// rule refused the take does not have to unwrap the step.
+func (e *PredecessorError) Is(target error) bool { return target == ErrPredecessorNotDone }
+
 // ErrNothingRestated is returned when a step whose session wrote nothing is approved.
 //
 // The check and the write are one statement, for the reason ErrNothingToApprove is one: a read of
@@ -313,6 +357,26 @@ const (
 	StepDone    = "done"
 	StepStopped = "stopped"
 )
+
+// TakeableStates are the two states a step may be taken from: nobody took it yet, or somebody took it
+// and stopped it. A take from either one starts the step clean.
+//
+// Taken and done are the two that are refused. A step somebody holds is refused so two sessions never
+// build one step, and a step that closed is refused so the record of finished work stands.
+//
+// They are here rather than in each store because the two stores are held to one conformance suite,
+// and a state one of them allowed would let the same take pass in memory and refuse in Postgres.
+func TakeableStates() []string { return []string{StepReady, StepStopped} }
+
+// Takeable says whether a step in this state may be taken.
+func Takeable(state string) bool {
+	for _, word := range TakeableStates() {
+		if state == word {
+			return true
+		}
+	}
+	return false
+}
 
 // protectedStepStates are the three states that hold a record of work. A step in one of them was
 // taken by somebody, so a document that drops or renames it takes that record away.
@@ -739,23 +803,34 @@ type Store interface {
 	// GetStep returns one step of a feature's path, whole. A feature that does not exist and a path
 	// that holds no step of that number are both ErrNotFound: neither answers the question asked.
 	GetStep(ctx context.Context, feature string, number int32) (*quaycrewv1.Step, error)
-	// TakeStep gives a ready step to a session and returns the step after the write, with how many
-	// steps of the project are in state taken once it lands. A step that is not ready is
+	// TakeStep gives a step to a session and returns the step after the write, with how many steps of
+	// the project are in state taken once it lands. A step that is neither ready nor stopped is
 	// ErrStepNotReady, and the caller reads the step to say who holds it.
+	//
+	// A stopped step may be taken again, and it starts clean: the write sets the proof state back to
+	// unproven and clears the restatement, its approval and every proof column. A second attempt
+	// proves itself again rather than inheriting the first attempt's verdict, and an approval carried
+	// over would let the session past the gate that reads one.
 	//
 	// The count is the write's own, so a caller that prints it prints what the take made rather than
 	// what a second read a moment later says.
 	//
-	// Several steps may be taken at once, in one feature or across the features of one project. Two
-	// limits refuse a take. ErrTooManyStepsInFlight counts every step in state taken in the whole
-	// project against the design's cap. ErrStepsTouchTheSameFile reads what each of those steps says
-	// it writes, and refuses a step that names a file one of them names. Both read the whole project:
-	// counted inside the feature, two features could each run the whole cap, and two features could
-	// each write one file at the same moment.
+	// Three rules refuse a take. ErrPredecessorNotDone reads the state of the step this one waits for,
+	// inside this feature, and refuses while that step is not done. ErrTooManyStepsInFlight counts
+	// every step in state taken in the whole project against the design's cap. ErrStepsTouchTheSameFile
+	// reads what each of those steps says it writes, and refuses a step that names a file one of them
+	// names.
 	//
-	// The count, the file check, the state check and the write are one transaction, so two callers
-	// cannot both take one step, two takes at one moment cannot both pass a cap with room for one of
-	// them, and two takes at one moment cannot both pass a file only one of them may write.
+	// The two limits read the whole project and the predecessor reads one feature. Counted inside the
+	// feature, two features could each run the whole cap, and two features could each write one file at
+	// the same moment. Read across the project, a step would wait for a step of a path it has nothing
+	// to do with, and the two features could not run at once at all.
+	//
+	// Several steps may be taken at once, in one feature or across the features of one project.
+	//
+	// The predecessor, the count, the file check, the state check and the write are one transaction, so
+	// two callers cannot both take one step, two takes at one moment cannot both pass a cap with room
+	// for one of them, and two takes at one moment cannot both pass a file only one of them may write.
 	TakeStep(ctx context.Context, feature string, number int32, session string) (*quaycrewv1.Step, int32, error)
 	// FinishStep records what came of a step: the word that closes it, what somebody wrote, who spoke
 	// the word, and the stamp. A feature that does not exist and a path that holds no step of that

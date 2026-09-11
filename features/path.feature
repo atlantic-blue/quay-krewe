@@ -31,6 +31,15 @@ Feature: A project holds a numbered path of steps
   wrote is what the next session reads. Finishing a step touches no session, so the step still says
   who took it, and a stopped step is not ready.
 
+  A take waits for the step before it. A step names the step it comes after, and the take is refused
+  while that step is not done. Done is the operator's word and never a passing check, so a step whose
+  check failed and which the operator then closed lets the next step through. The refusal names the
+  step in the way and the state it is in, because that state decides the move: a step in flight is one
+  to wait for, and a stopped step is one nobody will finish. There is no flag that goes past this. The
+  way past a step nobody will finish is to rewrite the path so the next step waits for another step,
+  and a step waits only for a step of its own feature. A step that stopped is taken again by naming
+  it, and the second attempt starts with no restatement, no approval and no verdict.
+
   Several steps run at once. The operator takes each one, so every session starts because somebody
   typed a command: no command reads the path and dispatches, and a step that finishes starts nothing.
   A cap on the project says how many steps may be in state taken at one time, and the default is ten.
@@ -865,6 +874,7 @@ Feature: A project holds a numbered path of steps
       ## 2. The store holds a project's design
       ## 3. The command line reads it back
       """
+    And step 1 is recorded as done
     And the operator took step 2
     When the operator sets the path to:
       """
@@ -918,6 +928,7 @@ Feature: A project holds a numbered path of steps
       ## 1. The store holds a project's brief
       ## 2. The store holds a project's design
       """
+    And step 1 is recorded as done
     And the operator took step 2
     When the operator sets the path to:
       """
@@ -937,8 +948,9 @@ Feature: A project holds a numbered path of steps
       ## 2. The store holds a project's design
       ## 3. The command line reads it back
       """
-    And the operator took step 3
     And step 1 is recorded as done
+    And step 2 is recorded as done
+    And the operator took step 3
     When the operator sets the path to:
       """
       ## 2. The store holds a project's design
@@ -1001,6 +1013,7 @@ Feature: A project holds a numbered path of steps
       ## 2. The store holds a project's design
       ## 3. The command line reads it back
       """
+    And step 1 is recorded as done
     And the operator took step 2
     When the operator sets the path to:
       """
@@ -1032,6 +1045,7 @@ Feature: A project holds a numbered path of steps
       """
       ## 1. Checkout
       """
+    And step 1 of feature 1 is recorded as done
     And the operator took step 2 of feature 1
     When the operator sets the path of feature 1 to:
       """
@@ -1632,6 +1646,8 @@ Feature: A project holds a numbered path of steps
       ## 2. The store holds a project's design
       ## 5. The command line reads it back
       """
+    And step 1 is recorded as done
+    And step 2 is recorded as done
     When the operator takes step 5
     Then the step text carries "Step 5 of 3 on the path for house-bills."
 
@@ -2113,6 +2129,145 @@ Feature: A project holds a numbered path of steps
     When the operator takes step 1
     Then the control plane refuses it as the wrong state
     And 0 sessions were started
+
+  # Gate 2. A path is a chain, and a chain whose next link starts before the one before it closed is
+  # no chain at all. The refusal names the step in the way and the state it is in, because that state
+  # decides the move: a step in flight is one to wait for, and a stopped one is one to point away from.
+  Scenario: Taking a step while the step it waits for is not done is refused
+    Given the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+      ## 2. The store holds a project's design
+      ## 3. The control plane serves the design
+      """
+    And step 1 is recorded as done
+    And the operator took step 2
+    When the operator takes step 3
+    Then the control plane refuses it as the wrong state
+    And the refusal suggests "this step waits for step 2, and step 2 is taken"
+    And the refusal suggests "krewe step done"
+    And the refusal suggests "krewe path set"
+    And 1 session was started
+    And the operator reads the path
+    And step 3 is ready
+
+  # The word the gate reads is done, which is the operator's, and never the verdict, which is krewe's.
+  # The check on step 1 failed and the operator closed it anyway, so the path moves and the row keeps
+  # the disagreement.
+  Scenario: Taking the next step goes through after a failing check the operator marked done
+    Given the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+      ## 2. The store holds a project's design
+      """
+    And the operator took step 1
+    And krewe checked step 1, and it failed
+    And the operator finishes step 1 with "it goes in anyway"
+    When the operator takes step 2
+    Then step 2 is held by that session
+    And the operator reads the path
+    And step 2 is still taken
+
+  # Zero is how a step says it waits for nobody. A path whose first step waited for something would
+  # never start.
+  Scenario: Taking a step that waits for nobody goes through
+    Given the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+
+      ## 2. The store holds a project's design
+
+      After
+      """
+    When the operator takes step 2
+    Then step 2 is held by that session
+    And 1 session was started
+
+  # The way past a step nobody will finish, and the only one. There is no override flag: the operator
+  # points the ready step at another step, and the path moves on.
+  Scenario: Pointing a ready step at another step moves the path past a stopped step
+    Given the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+      ## 2. The store holds a project's design
+      ## 3. The control plane serves the design
+      """
+    And step 1 is recorded as done
+    And step 2 is recorded as stopped
+    And the operator takes step 3
+    And the control plane refuses it as the wrong state
+    And the refusal suggests "step 2 is stopped"
+    When the operator sets the path to:
+      """
+      ## 1. The store holds a project's brief
+      ## 2. The store holds a project's design
+      ## 3. The control plane serves the design
+
+      After
+      1
+      """
+    And the operator takes step 3
+    Then step 3 is held by that session
+    And the operator reads the path
+    And step 3 is still taken
+    And step 2 is still stopped
+
+  # A second attempt proves itself again. An approval carried over from the attempt that stopped would
+  # send the new session straight past the gate that reads one.
+  Scenario: A step taken again after a stop starts unproven, with no restatement and no approval
+    Given the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+      """
+    And the operator took step 1
+    And the session writes its restatement:
+      """
+      <!-- quay:restatement -->
+      What this step changes: the store holds a brief.
+      """
+    And the operator approves step 1's restatement
+    And krewe checked step 1, and it failed
+    And the operator stops step 1 with "the approach was wrong"
+    When the operator takes step 1
+    Then step 1 is held by that session
+    And step 1 reads back no restatement
+    And nobody has approved step 1's restatement
+    And step 1 has no verdict on it
+
+  # After stays inside the feature. Read across the project, payment would wait for authentication and
+  # the two could not run at once at all, which is the whole reason a project holds two features.
+  Scenario: A step of one feature is not held by a step of another feature
+    Given the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And the project's feature "authentication"
+    And the project's feature "payment"
+    And the operator sets the path of feature 1 to:
+      """
+      ## 1. Sign up
+      ## 2. Sign in
+      """
+    And the operator sets the path of feature 2 to:
+      """
+      ## 1. Checkout
+      ## 2. Refund a payment
+      """
+    And the operator took step 1 of feature 1
+    And step 1 of feature 2 is recorded as done
+    When the operator takes step 2 of feature 2
+    Then step 2 of feature 2 is held by that session
+    And the operator takes step 2 of feature 1
+    And the control plane refuses it as the wrong state
+    And the refusal suggests "this step waits for step 1, and step 1 is taken"
 
   Scenario: Taking a step the path does not hold is refused, saying how many it has
     Given the project's design is "# Bills\n"
@@ -2721,6 +2876,26 @@ Feature: A project holds a numbered path of steps
     And standard error says "nothing was started"
     And 1 session was started
 
+  # The command prints the gate 2 refusal as the control plane sent it, and it starts nothing. The
+  # step in the way and its state are on the line, so the operator knows which step to finish.
+  Scenario: The tool prints the gate 2 refusal and starts nothing
+    Given the system listens on an address the tool can dial
+    And the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+      ## 2. The store holds a project's design
+      ## 3. The control plane serves the design
+      """
+    And step 1 is recorded as done
+    And the operator took step 2
+    When the caller takes step "1.3"
+    Then the command fails
+    And standard error says "this step waits for step 2, and step 2 is taken"
+    And standard error says "nothing was started"
+    And 1 session was started
+
   # The session reads which step it is on in the design section of its own memory file, which it
   # reads on every exec.
   Scenario: The session that took a step reads which step it is on
@@ -2732,6 +2907,7 @@ Feature: A project holds a numbered path of steps
       ## 2. The store holds a project's design
       ## 3. The control plane serves the design
       """
+    And step 1 is recorded as done
     When the operator takes step 2
     Then the session's memory file carries "You are on step 2 of 3: The store holds a project's design"
     And the design section is under 400 characters

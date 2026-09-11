@@ -868,16 +868,17 @@ func (m *Memory) GetStep(_ context.Context, feature string, number int32) (*quay
 	return proto.Clone(held).(*quaycrewv1.Step), nil
 }
 
-// TakeStep gives a ready step to a session, and says how many steps of the project run once it lands.
+// TakeStep gives a step to a session, and says how many steps of the project run once it lands.
 //
 // The step is addressed by its feature, and step 3 of one feature is a different step from step 3 of
-// another, so taking one leaves the other ready. Neither limit is addressed that way: the cap and the
-// files both belong to the project, and both read every feature of it.
+// another, so taking one leaves the other ready. The two limits are not addressed that way: the cap
+// and the files both belong to the project, and both read every feature of it. The predecessor is
+// addressed that way, and it is the one rule here that reads a single path.
 //
-// The whole read and write happen under the one lock, because Postgres does the count, the file check
-// and the write in one transaction and the two stores have to answer the same thing to two callers
-// racing for one step, to two callers racing for the last place under the cap, and to two callers
-// racing for one file.
+// The whole read and write happen under the one lock, because Postgres does the predecessor, the
+// count, the file check and the write in one transaction and the two stores have to answer the same
+// thing to two callers racing for one step, to two callers racing for the last place under the cap,
+// and to two callers racing for one file.
 func (m *Memory) TakeStep(_ context.Context, feature string, number int32, session string) (
 	*quaycrewv1.Step, int32, error) {
 	m.mu.Lock()
@@ -890,8 +891,14 @@ func (m *Memory) TakeStep(_ context.Context, feature string, number int32, sessi
 	if err != nil {
 		return nil, 0, err
 	}
-	if step.GetState() != StepReady {
+	if !Takeable(step.GetState()) {
 		return nil, 0, ErrStepNotReady
+	}
+	// Gate 2, before the cap, because a step waiting on another is refused whatever room the project
+	// has. Counted first, a full project would answer with the cap and send the operator to finish
+	// any step at all, when the one step that unblocks this one is named right here.
+	if waiting := m.predecessorLocked(feature, step.GetAfter()); waiting != nil {
+		return nil, 0, waiting
 	}
 	flying := m.stepsInFlightLocked(held.GetProject())
 	atOnce := m.stepsInFlightCapLocked(held.GetProject())
@@ -904,7 +911,51 @@ func (m *Memory) TakeStep(_ context.Context, feature string, number int32, sessi
 	step.State = StepTaken
 	step.Session = session
 	step.TakenAt = timestamppb.New(time.Now().UTC())
+	startClean(step)
 	return proto.Clone(step).(*quaycrewv1.Step), int32(len(flying)) + 1, nil
+}
+
+// predecessorLocked is the refusal for a step whose predecessor is not done, and nil when nothing
+// holds this step back. The caller holds the lock.
+//
+// It reads the state word and never the proof state. Done is the operator's word, so a step whose
+// check failed and which the operator then closed lets the next step through.
+//
+// The lookup is inside the feature, because after names a lower step of this path. Read across the
+// project it would hold a step behind a step of a path it has nothing to do with.
+func (m *Memory) predecessorLocked(feature string, after int32) *PredecessorError {
+	if after == 0 {
+		return nil
+	}
+	before, err := m.stepLocked(feature, after)
+	if err != nil {
+		return &PredecessorError{Number: after, State: PredecessorMissing}
+	}
+	if before.GetState() == StepDone {
+		return nil
+	}
+	return &PredecessorError{Number: after, State: before.GetState()}
+}
+
+// startClean puts a step back to the state a step nobody checked is in: no restatement, no approval
+// and no verdict.
+//
+// It runs on every take rather than only on a retake, because a step nobody took carries none of
+// these anyway and one path is one thing to read. What it is for is the retake: a stopped step that
+// kept its approval would send its second session straight past the gate that reads one, building
+// against a text nobody agreed to this time.
+//
+// The result, the moment it finished and who closed it are left where they are. They are the record
+// of the attempt that stopped, and the new attempt does not undo it.
+func startClean(step *quaycrewv1.Step) {
+	step.Restatement = ""
+	step.RestatedAt = nil
+	step.RestatementApproved = false
+	step.RestatementApprovedAt = nil
+	step.ProofState = ProofUnproven
+	step.ProofScenariosRun = 0
+	step.ProofOutput = ""
+	step.ProofRanAt = nil
 }
 
 // stepsInFlightLocked is every step of one project in state taken, with the feature each one sits in
