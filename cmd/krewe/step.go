@@ -394,6 +394,7 @@ func runStepCheck(ctx context.Context, client quaycrewv1.ControlPlaneServiceClie
 	fmt.Fprintf(out, "\nstep %d.%d of %s: %s\n",
 		held.GetNumber(), step.GetNumber(), located.Path.Project, step.GetTitle())
 	fmt.Fprintf(out, "verdict: %s, %s ran\n", step.GetProofState(), display.Scenarios(step.GetProofScenariosRun()))
+	sayKreweClosedIt(resp, out)
 	sayWarnings(out, resp.GetWarnings())
 	if output := strings.TrimRight(step.GetProofOutput(), "\n"); output != "" {
 		fmt.Fprintf(out, "\n%s\n", output)
@@ -404,6 +405,24 @@ func runStepCheck(ctx context.Context, client quaycrewv1.ControlPlaneServiceClie
 		return fmt.Errorf("%w: step %d.%d did not pass", ErrSaid, held.GetNumber(), step.GetNumber())
 	}
 	return nil
+}
+
+// sayKreweClosedIt prints that krewe spoke the word done on this step, and says nothing on a check
+// that closed nothing.
+//
+// It prints under the verdict and above the output, because a run keeps thousands of characters and
+// a line printed under them is a line nobody reads. A close nobody noticed is a close nobody can
+// correct, and the correction is the whole safety of the ladder.
+//
+// So it names the way back in the same breath. A person who cannot find that word stops handing the
+// word done over at all, which is what krewe trust raise already says when it hands it over.
+func sayKreweClosedIt(resp *quaycrewv1.CheckStepResponse, out io.Writer) {
+	if !resp.GetClosedByKrewe() {
+		return
+	}
+	fmt.Fprintf(out, "krewe closed this step: its own check passed, and krewe is at trust level %d\n",
+		resp.GetDesign().GetTrustLevel())
+	fmt.Fprintf(out, "disagree with it: krewe step reopen [<address>] <feature>.<number>\n")
 }
 
 // proofPassing is the one verdict that is not a failure, and proofFailing is what a run that said no

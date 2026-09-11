@@ -802,3 +802,45 @@ stale, or the part of the contract that has no code behind it yet is recorded as
 - Krewe closing a step at level 1 is S-27 and the reopen is S-28. Neither is built here, so
   `closed_by_krewe` stays false and the raise's output names `krewe step reopen` as a word the
   operator will have rather than one they have.
+
+## Settled on 2026-09-11, building S-27, where a contract and the code disagreed
+
+Three entries. In each one the code on `main` wins and the sentence in the contract is recorded as
+stale, or the part of the contract that has no code behind it yet is recorded as waiting for it.
+
+**A step krewe closed reads `operator_agreed` as `yes`, though no operator spoke.**
+- Status: settled, and the contract text reads narrower than the column does.
+- TRUST-1 calls the column "whether the operator's word matched what krewe's last run reported", and
+  on a close by krewe there is no operator word to match. TRUST-3 says the close "adds one to
+  `trust_run` and one to `trust_agreements`. Krewe agrees with its own verdict".
+- The close goes through `FinishStep`, which is where S-25 put the counters, and that write computes
+  the column with `store.Agreed(state, proofState)`. Done after a passing check is `yes`, so the row
+  reads `yes` and the counters move as an agreement, which is what TRUST-3 asks for.
+- The alternative was a second write path that moved the counters itself and left the column empty.
+  That is a second place for the rule to drift, held to no conformance suite, for a column whose
+  meaning is already carried by `closed_by`: a reader who wants to know whether a person read the
+  step reads that one.
+- Nothing downstream reads the column as the operator's alone. `krewe step show` prints "closed by
+  krewe, and the row records an agreement", which is true of a close krewe made.
+
+**A close the store refuses leaves the check passing and `closed_by_krewe` false, and refuses
+nothing.**
+- Status: settled, and the contract says nothing either way.
+- TRUST-3's errors read "None of its own", and WIRE-14 lists no refusal for a close that did not
+  happen.
+- The run happened and `RecordProof` wrote the verdict before the close is attempted, so a refusal
+  here would report a failed check on a check that passed and whose record the store already holds.
+  The step comes back as it stands, the response says krewe closed nothing, and the operator speaks
+  the word, which is what level 0 does on the same verdict.
+- The refusal is logged rather than swallowed, so a store fault is readable in the control plane's
+  own output.
+
+**The check answers the design the close left, not the one read before the run.**
+- Status: settled, and it is the shape S-25 recorded for `FinishStep`.
+- WIRE-14 answers `Design design = 2` and says nothing about which read it comes from. S-20's comment
+  on that field said "nothing about a design moves when a scenario runs", which was true while no
+  check closed anything.
+- A close moves `trust_run` and `trust_agreements` in the transaction that writes the word, so the
+  design read before the run is one finish behind by the time the response is built. The response
+  carries what the write answered, for the reason S-25 gave: no reader sees a closed step whose
+  counters did not move.

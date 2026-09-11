@@ -1688,9 +1688,15 @@ func buildText(step *quaycrewv1.Step) string {
 	return strings.Join(blocks, "\n\n") + "\n"
 }
 
-// closedByOperator is who spoke the word on this call. Krewe closes a step through its own check, and
-// that call writes the other word.
-const closedByOperator = "operator"
+// The two who speak the word that closes a step. This call writes the first, and the check writes the
+// second on a run of its own that passed, while the project stands at the level that lets it.
+//
+// They are named together because one column holds them and three readers compare against it. A word
+// one of those spelled for itself would read as a step nobody closed.
+const (
+	closedByOperator = "operator"
+	closedByKrewe    = "krewe"
+)
 
 // stepFinishStates are the two ways a step ends, in the order the refusal names them.
 func stepFinishStates() []string { return []string{stepDone, stepStopped} }

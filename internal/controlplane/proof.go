@@ -12,6 +12,7 @@ import (
 	"time"
 
 	quaycrewv1 "github.com/atlantic-blue/quay-krewe/gen/quaycrew/v1"
+	"github.com/atlantic-blue/quay-krewe/internal/display"
 	"github.com/atlantic-blue/quay-krewe/internal/sandbox"
 	"github.com/atlantic-blue/quay-krewe/internal/store"
 	"google.golang.org/grpc/codes"
@@ -250,10 +251,69 @@ func (s *Server) CheckStep(ctx context.Context, req *quaycrewv1.CheckStepRequest
 	if err != nil {
 		return nil, storeError(err, "step")
 	}
+	// The word done, where krewe earned it. The step and the design both move in that write, so both
+	// are answered as it left them rather than as they were read before the run.
+	closed := false
+	if kreweMayClose(written, design) {
+		written, design, closed = s.closeWhatKreweProved(ctx, req.GetFeature(), written, design)
+	}
 	// The design travels beside the step because a caller reads a verdict against the command that
-	// produced it. It is the one read before the run: nothing about a design moves when a scenario
-	// runs, and the trust record that will move with a verdict does not exist yet.
-	return &quaycrewv1.CheckStepResponse{Step: written, Design: design, Warnings: warnings}, nil
+	// produced it, and against the level that decided whether the verdict closed anything.
+	return &quaycrewv1.CheckStepResponse{
+		Step: written, Design: design, ClosedByKrewe: closed, Warnings: warnings,
+	}, nil
+}
+
+// kreweMayClose reports whether this verdict earns krewe the word done: the project stands at the
+// level where krewe closes a step, and the run it just made passed.
+//
+// The two conditions are one rule and nothing separates them. A failing check closes nothing at any
+// level, which is the one rule the ladder never bends: a level is permission to speak about a run
+// that passed, never permission to speak.
+//
+// At level 0 this answers no on a passing run, and the operator says the word. That is the whole of
+// what the first level is.
+func kreweMayClose(step *quaycrewv1.Step, design *quaycrewv1.Design) bool {
+	return design.GetTrustLevel() >= store.TrustLevelCloses &&
+		step.GetProofState() == store.ProofPassing
+}
+
+// closeWhatKreweProved gives krewe the word done on a step its own run passed, and answers the step
+// and the design as the close left them, with whether the close happened.
+//
+// It goes through the finish every close goes through. The counters then move in the transaction
+// that writes the word, and krewe agreeing with its own verdict is counted the way the operator's
+// agreement is counted, rather than by a second path that could drift from it.
+//
+// A close that the store refuses is not a failed check. The run happened and the verdict is
+// recorded, so the step is answered as it stands and the response says krewe closed nothing: the
+// operator then speaks the word, which is what level 0 does anyway. Turning it into a refusal would
+// report a check that failed when the check passed and the record holds it.
+func (s *Server) closeWhatKreweProved(ctx context.Context, feature string, step *quaycrewv1.Step,
+	design *quaycrewv1.Design) (*quaycrewv1.Step, *quaycrewv1.Design, bool) {
+	written, moved, err := s.store.FinishStep(ctx, feature, step.GetNumber(), store.Finish{
+		State: stepDone, Result: whatKreweProved(step), ClosedBy: closedByKrewe,
+	})
+	if err != nil {
+		slog.Warn("krewe ran the scenario, and the step its run passed was not closed",
+			"feature", feature, "step", step.GetNumber(), "error", err)
+		return step, design, false
+	}
+	return written, moved, true
+}
+
+// whatKreweProved is the result krewe writes on a step it closed: the scenario that passed, and how
+// many the run reported.
+//
+// A close with an empty result tells the next session nothing. That session reads this line in its
+// own path file, and what it needs from a step krewe closed is which scenario stands behind it and
+// that something actually ran.
+//
+// The count is on the line for the reason the verdict reads it: a run reporting no scenario proves
+// nothing, and a result naming only the scenario would read the same either way.
+func whatKreweProved(step *quaycrewv1.Step) string {
+	return fmt.Sprintf("krewe closed this step: the scenario %q passed, and the run reported %s",
+		step.GetProofScenario(), display.Scenarios(step.GetProofScenariosRun()))
 }
 
 // whyNothingCanRun is the rule this step and this project fail, and nil where a run may go ahead.

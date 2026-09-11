@@ -4153,6 +4153,88 @@ Feature: A project holds a numbered path of steps
     Then the driver is refused, told the call is the operator's to make
     And the trust threshold is 5
 
+  # The top of the ladder, and what krewe does with it. At level 1 a check that passed closes the step
+  # itself, and the operator reads that it happened rather than typing the word.
+  #
+  # A failing check closes nothing, at level 1 and at every other level. That is the one rule the
+  # ladder never bends: a level is permission to speak about a run that passed, never permission to
+  # speak. Everything else here is a condition on top of that rule.
+  #
+  # Step 1 of each of these paths is what bought the level. The step under the check is step 2, so the
+  # record already carries one agreement before the check runs.
+
+  Scenario: At level 1, a check whose scenario passes closes the step and names krewe as the closer
+    Given krewe is at trust level 1, with step 2 taken, restated and approved, naming the scenario "a project carries a brief"
+    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the run answers "1 scenarios (1 passed)" and exits 0
+    When the operator checks step 2
+    Then krewe closed step 2
+    And step 2 is still done
+    And step 2 says "krewe" closed it
+    And step 2 reads back as passing
+
+  # The rule the ladder never bends. A level says krewe may speak about a run that passed, and this
+  # run did not pass, so the step stays taken and the operator reads why it did.
+  Scenario: At level 1, a check whose scenario fails closes nothing, and the output says why
+    Given krewe is at trust level 1, with step 2 taken, restated and approved, naming the scenario "a project carries a brief"
+    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the run answers "1 scenarios (0 passed, 1 failed)\nthe brief read back empty" and exits 1
+    When the operator checks step 2
+    Then krewe closed nothing
+    And step 2 reads back as failing
+    And step 2's output carries "the brief read back empty"
+    And the run of agreements is 0
+    And the trust level is 1
+
+  # The first level, unchanged. Krewe states a verdict and the operator speaks the word, which is what
+  # every check did before the ladder had a second rung.
+  Scenario: At level 0, a check whose scenario passes closes nothing
+    Given a step taken, restated and approved, naming the scenario "a project carries a brief"
+    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the run answers "1 scenarios (1 passed)" and exits 0
+    When the operator checks step 1
+    Then krewe closed nothing
+    And step 1 reads back as passing
+    And the trust level is 0
+
+  # A close with an empty result tells the next session nothing, and the next session reads this line
+  # in its own path file. What it needs is the scenario that stands behind the step, and that
+  # something ran at all.
+  Scenario: The result krewe wrote names the scenario and the count
+    Given krewe is at trust level 1, with step 2 taken, restated and approved, naming the scenario "a project carries a brief"
+    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the run answers "2 scenarios (2 passed)" and exits 0
+    When the operator checks step 2
+    Then krewe closed step 2
+    And step 2's result carries "a project carries a brief"
+    And step 2's result carries "2 scenarios"
+
+  # Krewe agrees with its own verdict, so the counters move the way any agreement moves them. The run
+  # starts at zero because accepting the offer spent the agreements that bought the level.
+  Scenario: A close by krewe adds one to the run and one to the agreements
+    Given krewe is at trust level 1, with step 2 taken, restated and approved, naming the scenario "a project carries a brief"
+    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the run answers "1 scenarios (1 passed)" and exits 0
+    And the run of agreements is 0
+    And the trust record counts 1 agreement and 0 disagreements
+    When the operator checks step 2
+    Then krewe closed step 2
+    And the run of agreements is 1
+    And the trust record counts 2 agreements and 0 disagreements
+
+  # A close nobody noticed is a close nobody can correct, and correcting it is the whole safety of the
+  # ladder. So the line says krewe closed the step, and it names the way back in the same breath.
+  Scenario: The caller checks a step krewe closes and reads that krewe closed it
+    Given the system listens on an address the tool can dial
+    And krewe is at trust level 1, with step 2 taken, restated and approved, naming the scenario "a project carries a brief"
+    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the run answers "1 scenarios (1 passed)" and exits 0
+    When the caller checks step "1.2"
+    Then standard output carries "verdict: passing, 1 scenario ran"
+    And standard output carries "krewe closed this step"
+    And standard output carries "krewe step reopen"
+    And the command succeeds
+
   # One step whole, which is what a row of the listing cannot hold. The listing gives each step one
   # line, and an intention, a list of files and the end of a failed run do not fit on one, so the
   # operator had nowhere to read them.

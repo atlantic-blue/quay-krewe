@@ -5694,9 +5694,14 @@ func (x *CheckStepRequest) GetNumber() int32 {
 // A failing run is not an error. It is a verdict, and it comes back here with the count and the last
 // of the output on the step, because a caller prints a verdict rather than a refusal.
 //
-// closed_by_krewe is false until the trust ladder exists. The warnings say what the operator has to
-// know about the answer, and today they carry one thing: the session was reclaimed, so krewe started
-// a container for it before the run, and that is why the call took longer than a check usually does.
+// closed_by_krewe is true at trust level 1 on a run that passed, and false everywhere else. A
+// failing run closes nothing at any level, and at level 0 a run that passed closes nothing either,
+// because the word is the operator's until krewe earns it. The step and the design then come back as
+// that close left them.
+//
+// The warnings say what the operator has to know about the answer, and today they carry one thing:
+// the session was reclaimed, so krewe started a container for it before the run, and that is why the
+// call took longer than a check usually does.
 type CheckStepResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Step          *Step                  `protobuf:"bytes,1,opt,name=step,proto3" json:"step,omitempty"`

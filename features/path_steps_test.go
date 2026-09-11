@@ -2452,6 +2452,14 @@ func initializeProofRunSteps(sc *godog.ScenarioContext) {
 			return aStepReadyToCheck(ctx, scenario, false)
 		})
 
+	// The same road at the top of the ladder, for the scenarios about krewe closing a step itself. The
+	// step under the check is step 2, because step 1 is what bought the level.
+	sc.Step(`^krewe is at trust level 1, with step 2 taken, restated and approved, `+
+		`naming the scenario "([^"]*)"$`,
+		func(ctx context.Context, scenario string) error {
+			return aStepReadyToCheckAtLevelOne(ctx, scenario)
+		})
+
 	sc.Step(`^the project's proof command is "([^"]*)" inside (\d+) seconds?$`,
 		func(ctx context.Context, command string, seconds int) error {
 			return setProof(ctx, command, "", int32(seconds))
@@ -2569,6 +2577,48 @@ func initializeProofRunSteps(sc *godog.ScenarioContext) {
 		return nil
 	})
 
+	// The answer and the record held to each other, because a response saying krewe closed the step
+	// while the row still reads taken is exactly the failure this is here to catch. Every part of the
+	// close is read: the word, the closer and the moment.
+	sc.Step(`^krewe closed step (\d+)$`, func(ctx context.Context, number int) error {
+		p := pathFrom(ctx)
+		if p.checked == nil {
+			return fmt.Errorf("no check was run, so nothing answered")
+		}
+		if !p.checked.GetClosedByKrewe() {
+			return fmt.Errorf("the check answered that krewe closed nothing")
+		}
+		step, err := stepAsItStands(ctx, int32(number))
+		if err != nil {
+			return err
+		}
+		if got := step.GetState(); got != store.StepDone {
+			return fmt.Errorf("step %d reads %q after a check krewe closed", number, got)
+		}
+		if got := step.GetClosedBy(); got != closedByKrewe {
+			return fmt.Errorf("step %d says %q closed it, want %q", number, got, closedByKrewe)
+		}
+		if step.GetFinishedAt() == nil {
+			return fmt.Errorf("step %d carries no moment, so nothing says when krewe closed it", number)
+		}
+		return nil
+	})
+
+	// Carries rather than reads exactly, because the sentence krewe writes is the control plane's and
+	// a scenario asks what is in it: the name of the scenario, and the count the run reported.
+	sc.Step(`^step (\d+)'s result carries "([^"]*)"$`,
+		func(ctx context.Context, number int, want string) error {
+			step, err := stepAsItStands(ctx, int32(number))
+			if err != nil {
+				return err
+			}
+			if !strings.Contains(step.GetResult(), want) {
+				return fmt.Errorf("step %d's result is %q, want it to carry %q",
+					number, step.GetResult(), want)
+			}
+			return nil
+		})
+
 	// Read out of the store rather than off the answer to the check, because a call that answered
 	// with a verdict and wrote nothing reads the same to its caller and to nobody else.
 	sc.Step(`^step (\d+) reads back as (passing|failing|unproven)$`,
@@ -2642,6 +2692,10 @@ func initializeProofRunSteps(sc *godog.ScenarioContext) {
 // not have to repeat the whole command line to say what the run printed.
 const theProofCommandRuns = "-run"
 
+// closedByKrewe is the word the row carries when krewe closed a step its own check passed. It is the
+// control plane's and it is read off the wire, so it is named here rather than compared inline.
+const closedByKrewe = "krewe"
+
 // exitedWith is a command that failed, and nothing at all for one that exited zero. A shell reports a
 // failure as an exit status, and the double answers the same way.
 func exitedWith(code int) error {
@@ -2658,33 +2712,106 @@ func exitedWith(code int) error {
 // how a restatement reaches a step: it travels through a file because a model writes files and cannot
 // make a call.
 func aStepReadyToCheck(ctx context.Context, scenario string, approve bool) error {
-	w := worldFrom(ctx)
-	if _, err := w.client.SetDesign(ctx, &quaycrewv1.SetDesignRequest{
-		Project: w.projectID, Body: "# Bills\n"}); err != nil {
+	if err := anApprovedDesign(ctx); err != nil {
 		return err
 	}
-	if _, err := w.client.ApproveDesign(ctx, &quaycrewv1.ApproveDesignRequest{
-		Project: w.projectID}); err != nil {
-		return err
-	}
-	document := "## 1. The store holds a project's brief\n"
-	if scenario != "" {
-		document += "\nThe scenario that proves it\n" + scenario + "\n"
-	}
-	if err := setPath(ctx, document); err != nil {
+	if err := setPath(ctx, aPathOf(1, scenario)); err != nil {
 		return err
 	}
 	held, err := theFeature(ctx)
 	if err != nil {
 		return err
 	}
-	if err := takeStep(ctx, held.GetId(), 1); err != nil {
+	return takeRestateAndApprove(ctx, held.GetId(), 1, approve)
+}
+
+// aStepReadyToCheckAtLevelOne is the same road with the ladder already climbed: a path of two steps,
+// the first closed on a verdict krewe agreed with, the level raised on the offer that earned, and the
+// second step taken, restated and approved. The step a scenario then checks is the second one.
+//
+// It climbs the ladder the way an operator does, rather than writing the level onto the row. Only a
+// finish makes an offer and only the operator accepts one, so a setup that set the column would be
+// proving the close against a state nothing can reach.
+//
+// The threshold goes to one so the path needs two steps rather than six. What the number is proves
+// nothing here, and the scenarios that prove the offer set their own.
+func aStepReadyToCheckAtLevelOne(ctx context.Context, scenario string) error {
+	w := worldFrom(ctx)
+	if err := anApprovedDesign(ctx); err != nil {
+		return err
+	}
+	if err := setPath(ctx, aPathOf(2, scenario)); err != nil {
+		return err
+	}
+	held, err := theFeature(ctx)
+	if err != nil {
+		return err
+	}
+	if err := setTheTrustThreshold(ctx, 1); err != nil {
+		return err
+	}
+	if err := recordAVerdictOf(ctx, held.GetId(), 1, store.ProofPassing); err != nil {
+		return err
+	}
+	if err := finishStepOf(ctx, held.GetId(), 1, store.StepDone, "shipped as pull request 736"); err != nil {
+		return err
+	}
+	if w.lastErr != nil {
+		return fmt.Errorf("the finish that earns the offer was refused: %w", w.lastErr)
+	}
+	if _, err := w.client.RaiseTrust(ctx, &quaycrewv1.RaiseTrustRequest{
+		Project: w.projectID}); err != nil {
+		return fmt.Errorf("accept the offer krewe earned: %w", err)
+	}
+	return takeRestateAndApprove(ctx, held.GetId(), 2, true)
+}
+
+// anApprovedDesign is the design a path hangs off. A step cannot be taken under one nobody approved,
+// so every road to a checkable step starts here.
+func anApprovedDesign(ctx context.Context) error {
+	w := worldFrom(ctx)
+	if _, err := w.client.SetDesign(ctx, &quaycrewv1.SetDesignRequest{
+		Project: w.projectID, Body: "# Bills\n"}); err != nil {
+		return err
+	}
+	_, err := w.client.ApproveDesign(ctx, &quaycrewv1.ApproveDesignRequest{Project: w.projectID})
+	return err
+}
+
+// theStepHeadings are the titles these paths are written from, in order. A path of two reads the same
+// as the two step paths the trust scenarios already write out by hand.
+var theStepHeadings = []string{
+	"The store holds a project's brief",
+	"The store holds a project's design",
+}
+
+// aPathOf is a path document of that many steps, naming the scenario under the last of them.
+//
+// The scenario goes on the last step because that is the one a check runs. The steps above it are
+// there to be closed, which is how a project reaches a trust level at all.
+func aPathOf(steps int, scenario string) string {
+	document := ""
+	for number := 1; number <= steps; number++ {
+		document += fmt.Sprintf("## %d. %s\n", number, theStepHeadings[number-1])
+		if number == steps && scenario != "" {
+			document += "\nThe scenario that proves it\n" + scenario + "\n"
+		}
+	}
+	return document
+}
+
+// takeRestateAndApprove puts a session on one step and takes it as far as a check may go: taken,
+// restated, and the restatement approved where the caller asks for it.
+func takeRestateAndApprove(ctx context.Context, feature string, number int32, approve bool) error {
+	w := worldFrom(ctx)
+	if err := takeStep(ctx, feature, number); err != nil {
 		return err
 	}
 	if w.lastErr != nil {
 		return fmt.Errorf("the take was refused: %w", w.lastErr)
 	}
-	if err := writeRestatement(ctx, "What this step changes\nThe store holds a project's brief."); err != nil {
+	said := "What this step changes\n" + theStepHeadings[number-1] + "."
+	if err := writeRestatement(ctx, said); err != nil {
 		return err
 	}
 	// The exec is what reads the section out of the session's file and onto the step. Without it the
@@ -2700,7 +2827,7 @@ func aStepReadyToCheck(ctx context.Context, scenario string, approve bool) error
 		return nil
 	}
 	resp, err := w.client.ApproveRestatement(ctx, &quaycrewv1.ApproveRestatementRequest{
-		Feature: held.GetId(), Number: 1})
+		Feature: feature, Number: number})
 	if err != nil {
 		return err
 	}
