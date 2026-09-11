@@ -752,6 +752,7 @@ func initializeScenario(sc *godog.ScenarioContext) {
 	initializeToolNameSteps(sc)
 	initializePromisesSteps(sc)
 	initializeConstantBranchesSteps(sc)
+	initializeCommandSteps(sc)
 	// Tear the control plane down. The scenario's own failure is already recorded, so this returns
 	// nil rather than the incoming error, which would be reported a second time as a hook failure.
 	sc.After(func(ctx context.Context, _ *godog.Scenario, _ error) (context.Context, error) {

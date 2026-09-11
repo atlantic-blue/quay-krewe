@@ -1019,3 +1019,67 @@ project.**
   the count of the path and drops the rest.
 - Widening a terminal brings the column back, and reordering the gives is three numbers in three
   lines. It is the operator's to say which column they would rather lose.
+
+## Settled on 2026-09-11, building S-32, where a contract and the code disagreed
+
+Four entries. Three are the shape the last four slices recorded: the contract names something the
+code on `main` does not carry, and the code wins. The fourth is a decision for the operator.
+
+**The command files live beside the package that embeds them, at `internal/commands/init.md`.**
+- Status: settled, and the contract and the slice both name the path `commands/init.md`.
+- SLASH-1 reads "markdown files under `commands/`", carried "the way `features/catalog.go` carries
+  the feature files and `internal/store/migrate.go` carries the migrations". The slice touches both
+  `commands/init.md` and `internal/commands/commands.go`.
+- `go:embed` cannot reach outside the directory of the file that declares it, so a package at
+  `internal/commands` cannot embed a directory at the top of the repository. The two paths in the
+  slice cannot both be true.
+- The files sit next to the package, which is what `features/catalog.go` does, and the directory
+  they sit in is called `commands`, which is what the contract asks for. A reviewer reads
+  `internal/commands/init.md`, and the file ships in the repository either way.
+
+**The install asks `DeniedToDriver`, and is refused by the session identifier rather than by a
+call.**
+- Status: settled, and the contract asks for the refusal without saying how it arrives.
+- COMMAND-22 reads "Run from inside a sandbox, `DeniedToDriver` refuses it", and the slice says the
+  install joins that list. `DeniedToDriver` is a gRPC deny policy: `internal/auth` runs it on the
+  server, over a full method name, for a call carrying the driver's token. `krewe commands install`
+  writes files on the machine the tool runs on and makes no call, and the slice forbids adding one.
+- So the list gains `InstallCommands`, which is a name rather than a method, and the tool asks the
+  policy before it writes. What a session may not do stays written in one place.
+- Whether the tool is inside a session is read from `QC_SESSION_ID`, which the control plane puts in
+  every sandbox and which `cmd/krewe/design.go` already reads for the same kind of question. The
+  file Docker leaves in every container was the other candidate and is wrong: an operator working in
+  a development container is not a session, and would have been refused.
+- The cost is stated: a session could take that identifier out of its own environment. Nothing
+  client side can stop that, and the guard is against a session being handed the operator's terminal
+  by asking, not against one that sets out to evade it. A server side refusal needs a call, which
+  this feature group does not have.
+- `cmd/krewe` now imports `internal/controlplane`, which takes the tool binary from 18.8 to 21.8
+  megabytes on this machine, measured with `go build` on linux arm64. The alternative is a second
+  copy of the rule beside the write, and two places that decide what a session may not do.
+
+**The listing's order is a declared list holding the names that ship, not the four the contract
+names.**
+- Status: settled, and the contract text describes the system after S-35.
+- COMMAND-23 reads "The order is the order of `SLASH-4` to `SLASH-7`: init, design, status, then
+  trust". A directory read gives back name order, which would put design before init once S-33
+  ships, so the order has to be declared somewhere.
+- `order` in `internal/commands` holds `init` and nothing else. Naming the other three today would
+  be a list pointing at files that do not exist.
+- `TestEveryCommandHasAPlaceInTheListing` reads it both ways: a command with no place fails, and a
+  place with no command fails. So S-33 cannot add `design.md` without adding its name, and cannot
+  add a name without the file.
+
+**`krewe commands` prints three lines, and the installed line carries every build the directory
+holds.**
+- Status: settled for this slice, and it is a decision for the operator rather than a defect.
+- COMMAND-21 says the output is three lines, one of them "the build that wrote the files there now".
+  The same contract says "A file without a marker is listed with the word `unknown` where the build
+  goes", which reads as a line per file.
+- Three lines is what is built, because that is the shape the contract states first. The installed
+  line carries the distinct builds the directory holds, sorted, so one file reads `0cdc684` and a
+  directory half way through an upgrade reads `0cdc684, older11`. A file with no marker contributes
+  `unknown`.
+- With four files this is still three lines and still says whether anything is behind. A line per
+  file would say which one, and it is four lines instead of one. It is the operator's to say which
+  they would rather read.

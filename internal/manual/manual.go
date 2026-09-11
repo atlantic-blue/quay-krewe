@@ -37,6 +37,18 @@ commands:
                                           and where two of them differ
   features                                what this system can do, and what proves it
   manual                                  what krewe is and how to drive it, to pipe into a context
+  commands                                where krewe's own slash commands go on this machine, which
+                                          build wrote the ones there now, and which build this tool
+                                          would write. It writes nothing and takes no address: the
+                                          files belong to the machine
+  commands install                        write this build's slash commands into that directory, so
+                                          they are in your own terminal. A file krewe did not write
+                                          is never written over: one of those refuses the whole
+                                          install and names it, and there is no flag that goes over
+                                          the refusal. Remove the file yourself and run it again
+  commands list                           the slash commands this build carries, each with the one
+                                          line its own file says it does. It reads nothing on the
+                                          machine, so it answers before anything is installed
   use [<address>]                         show where you are, or move there
   workspace create <name>                 create a workspace and move into it
   workspace list                          list workspaces

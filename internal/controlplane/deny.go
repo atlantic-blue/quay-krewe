@@ -73,6 +73,14 @@ import (
 // could put sessions away could hide the evidence of what it did, and the sweep over a project could
 // do it to every finished session at once. Restoring stays open, because it hides nothing.
 //
+// Installing the operator's own slash commands is refused, and it is the one entry here that is not a
+// call. A slash command is a markdown file the operator's agent reads and runs on their word, in
+// their terminal, outside every sandbox. So a session that could write one could hand the operator a
+// command that does anything at all, and that is the widest grant on this list rather than the
+// narrowest. The files belong to the machine and not to the system, which is why the write happens in
+// the tool and reaches the control plane for nothing. The tool asks this policy before it writes, so
+// what a session may not do stays written in one place.
+//
 // Everything the driver exists to do stays open: workspaces, projects, sessions, dispatch, starting
 // context at the workspace and project scopes, and reading or writing a design.
 func DeniedToDriver(fullMethod string, request any) error {
@@ -96,6 +104,8 @@ func DeniedToDriver(fullMethod string, request any) error {
 		quaycrewv1.ControlPlaneService_RaiseTrust_FullMethodName,
 		quaycrewv1.ControlPlaneService_SetTrustThreshold_FullMethodName:
 		return refusedToDriver(fullMethod)
+	case InstallCommands:
+		return refusedToDriver(InstallCommands)
 	case quaycrewv1.ControlPlaneService_SetContext_FullMethodName:
 		if req, ok := request.(*quaycrewv1.SetContextRequest); ok && req.GetScope() == "system" {
 			return refusedToDriver(fullMethod)
@@ -103,6 +113,12 @@ func DeniedToDriver(fullMethod string, request any) error {
 	}
 	return nil
 }
+
+// InstallCommands is writing the operator's own slash command files, which is the one thing on this
+// list that is not a call. It is named here rather than beside the write so that the list of what a
+// session may not do stays in one place, and it is spelled the way a call is so a reader meets it in
+// the same shape as everything around it.
+const InstallCommands = "InstallCommands"
 
 func refusedToDriver(fullMethod string) error {
 	name := shortMethod(fullMethod)

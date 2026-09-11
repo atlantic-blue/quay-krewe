@@ -260,6 +260,11 @@ func run(ctx context.Context, client quaycrewv1.ControlPlaneServiceClient, args 
 		return runVersion(ctx, client, out)
 	case "manual":
 		return runManual(args[1:], out)
+	// The files belong to the machine rather than to a project, so this reaches nothing and works
+	// with the system down. Whether this tool is running inside a session is read here, from the
+	// identifier the system puts in every sandbox, where a test can hand it the other answer.
+	case "commands":
+		return runCommands(args[1:], out, os.Getenv(sandbox.SessionIDEnv) != "")
 	case "features":
 		return runFeatures(args[1:], out)
 	case "use":
