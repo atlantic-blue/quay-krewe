@@ -888,3 +888,43 @@ stale, or the decision the contract left open is recorded with the reason it wen
   level by one and hands the work back, so a session that reopened its own step would be taking the
   word done away from itself. The comment above `DeniedToDriver` records that reasoning beside the
   calls it refuses.
+
+## Settled on 2026-09-11, building S-29, where a contract and the code disagreed
+
+Three entries. SKILL-1 was written before twenty eight slices shipped, so every command shape in it
+is a claim rather than a fact. In each one the code on `main` wins and the brief says what the tool
+takes.
+
+**`krewe step check` addresses a step as `<feature>.<number>`, where the contract names no address at
+all.**
+- Status: settled, and the contract text is stale in the same way S-24 to S-28 recorded it.
+- SKILL-1 writes "A step that names no scenario cannot be checked, and `krewe step check` refuses
+  it", with no argument beside the word.
+- `stepAddressed` in `cmd/krewe/step.go` cuts the token on a full stop and refuses a bare number,
+  with "name a step as <feature>.<number>, for example 2.3". A path belongs to a feature since the
+  features slice, so two features of one project each hold a step 2, and a bare number names
+  nothing. The refusal says so even where the project holds one feature, because a guess that is
+  right today is wrong the moment a second feature is added.
+- The brief writes `krewe step check <feature>.<number>`. A brief that told a session to type a bare
+  number would teach the form the tool refuses.
+
+**Saying what a part narrows to is `krewe feature intention`, not an argument to `krewe feature
+add`.**
+- Status: settled, and the contract reads as though one command does both.
+- SKILL-1 reads "Add a feature with `krewe feature add [<address>] "<title>"`, and say what it
+  narrows to." The add takes a title and nothing else, and the number is the system's to give.
+- `krewe feature intention [<address>] <feature> "<text>"` is the write, and it refuses a second
+  line. The brief names both commands, in that order, so a session does not go looking for a flag on
+  the add.
+
+**A step names its contracts through the path document, not through a command.**
+- Status: settled, and the two sentences of SKILL-1 read as one instruction.
+- SKILL-1 reads "Write the contracts document with `krewe design contracts [<address>] --file
+  <path>`. Every step names the contracts it builds, and the scope of each."
+- Those are two different writes. `krewe design contracts` writes one document for the project, and
+  the contracts a step builds are two blocks under the step heading in the path document, which
+  GRAMMAR-1 names `The contracts it builds` and `The scope of each contract`. The brief lists all
+  seven labels of a step, so the two sentences cannot be read as one command.
+- The write is `--file <path>` as the contract says, and the flag is optional on `main`: with no file
+  the command prints the document and writes nothing. The brief gives the write form only, because a
+  session reading the brief is about to write one.

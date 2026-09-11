@@ -104,6 +104,33 @@ func initializeDesignSteps(sc *godog.ScenarioContext) {
 			return setDesign(ctx, unescape(body), session)
 		})
 
+	// The session that holds the design skill is the one the last dispatch started, so the scenario
+	// names no identifier. A skill reaching a session, and that session writing the design, are one
+	// path: a literal identifier would prove the write without proving the path.
+	sc.Step(`^the session holding the design skill (?:writes|wrote) the project's design as "([^"]*)"$`,
+		func(ctx context.Context, body string) error {
+			last, err := worldFrom(ctx).lastExec()
+			if err != nil {
+				return err
+			}
+			return setDesign(ctx, unescape(body), last.sessionID)
+		})
+
+	sc.Step(`^the design says it was written by that session$`, func(ctx context.Context) error {
+		w, d := worldFrom(ctx), designFrom(ctx)
+		if d.design == nil {
+			return fmt.Errorf("no design has been read, so there is nothing to check")
+		}
+		last, err := w.lastExec()
+		if err != nil {
+			return err
+		}
+		if got := d.design.GetWrittenBy(); got != last.sessionID {
+			return fmt.Errorf("the design says it was written by %q, want the session the skill reached, %q", got, last.sessionID)
+		}
+		return nil
+	})
+
 	sc.Step(`^the design body reads "([^"]*)"$`, func(ctx context.Context, want string) error {
 		d := designFrom(ctx)
 		if d.design == nil {

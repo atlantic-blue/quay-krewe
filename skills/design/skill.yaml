@@ -1,0 +1,4 @@
+name: design
+version: 1
+summary: Write the design of a project before anybody builds it, as the parts it delivers and the numbered path of steps that build each one.
+binaries: [krewe]
