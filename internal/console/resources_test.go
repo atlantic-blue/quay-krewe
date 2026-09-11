@@ -400,3 +400,405 @@ func pathAt(t *testing.T, client *pathClient) Model {
 	}
 	return model
 }
+
+// ---------- the projects view counts the path, the trust and the flight ----------
+
+// projectsClient answers the five calls the projects view makes, and counts each one, so a test can
+// say what the view read as well as what it drew. It embeds the generated interface, so a call this
+// view grows and this double does not answer panics loudly rather than being quietly satisfied.
+//
+// It answers ListSteps and ListFeatures the way the control plane does: a request naming nothing
+// answers for everything, and a request naming a feature it does not hold is refused. A view that
+// went row by row would work against a looser double and fail against the real thing.
+type projectsClient struct {
+	quaycrewv1.ControlPlaneServiceClient
+
+	workspaces []*quaycrewv1.Workspace
+	projects   []*quaycrewv1.Project
+	features   []*quaycrewv1.Feature
+	steps      []*quaycrewv1.Step
+	designs    map[string]*quaycrewv1.Design
+
+	stepsErr  error
+	designErr error
+
+	// counted is how many times each call was made, by the name of the call.
+	counted map[string]int
+}
+
+func (p *projectsClient) count(call string) {
+	if p.counted == nil {
+		p.counted = map[string]int{}
+	}
+	p.counted[call]++
+}
+
+func (p *projectsClient) ListWorkspaces(context.Context, *quaycrewv1.ListWorkspacesRequest,
+	...grpc.CallOption) (*quaycrewv1.ListWorkspacesResponse, error) {
+	p.count("ListWorkspaces")
+	return &quaycrewv1.ListWorkspacesResponse{Workspaces: p.workspaces}, nil
+}
+
+func (p *projectsClient) ListProjects(_ context.Context, req *quaycrewv1.ListProjectsRequest,
+	_ ...grpc.CallOption) (*quaycrewv1.ListProjectsResponse, error) {
+	p.count("ListProjects")
+	matched := make([]*quaycrewv1.Project, 0, len(p.projects))
+	for _, project := range p.projects {
+		if req.GetWorkspace() == "" || project.GetWorkspace() == req.GetWorkspace() {
+			matched = append(matched, project)
+		}
+	}
+	return &quaycrewv1.ListProjectsResponse{Projects: matched}, nil
+}
+
+func (p *projectsClient) ListFeatures(_ context.Context, req *quaycrewv1.ListFeaturesRequest,
+	_ ...grpc.CallOption) (*quaycrewv1.ListFeaturesResponse, error) {
+	p.count("ListFeatures")
+	if p.stepsErr != nil {
+		return nil, p.stepsErr
+	}
+	if req.GetProject() == "" {
+		return &quaycrewv1.ListFeaturesResponse{Features: p.features}, nil
+	}
+	matched := make([]*quaycrewv1.Feature, 0, len(p.features))
+	for _, feature := range p.features {
+		if feature.GetProject() == req.GetProject() {
+			matched = append(matched, feature)
+		}
+	}
+	return &quaycrewv1.ListFeaturesResponse{Features: matched}, nil
+}
+
+func (p *projectsClient) ListSteps(_ context.Context, req *quaycrewv1.ListStepsRequest,
+	_ ...grpc.CallOption) (*quaycrewv1.ListStepsResponse, error) {
+	p.count("ListSteps")
+	if p.stepsErr != nil {
+		return nil, p.stepsErr
+	}
+	if req.GetFeature() == "" {
+		return &quaycrewv1.ListStepsResponse{Steps: p.steps}, nil
+	}
+	held := make([]*quaycrewv1.Step, 0, len(p.steps))
+	for _, step := range p.steps {
+		if step.GetFeature() == req.GetFeature() {
+			held = append(held, step)
+		}
+	}
+	if len(held) == 0 {
+		return nil, fmt.Errorf("no feature %q", req.GetFeature())
+	}
+	return &quaycrewv1.ListStepsResponse{Steps: held}, nil
+}
+
+func (p *projectsClient) GetDesign(_ context.Context, req *quaycrewv1.GetDesignRequest,
+	_ ...grpc.CallOption) (*quaycrewv1.GetDesignResponse, error) {
+	p.count("GetDesign")
+	if p.designErr != nil {
+		return nil, p.designErr
+	}
+	if held, known := p.designs[req.GetProject()]; known {
+		return &quaycrewv1.GetDesignResponse{Design: held}, nil
+	}
+	return &quaycrewv1.GetDesignResponse{Design: bornDesign(req.GetProject())}, nil
+}
+
+// theWorkspace is the one workspace every case about the projects view is drilled into.
+const theWorkspace = "7b6c5d4e3f2a1b0c9d8e7f6a"
+
+// aProjectOf is a control plane holding one workspace, one project, one feature, and the steps handed
+// to it. It is the shape of every case about what one cell of a project row says.
+func aProjectOf(steps ...*quaycrewv1.Step) *projectsClient {
+	return &projectsClient{
+		workspaces: []*quaycrewv1.Workspace{{Id: theWorkspace, Name: "acme"}},
+		projects: []*quaycrewv1.Project{
+			{Id: theProject, Workspace: theWorkspace, Name: "house-bills"},
+		},
+		features: []*quaycrewv1.Feature{
+			{Id: theFeature, Project: theProject, Number: 1, Title: "the bills"},
+		},
+		steps: steps,
+	}
+}
+
+// aStepIn is one step of the one feature, in the state handed to it.
+func aStepIn(number int32, state string) *quaycrewv1.Step {
+	step := aStep(number, fmt.Sprintf("the step numbered %d", number))
+	step.State = state
+	return step
+}
+
+// designedWith is the project's design row, carrying a body so the project counts as designed, and
+// whatever trust record the case is about.
+func designedWith(design *quaycrewv1.Design) map[string]*quaycrewv1.Design {
+	design.Project = theProject
+	if design.GetBody() == "" {
+		design.Body = "the design, as the operator approved it"
+	}
+	if design.GetStepsInFlightCap() == 0 {
+		design.StepsInFlightCap = 10
+	}
+	return map[string]*quaycrewv1.Design{theProject: design}
+}
+
+// Where each cell of a project row sits, named so an assertion reads as the column it is about.
+const (
+	projectIDCell     = 0
+	projectNameCell   = 1
+	deploysToCell     = 3
+	projectPathCell   = 4
+	projectTrustCell  = 5
+	projectFlightCell = 6
+)
+
+// onlyProjectDrawn is the single row of a listing of one project, which is the shape of every case
+// about what one cell says.
+func onlyProjectDrawn(t *testing.T, client *projectsClient) []string {
+	t.Helper()
+	drawn := drawnBy(t, Projects(client), theWorkspace)
+	if len(drawn) != 1 {
+		t.Fatalf("the view drew %d rows, want 1: %v", len(drawn), drawn)
+	}
+	return drawn[0]
+}
+
+// The columns and their widths are the contract's, in the contract's order. A column added in the
+// wrong place moves every cell a test and an action read back out of a row.
+func TestTheProjectsViewDrawsTheColumnsTheContractNames(t *testing.T) {
+	wanted := []struct {
+		title string
+		width int
+	}{
+		{"id", 10}, {"name", 24}, {"workspace", 18}, {"deploys to", 26},
+		{"path", 6}, {"trust", 15}, {"flight", 6}, {"age", 0},
+	}
+	columns := Projects(aProjectOf()).Columns
+	if len(columns) != len(wanted) {
+		t.Fatalf("the projects view draws %d columns, want %d", len(columns), len(wanted))
+	}
+	for at, want := range wanted {
+		if columns[at].Title != want.title {
+			t.Errorf("column %d is headed %q, want %q", at, columns[at].Title, want.title)
+		}
+		if columns[at].Width != want.width {
+			t.Errorf("the %s column is %d wide, want %d", want.title, columns[at].Width, want.width)
+		}
+	}
+	// The whole record a standing offer draws, which is the longest thing the trust column holds.
+	// A column narrower than it cuts the word the offer is made of.
+	if columns[projectTrustCell].Width < len("0 (5/5) offered") {
+		t.Errorf("the trust column is %d wide, and a standing offer is %d characters",
+			columns[projectTrustCell].Width, len("0 (5/5) offered"))
+	}
+}
+
+// How far the path got, out of how long it is, on the listing the operator already reads.
+func TestAProjectWithSevenStepsThreeOfThemDoneDrawsThreeOfSeven(t *testing.T) {
+	steps := make([]*quaycrewv1.Step, 0, 7)
+	for number := int32(1); number <= 7; number++ {
+		state := stepReady
+		if number <= 3 {
+			state = stepDone
+		}
+		steps = append(steps, aStepIn(number, state))
+	}
+
+	if got := onlyProjectDrawn(t, aProjectOf(steps...))[projectPathCell]; got != "3/7" {
+		t.Fatalf("a project with seven steps and three done draws %q, want %q", got, "3/7")
+	}
+}
+
+// Nothing there is not a count of zero. A project nobody wrote a path for draws an empty cell, and
+// never 0/0: 0/0 reads as a path that exists and has not started, and the two are different
+// questions.
+func TestAProjectWithNoPathDrawsAnEmptyPathCellAndNeverZeroOfZero(t *testing.T) {
+	client := aProjectOf()
+	client.features = nil
+
+	got := onlyProjectDrawn(t, client)[projectPathCell]
+	if got == "0/0" {
+		t.Fatalf("a project with no path draws %q, and a path nobody wrote is not a path of no steps", got)
+	}
+	if got != "" {
+		t.Fatalf("a project with no path draws %q, want an empty cell", got)
+	}
+}
+
+// The level with the run behind it, and the threshold that run is counted against. The number alone
+// says where krewe stands and not how close it is to the next question.
+func TestTheTrustCellDrawsTheLevelWithTheRunBehindIt(t *testing.T) {
+	client := aProjectOf()
+	client.designs = designedWith(&quaycrewv1.Design{
+		TrustLevel: 0, TrustRun: 2, TrustThreshold: 5, TrustAgreements: 2,
+	})
+
+	if got := onlyProjectDrawn(t, client)[projectTrustCell]; got != "0 (2/5)" {
+		t.Fatalf("a project at level 0 with two agreements in a row draws %q, want %q", got, "0 (2/5)")
+	}
+}
+
+// An offer stands until the operator answers it, so the listing says so. Without this the operator
+// only finds the offer by running krewe trust on each project in turn.
+func TestAProjectWithAStandingOfferSaysSoInTheTrustCell(t *testing.T) {
+	client := aProjectOf()
+	client.designs = designedWith(&quaycrewv1.Design{
+		TrustLevel: 0, TrustRun: 5, TrustThreshold: 5, TrustOffered: true,
+	})
+
+	got := onlyProjectDrawn(t, client)[projectTrustCell]
+	if !strings.Contains(got, "offered") {
+		t.Fatalf("a project with a standing offer draws %q, and the offer is not in it", got)
+	}
+	if got != "0 (5/5) offered" {
+		t.Fatalf("a project with a standing offer draws %q, want %q", got, "0 (5/5) offered")
+	}
+}
+
+// A project nobody designed has taken no step, so it agreed with nothing. A record of zeroes there
+// reads as a project that tried and failed, which is the reading krewe trust already refuses to give.
+func TestAProjectWithNoDesignDrawsAnEmptyTrustCell(t *testing.T) {
+	if got := onlyProjectDrawn(t, aProjectOf())[projectTrustCell]; got != "" {
+		t.Fatalf("a project with no design draws %q in the trust cell, want an empty cell", got)
+	}
+}
+
+// How much of the project is moving, out of how much may move at once. Both numbers are what the
+// control plane refuses the next take against.
+func TestTheFlightCellCountsTheStepsInFlightAgainstTheCap(t *testing.T) {
+	client := aProjectOf(
+		aStepIn(1, stepDone), aStepIn(2, stepTaken), aStepIn(3, stepTaken), aStepIn(4, stepReady))
+	client.designs = designedWith(&quaycrewv1.Design{StepsInFlightCap: 3})
+
+	if got := onlyProjectDrawn(t, client)[projectFlightCell]; got != "2/3" {
+		t.Fatalf("a project with two steps taken and a cap of three draws %q, want %q", got, "2/3")
+	}
+}
+
+// A project at its cap is drawn plainly. The operator reads the refusal when they take the next step,
+// and a listing that marked a full project would be marking the normal state of a project with work
+// in it.
+func TestAProjectAtItsCapDrawsTheCountAndTheCapPlainly(t *testing.T) {
+	client := aProjectOf(aStepIn(1, stepTaken), aStepIn(2, stepTaken), aStepIn(3, stepTaken))
+	client.designs = designedWith(&quaycrewv1.Design{StepsInFlightCap: 3})
+
+	got := onlyProjectDrawn(t, client)[projectFlightCell]
+	if got != "3/3" {
+		t.Fatalf("a project at its cap draws %q, want %q", got, "3/3")
+	}
+	for _, mark := range []string{"!", "*", "\x1b"} {
+		if strings.Contains(got, mark) {
+			t.Fatalf("a project at its cap draws %q, and the cell carries a mark", got)
+		}
+	}
+}
+
+// A listing that cannot count steps still has rows worth drawing, so the failure is swallowed the way
+// GetUsage already is in the header. The two counted cells go empty and the row stays.
+func TestAFailedStepsCallLeavesThePathAndFlightCellsEmptyAndStillDrawsTheRow(t *testing.T) {
+	client := aProjectOf(aStepIn(1, stepDone), aStepIn(2, stepTaken))
+	client.designs = designedWith(&quaycrewv1.Design{StepsInFlightCap: 3})
+	client.stepsErr = fmt.Errorf("the control plane is not answering")
+
+	rows, err := Projects(client).List(context.Background(), theWorkspace)
+	if err != nil {
+		t.Fatalf("a listing that could not count steps refused to draw at all: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("the view drew %d rows, and a project it cannot count is still a project", len(rows))
+	}
+	if got := rows[0].Cells[projectPathCell]; got != "" {
+		t.Errorf("a failed steps call draws %q in the path cell, want an empty cell", got)
+	}
+	if got := rows[0].Cells[projectFlightCell]; got != "" {
+		t.Errorf("a failed steps call draws %q in the flight cell, want an empty cell", got)
+	}
+	// The name is still there, which is what makes the row worth drawing.
+	if got := rows[0].Cells[projectNameCell]; got != "house-bills" {
+		t.Errorf("the row names the project as %q, want house-bills", got)
+	}
+}
+
+// The same swallow on the other read. A row that cannot say where trust sits is still a row.
+func TestAFailedDesignReadLeavesTheTrustAndFlightCellsEmptyAndStillDrawsTheRow(t *testing.T) {
+	client := aProjectOf(aStepIn(1, stepDone), aStepIn(2, stepTaken))
+	client.designErr = fmt.Errorf("the control plane is not answering")
+
+	rows, err := Projects(client).List(context.Background(), theWorkspace)
+	if err != nil {
+		t.Fatalf("a listing that could not read a design refused to draw at all: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("the view drew %d rows, and a project it cannot read is still a project", len(rows))
+	}
+	if got := rows[0].Cells[projectTrustCell]; got != "" {
+		t.Errorf("a failed design read draws %q in the trust cell, want an empty cell", got)
+	}
+	if got := rows[0].Cells[projectFlightCell]; got != "" {
+		t.Errorf("a failed design read draws %q in the flight cell, want an empty cell", got)
+	}
+	// The path cell is counted from the steps, which answered, so it is still drawn.
+	if got := rows[0].Cells[projectPathCell]; got != "1/2" {
+		t.Errorf("a failed design read draws %q in the path cell, want %q", got, "1/2")
+	}
+}
+
+// The count the listing promises. The console refreshes itself every few seconds, so a call per row
+// is a call per row per refresh, and a page of forty projects would make forty of them.
+//
+// The steps are counted in two calls whatever the page holds: one for the features, because a step
+// carries its feature and not its project, and one for the steps. The design is read once per project
+// because GetDesign takes one project and there is no call that answers for several.
+func TestAPageOfProjectsIsCountedInAFixedNumberOfCalls(t *testing.T) {
+	client := aProjectOf()
+	client.steps = nil
+	for at := 2; at <= 6; at++ {
+		project := fmt.Sprintf("%024d", at)
+		feature := fmt.Sprintf("%024d", at*100)
+		client.projects = append(client.projects, &quaycrewv1.Project{
+			Id: project, Workspace: theWorkspace, Name: fmt.Sprintf("project %d", at),
+		})
+		client.features = append(client.features,
+			&quaycrewv1.Feature{Id: feature, Project: project, Number: 1, Title: "the only part"})
+		client.steps = append(client.steps, &quaycrewv1.Step{
+			Feature: feature, Number: 1, Title: "the one step", State: stepTaken, ProofState: proofUnproven,
+		})
+	}
+
+	drawn := drawnBy(t, Projects(client), theWorkspace)
+	if len(drawn) != 6 {
+		t.Fatalf("the view drew %d rows, want 6", len(drawn))
+	}
+	for _, call := range []string{"ListProjects", "ListWorkspaces", "ListFeatures", "ListSteps"} {
+		if got := client.counted[call]; got != 1 {
+			t.Errorf("drawing six projects made %d %s calls, want 1", got, call)
+		}
+	}
+	if got := client.counted["GetDesign"]; got != len(client.projects) {
+		t.Errorf("drawing six projects made %d GetDesign calls, want one per project", got)
+	}
+}
+
+// One project's steps are not another's. Two projects on one page are counted apart, out of the one
+// listing both were read from.
+func TestTwoProjectsOnOnePageAreCountedApart(t *testing.T) {
+	elsewhere, itsFeature := "d4e5f60718293a4b5c6d7e8f", "e5f60718293a4b5c6d7e8f90"
+	client := aProjectOf(aStepIn(1, stepDone), aStepIn(2, stepTaken), aStepIn(3, stepReady))
+	client.projects = append(client.projects,
+		&quaycrewv1.Project{Id: elsewhere, Workspace: theWorkspace, Name: "gardening"})
+	client.features = append(client.features,
+		&quaycrewv1.Feature{Id: itsFeature, Project: elsewhere, Number: 1, Title: "somebody else's"})
+	client.steps = append(client.steps, &quaycrewv1.Step{
+		Feature: itsFeature, Number: 1, Title: "its only step", State: stepDone, ProofState: proofPassing,
+	})
+
+	drawn := drawnBy(t, Projects(client), theWorkspace)
+	counted := map[string]string{}
+	for _, cells := range drawn {
+		counted[cells[projectNameCell]] = cells[projectPathCell]
+	}
+	if counted["house-bills"] != "1/3" {
+		t.Errorf("the first project draws %q in the path cell, want %q", counted["house-bills"], "1/3")
+	}
+	if counted["gardening"] != "1/1" {
+		t.Errorf("the second project draws %q in the path cell, want %q", counted["gardening"], "1/1")
+	}
+}

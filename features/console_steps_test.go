@@ -365,6 +365,33 @@ func initializeConsoleSteps(sc *godog.ScenarioContext) {
 		return expectRows(consoleFrom(ctx), "path", want)
 	})
 
+	// The projects view counts three of its cells rather than reading them off the wire. A scenario
+	// names the column by the heading the operator reads, because an index moves the moment a column
+	// is added in front of it.
+	sc.Step(`^the projects listing draws "([^"]*)" in the "([^"]*)" column$`,
+		func(ctx context.Context, want, column string) error {
+			got, err := projectCell(consoleFrom(ctx), column)
+			if err != nil {
+				return err
+			}
+			if got != want {
+				return fmt.Errorf("the %s column reads %q, want %q", column, got, want)
+			}
+			return nil
+		})
+
+	sc.Step(`^the projects listing says nothing in the "([^"]*)" column$`,
+		func(ctx context.Context, column string) error {
+			got, err := projectCell(consoleFrom(ctx), column)
+			if err != nil {
+				return err
+			}
+			if got != "" {
+				return fmt.Errorf("the %s column reads %q, want an empty cell", column, got)
+			}
+			return nil
+		})
+
 	sc.Step(`^the console is showing the path$`, func(ctx context.Context) error {
 		if got := consoleFrom(ctx).active.Name; got != "path" {
 			return fmt.Errorf("the console is showing %q, want path", got)
@@ -975,4 +1002,36 @@ func (c *consoleWorld) pressAt(at int, key tea.Msg) error {
 		}
 	}
 	return c.press(key)
+}
+
+// projectCell is what the projects listing draws under one heading, for the one project a scenario
+// holds. It finds the column by its title so the assertion is about the column the operator reads
+// rather than about a position in the row.
+func projectCell(c *consoleWorld, column string) (string, error) {
+	if c == nil || c.registry == nil {
+		return "", fmt.Errorf("the console was not opened")
+	}
+	if c.active.Name != "projects" {
+		return "", fmt.Errorf("the console is showing %q, want projects", c.active.Name)
+	}
+	at, headings := -1, make([]string, 0, len(c.active.Columns))
+	for index, held := range c.active.Columns {
+		headings = append(headings, held.Title)
+		if held.Title == column {
+			at = index
+		}
+	}
+	if at < 0 {
+		return "", fmt.Errorf("the projects listing has no %q column, it draws %s",
+			column, strings.Join(headings, ", "))
+	}
+	row, err := onlyRow(c)
+	if err != nil {
+		return "", err
+	}
+	if at >= len(row.Cells) {
+		return "", fmt.Errorf("the %s column is column %d and the row has %d cells",
+			column, at, len(row.Cells))
+	}
+	return row.Cells[at], nil
 }

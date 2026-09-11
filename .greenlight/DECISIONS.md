@@ -972,3 +972,50 @@ listed under.**
   `waiting on …`, which is still the only cell in the column that says a person is needed.
 - Widening the column to 14 costs the title column two characters and nothing else. It is one number
   in one line, and it is the operator's to say.
+
+## Settled on 2026-09-11, building S-31, where a contract and the code disagreed
+
+Three entries. The first two are the shape S-30 recorded: the contract names a call that does not
+take what it says it takes, and the code on `main` wins. The third is a decision for the operator.
+
+**Counting every project's path is two calls, because `ListSteps` names a feature and a step carries
+no project.**
+- Status: settled, and the contract text is stale the way S-30 recorded it one slice ago.
+- CONSOLE-2 reads "one `ListSteps` call with an empty project", and its invariant reads "An empty
+  project answers for every project".
+- `ListStepsRequest` carries `string feature = 1` and no project field. The call does answer for
+  everything when it names nothing, so half the sentence holds: `internal/store` reads every live
+  feature's steps, and `internal/controlplane/design.go` leaves that answer in feature order. The
+  other half does not: a project identifier in that field names no feature.
+- A `Step` carries its feature on the wire and not its project, which S-30 also recorded, so the
+  answer cannot be grouped by project on its own. `ListFeatures` with an empty project answers with
+  every feature, and a `Feature` carries its project, so the features are read first and say which
+  project each step belongs to.
+- The rule the contract states is the one that is built: the draw makes a fixed number of calls. Two
+  calls count the steps of a page of one project and of a page of forty, and
+  `TestAPageOfProjectsIsCountedInAFixedNumberOfCalls` counts them. The console refreshes itself, so a
+  call per row would be a call per row every few seconds.
+
+**The design is read once per project, because `GetDesign` is the only reader and it takes one
+project.**
+- Status: settled, and the contract asks for this in its own input line.
+- CONSOLE-2's invariant is about `ListSteps` alone. Its input reads "the design of each project on the
+  page", which is one read per project.
+- There is no call that answers with several designs. `GetDesignRequest` carries `string project = 1`,
+  the store interface has `GetDesign(ctx, project)` and no listing beside it, and `Project` gains no
+  field on the wire in this slice.
+- So the trust cell and the cap behind the flight cell cost one call per row. That is the cost of the
+  slice, and a call that answers for a page of projects is the thing that would remove it.
+
+**The `deploys to` column gives way first, which is how the three new columns are paid for.**
+- Status: settled for this slice, and it is a decision for the operator rather than a defect.
+- The projects view was 5 columns and is 8. A console 120 columns wide has 118 to draw in, and the 8
+  columns need 121, so something has to go.
+- `Column.Give` is the mechanism the code already carries for this: a column says when it gives way,
+  and the narrower the window the fewer are drawn. `deploys to` is the widest column at 26, and it is
+  a declaration rather than a state, so it goes first. At 120 columns the operator sees the three new
+  cells and loses `deploys to`; at 140 they see all eight.
+- The three new columns give way after it, flight then trust then path, so a very narrow console keeps
+  the count of the path and drops the rest.
+- Widening a terminal brings the column back, and reordering the gives is three numbers in three
+  lines. It is the operator's to say which column they would rather lose.
