@@ -332,6 +332,11 @@ func TestEnterOnATakenStepOpensTheProjectsSessions(t *testing.T) {
 	if model.parent != theProject {
 		t.Fatalf("the sessions view is scoped to %q, want the step's project %q", model.parent, theProject)
 	}
+	// The line under the list says where the operator is standing, and every other view says it in
+	// words a person could type. A step is typed as <feature number>.<step number>.
+	if got := model.Position(); got != "1.2" {
+		t.Fatalf("the console says the operator is standing at %q, want the step they came from", got)
+	}
 }
 
 // A call that fails leaves the view empty and hands back the reason, the way every other view does.

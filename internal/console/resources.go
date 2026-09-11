@@ -182,7 +182,7 @@ func pathLister(client quaycrewv1.ControlPlaneServiceClient) Lister {
 				return nil, err
 			}
 			for _, step := range listed.GetSteps() {
-				rows = append(rows, stepRow(step, feature.GetProject()))
+				rows = append(rows, stepRow(step, feature))
 			}
 		}
 		return rows, nil
@@ -217,14 +217,20 @@ func numberOfStep(row Row) string {
 	return row.Cells[stepNumberColumn]
 }
 
-func stepRow(step *quaycrewv1.Step, project string) Row {
+func stepRow(step *quaycrewv1.Step, feature *quaycrewv1.Feature) Row {
 	// A number counts from one inside each feature, so two features of one project both hold a step
 	// 2 and the identifier carries the feature.
+	//
+	// What a person types for the same step is <feature number>.<step number>, which is what every
+	// krewe step command takes, and it is what the line under the list says after enter descends
+	// from this row. The title is a sentence, and a sentence there reads as somewhere to go back to
+	// rather than as a step.
 	state := stepStateCell(step)
 	return Row{
-		ID:     step.GetFeature() + "." + strconv.Itoa(int(step.GetNumber())),
-		Parent: project,
-		Label:  step.GetTitle(),
+		ID:      step.GetFeature() + "." + strconv.Itoa(int(step.GetNumber())),
+		Parent:  feature.GetProject(),
+		Label:   step.GetTitle(),
+		Address: strconv.Itoa(int(feature.GetNumber())) + "." + strconv.Itoa(int(step.GetNumber())),
 		Cells: []string{
 			strconv.Itoa(int(step.GetNumber())),
 			step.GetTitle(),
