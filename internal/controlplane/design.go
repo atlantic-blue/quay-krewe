@@ -1435,6 +1435,9 @@ func (s *Server) GetStep(ctx context.Context, req *quaycrewv1.GetStepRequest) (*
 // whose design nobody approved never reaches the store, never mints a session and never starts a
 // container. The store's own write is what refuses a step somebody already holds, because a read here
 // followed by a write there would let two takes of one step both pass.
+//
+// Gate 2 lives in the store for the same reason. The step this one waits for could be stopped between
+// a read here and the write there, and the take would land on a path that moved under it.
 func (s *Server) TakeStep(ctx context.Context, req *quaycrewv1.TakeStepRequest) (*quaycrewv1.TakeStepResponse, error) {
 	if req.GetFeature() == "" {
 		return nil, status.Error(codes.InvalidArgument, "which feature: a step belongs to one, so say its number")
@@ -1474,6 +1477,12 @@ func (s *Server) TakeStep(ctx context.Context, req *quaycrewv1.TakeStepRequest) 
 	taken, flying, err := s.store.TakeStep(ctx, req.GetFeature(), req.GetNumber(), handle)
 	if errors.Is(err, store.ErrStepNotReady) {
 		return nil, status.Error(codes.FailedPrecondition, whoHoldsIt(held))
+	}
+	// Gate 2. Not a state the caller got wrong either: the step is theirs to take and the path has
+	// not reached it yet, so the refusal names the step in the way and the two ways past it.
+	var waiting *store.PredecessorError
+	if errors.As(err, &waiting) {
+		return nil, status.Error(codes.FailedPrecondition, finishThatFirst(waiting))
 	}
 	// Not a state the caller got wrong. The take is allowed and there is no room for it yet, so the
 	// refusal says what runs and what to do about it rather than what is wrong with the request.
@@ -1729,6 +1738,24 @@ func noRoomForIt(full *store.StepsInFlightError) string {
 			"Finish one with krewe step done [<address>] <feature>.<number> \"<result>\", "+
 			"or raise the cap with krewe path cap [<address>] <number>",
 		len(full.Steps), full.Cap, strings.Join(said, ", "))
+}
+
+// finishThatFirst is the refusal for a take whose predecessor is not done. It names that step, the
+// state it is in, and the two ways past it.
+//
+// The state is on the line because it decides which way past to take. A step in flight is one to wait
+// for and then finish; a stopped step is one nobody will finish, and the way past it is to rewrite the
+// path so this step waits for something else. There is no override flag, so a refusal that said only
+// that the path is blocked would leave the operator with nothing to type.
+//
+// The word it reads is the state and never the verdict. A step whose check failed and which the
+// operator then marked done is done, and this refusal never fires on it.
+func finishThatFirst(waiting *store.PredecessorError) string {
+	return fmt.Sprintf(
+		"this step waits for step %d, and step %d is %s. Finish it with krewe step done "+
+			"[<address>] <feature>.<number> \"<result>\", or point this step at another one with "+
+			"krewe path set [<address>] <feature> --file <path>",
+		waiting.Number, waiting.Number, waiting.State)
 }
 
 // somebodyElseWritesIt is the refusal for a take that names a file a step in flight already names.

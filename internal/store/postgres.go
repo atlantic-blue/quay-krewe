@@ -1238,13 +1238,17 @@ func (p *Postgres) GetStep(ctx context.Context, feature string, number int32) (*
 	return step, nil
 }
 
-// TakeStep gives a ready step to a session, and says how many steps of the project run once it lands.
+// TakeStep gives a step to a session, and says how many steps of the project run once it lands.
 //
 // The step is addressed by its feature, and step 3 of one feature is a different step from step 3 of
-// another, so taking one leaves the other ready. Neither limit is addressed that way: the cap and the
-// files both belong to the project, and both join the steps to the features on it. A query filtered by
-// feature would let a project with five features run five times the number the operator set, and would
-// let two features write one file at the same moment.
+// another, so taking one leaves the other ready. The two limits are not addressed that way: the cap
+// and the files both belong to the project, and both join the steps to the features on it. A query
+// filtered by feature would let a project with five features run five times the number the operator
+// set, and would let two features write one file at the same moment.
+//
+// The predecessor is the one rule here that does read a single feature. After names a lower step of
+// this path, so the lookup is keyed by this feature and the step number it holds. Joined through the
+// project it would hold a step behind a step of another feature's path.
 //
 // The whole thing is one transaction that first locks the project row, so two takes at one moment are
 // done one after the other and cannot both pass a cap with room for one of them, or both pass a file
@@ -1281,17 +1285,33 @@ func (p *Postgres) TakeStep(ctx context.Context, feature string, number int32, s
 	// refused for that and never for the cap. A full project would otherwise answer a second take on
 	// one step with "finish one to make room", which sends the operator to fix the wrong thing.
 	var state, touches string
+	var after int32
 	err = transaction.QueryRow(ctx,
-		`select s.state, s.touches from feature_steps s where s.feature = $1 and s.number = $2 for update of s`,
-		feature, number).Scan(&state, &touches)
+		`select s.state, s.touches, s.after from feature_steps s
+		where s.feature = $1 and s.number = $2 for update of s`,
+		feature, number).Scan(&state, &touches, &after)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, 0, ErrNotFound
 	}
 	if err != nil {
 		return nil, 0, fmt.Errorf("read the step: %w", err)
 	}
-	if state != StepReady {
+	if !Takeable(state) {
 		return nil, 0, ErrStepNotReady
+	}
+
+	// Gate 2, before the cap, because a step waiting on another is refused whatever room the project
+	// has. Counted first, a full project would answer with the cap and send the operator to finish any
+	// step at all, when the one step that unblocks this one is named right here.
+	//
+	// The read is inside the transaction that holds the project row, so the step it names cannot be
+	// finished or stopped between the answer and the write.
+	waiting, err := predecessorNotDone(ctx, transaction, feature, after)
+	if err != nil {
+		return nil, 0, err
+	}
+	if waiting != nil {
+		return nil, 0, waiting
 	}
 
 	flying, err := stepsInFlight(ctx, transaction, project)
@@ -1311,11 +1331,17 @@ func (p *Postgres) TakeStep(ctx context.Context, feature string, number int32, s
 		return nil, 0, shared
 	}
 
+	// The take starts the step clean, so a stopped step taken again carries no restatement, no
+	// approval and no verdict from the attempt that stopped. The result, the moment it finished and
+	// who closed it stay where they are: they are the record of that attempt.
 	step, err := scanStep(transaction.QueryRow(ctx, `
 		update feature_steps s
-		set state = $4, session = $3, taken_at = now(), updated_at = now()
-		where s.feature = $1 and s.number = $2 and s.state = $5
-		returning `+stepColumns, feature, number, session, StepTaken, StepReady))
+		set state = $4, session = $3, taken_at = now(), updated_at = now(),
+			restatement = '', restated_at = null,
+			restatement_approved = false, restatement_approved_at = null,
+			proof_state = $6, proof_scenarios_run = 0, proof_output = '', proof_ran_at = null
+		where s.feature = $1 and s.number = $2 and s.state = any($5)
+		returning `+stepColumns, feature, number, session, StepTaken, TakeableStates(), ProofUnproven))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, 0, ErrStepNotReady
 	}
@@ -1326,6 +1352,35 @@ func (p *Postgres) TakeStep(ctx context.Context, feature string, number int32, s
 		return nil, 0, fmt.Errorf("commit the take: %w", err)
 	}
 	return step, int32(len(flying)) + 1, nil
+}
+
+// predecessorNotDone is the refusal for a step whose predecessor is not done, and nil when nothing
+// holds this step back.
+//
+// It reads the state column and never proof_state. Done is the operator's word, so a step whose check
+// failed and which the operator then closed lets the next step through, and the row keeps the
+// disagreement.
+//
+// The lookup is keyed by this feature and the number after names. It joins nothing, because a step
+// waits for a lower step of its own path and never for a step of another feature.
+func predecessorNotDone(ctx context.Context, transaction pgx.Tx, feature string, after int32) (
+	*PredecessorError, error) {
+	if after == 0 {
+		return nil, nil
+	}
+	var state string
+	err := transaction.QueryRow(ctx,
+		`select state from feature_steps where feature = $1 and number = $2`, feature, after).Scan(&state)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return &PredecessorError{Number: after, State: PredecessorMissing}, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read the step this one waits for: %w", err)
+	}
+	if state == StepDone {
+		return nil, nil
+	}
+	return &PredecessorError{Number: after, State: state}, nil
 }
 
 // stepsInFlight is every step of one project in state taken, with the feature each one sits in and
