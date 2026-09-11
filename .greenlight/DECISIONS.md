@@ -962,3 +962,13 @@ listed under.**
 - `closed_by` shipped in migration 0070 and the trust columns in 0075, both on `main`. The
   restatement columns the derived state cell reads shipped earlier still. The view reads the wire
   and writes nothing, so it needs no schema of its own.
+
+**The state column is 12 wide and the word it draws is 14, so the cell reads `waiting on …`.**
+- Status: settled for this slice, and it is a decision for the operator rather than a defect.
+- CONSOLE-1 fixes the state column at width 12, and the same contract names the derived word
+  "waiting on you", which is 14 characters. The two sentences cannot both be drawn whole.
+- The width is built as the contract writes it, because the columns and their widths are what the
+  slice was asked to prove. The cut is visible on screen: a step waiting on the operator reads
+  `waiting on …`, which is still the only cell in the column that says a person is needed.
+- Widening the column to 14 costs the title column two characters and nothing else. It is one number
+  in one line, and it is the operator's to say.
