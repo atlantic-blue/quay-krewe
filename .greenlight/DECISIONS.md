@@ -1083,3 +1083,40 @@ holds.**
 - With four files this is still three lines and still says whether anything is behind. A line per
   file would say which one, and it is four lines instead of one. It is the operator's to say which
   they would rather read.
+
+## Settled on 2026-09-11, building S-33, where a contract and the code disagreed
+
+Two entries. Both are the shape the last five slices recorded: the contract names something the code
+does not carry, and the code wins.
+
+**The design skill is attached to the workspace, because a skill has no session scope, and the
+attach runs before the dispatch.**
+- Status: settled, and the contract asks for the session to hold the skill without saying how.
+- SLASH-5 reads "The session it dispatches holds the design skill of SKILL-1", and the slice asks the
+  command to say how it makes sure of that rather than to assume it.
+- `AttachSkillRequest` carries a workspace and a scope, and the scope is `workspace` or `system`.
+  There is no project field and no session field. `internal/controlplane/server.go` says a session
+  already running keeps what its sandbox was born with, because the mount and the setup happen when
+  the container is made. So nothing can give one session a skill.
+- The file reads `krewe skill list <workspace>` first, and names `krewe skill attach <workspace>
+  design` only when that listing does not carry it. The attach is a write, and it reaches every later
+  session of that workspace, so the file says that out loud and asks for a yes before it runs. That
+  is what SLASH-3 asks of a command that writes.
+- The order is part of the answer and the file states it. A skill reaches a sandbox when the system
+  builds the sandbox, so a session dispatched first would never hold the skill.
+- The cost is stated: the operator's yes widens a workspace rather than one project. A skill held at
+  the project level is the thing that would remove that, and it is a change to the wire.
+
+**A command written out to be typed is held to its whole phrase, because a first word that is real
+hid the rest of it.**
+- Status: settled, and the contract states the rule that the test now reads.
+- SLASH-3 reads "A command names only verbs `internal/manual.Commands` carries. A command naming a
+  verb the manual does not carry is a defect, and a test proves it."
+- `TestEveryVerbACommandNamesIsInTheManual` took the one or two words after `krewe` and passed the
+  pair when either the pair or the first word was carried. So `krewe design status` passed on the
+  strength of `design`, and the manual carries no such command. The mutation this slice ran found it.
+- The fallback is there for a reason, and it stays: "krewe design and show what it says" is a
+  sentence rather than a command, and the words after the verb are ordinary prose.
+- So the test reads the two apart. A command written out to be typed, in an indented code line or an
+  inline code span, is held to its whole phrase. Prose keeps the loose read. The same mutation in
+  `init.md` is refused as well, so this holds over the set rather than over the file this slice adds.

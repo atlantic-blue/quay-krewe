@@ -82,9 +82,39 @@ func TestEveryCommandHasAPlaceInTheListing(t *testing.T) {
 	}
 }
 
-// kreweVerb finds krewe and the one or two words after it, which is how a command file names what it
-// runs. Two words, because the manual's commands are one word or two.
+// The order the commands are met in: a project is started before it is designed. A directory read
+// would give back design first, which is why the order is declared rather than read.
+func TestTheListingNamesInitBeforeDesign(t *testing.T) {
+	at := func(want string) int {
+		for i, one := range commands.All() {
+			if one.Name == want {
+				return i
+			}
+		}
+		return -1
+	}
+
+	first, second := at("init"), at("design")
+	switch {
+	case first < 0:
+		t.Fatal("this build carries no init command")
+	case second < 0:
+		t.Fatal("this build carries no design command")
+	case first > second:
+		t.Error("the listing names design before init, and a project is started before it is designed")
+	}
+}
+
+// kreweVerb finds krewe and the one or two words after it, which is how a command file talks in
+// prose about what it runs. Two words, because the manual's commands are one word or two.
 var kreweVerb = regexp.MustCompile(`krewe ([a-z][a-z-]*)(?: ([a-z][a-z-]*))?`)
+
+// kreweCommand finds a command where a file writes one out to be typed: an indented code line, or an
+// inline code span. Prose is read loosely, because "krewe design and show what it says" is a
+// sentence rather than a command. What is written out to be typed is read strictly, and a phrase
+// whose first word is a real command is exactly how a verb the tool does not have gets past a loose
+// read.
+var kreweCommand = regexp.MustCompile("(?m)^ {4,}krewe ([^\n]*)$|`krewe ([^`]*)`")
 
 // A command file that names a verb the tool does not have sends the operator's own session to run
 // something that refuses. The manual is the tool's own command list, so this reads the list rather
@@ -93,11 +123,21 @@ func TestEveryVerbACommandNamesIsInTheManual(t *testing.T) {
 	carried := manualPhrases(t)
 
 	for _, one := range commands.All() {
-		found := kreweVerb.FindAllStringSubmatch(one.Body, -1)
-		if len(found) == 0 {
-			t.Errorf("%s names no krewe verb at all, so it asks its questions and runs nothing", one.FileName())
+		typed := kreweCommand.FindAllStringSubmatch(one.Body, -1)
+		if len(typed) == 0 {
+			t.Errorf("%s writes out no krewe command at all, so it asks its questions and runs nothing",
+				one.FileName())
 		}
-		for _, match := range found {
+		for _, match := range typed {
+			phrase := leadingWords(match[1] + match[2])
+			if carried[phrase] {
+				continue
+			}
+			t.Errorf("%s writes out krewe %s to be typed, and the manual carries no such command",
+				one.FileName(), phrase)
+		}
+
+		for _, match := range kreweVerb.FindAllStringSubmatch(one.Body, -1) {
 			pair := strings.TrimSpace(match[1] + " " + match[2])
 			if carried[pair] || carried[match[1]] {
 				continue
@@ -107,12 +147,29 @@ func TestEveryVerbACommandNamesIsInTheManual(t *testing.T) {
 	}
 }
 
+// leadingWords is the command out of the front of a line, which is its first word or its first two.
+// It stops at the first thing that is not a word, because everything after that is an argument.
+func leadingWords(line string) string {
+	word := regexp.MustCompile(`^[a-z][a-z-]*$`)
+
+	var built []string
+	for _, token := range strings.Fields(line) {
+		if len(built) == 2 || !word.MatchString(token) {
+			break
+		}
+		built = append(built, token)
+	}
+	return strings.Join(built, " ")
+}
+
 // The design work belongs to a session in a sandbox, where the record keeps it. A command file that
 // wrote a design body or a path would be the operator's own session doing the work the record is
 // supposed to hold.
 func TestNoCommandWritesADesignBodyOrAPath(t *testing.T) {
 	for _, one := range commands.All() {
-		for _, writing := range []string{"krewe design set", "krewe design edit", "krewe path set"} {
+		for _, writing := range []string{
+			"krewe design set", "krewe design edit", "krewe design contracts", "krewe path set",
+		} {
 			if strings.Contains(one.Body, writing) {
 				t.Errorf("%s runs %q, and a command never writes the design or the path", one.FileName(), writing)
 			}

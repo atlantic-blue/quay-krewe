@@ -227,6 +227,144 @@ func initializeCommandSteps(sc *godog.ScenarioContext) {
 		return nil
 	})
 
+	// What one command file says for itself, read out of the file the install put on the machine
+	// rather than out of the binary. The rules that hold over every file are read in the package; a
+	// command that has to say a particular thing is read here.
+
+	sc.Step(`^the installed command "([^"]*)" carries the marker of this build$`,
+		func(ctx context.Context, name string) error {
+			body, err := installedCommand(ctx, name)
+			if err != nil {
+				return err
+			}
+			line, _, _ := strings.Cut(body, "\n")
+			build, marked := commands.BuildOf(line)
+			if !marked {
+				return fmt.Errorf("%s.md begins %q, and that is no marker", name, line)
+			}
+			if build != toolBuild {
+				return fmt.Errorf("%s.md names build %q, and this tool is %q", name, build, toolBuild)
+			}
+			return nil
+		})
+
+	sc.Step(`^the installed command "([^"]*)" describes itself in one line$`,
+		func(ctx context.Context, name string) error {
+			body, err := installedCommand(ctx, name)
+			if err != nil {
+				return err
+			}
+			for _, line := range strings.Split(body, "\n") {
+				if after, found := strings.CutPrefix(strings.TrimSpace(line), "description:"); found {
+					if strings.TrimSpace(after) == "" {
+						break
+					}
+					return nil
+				}
+			}
+			return fmt.Errorf("%s.md carries no description, so the listing would name it and say nothing", name)
+		})
+
+	sc.Step(`^the installed command "([^"]*)" names "([^"]*)"$`,
+		func(ctx context.Context, name, phrase string) error {
+			body, err := installedCommand(ctx, name)
+			if err != nil {
+				return err
+			}
+			if !strings.Contains(body, phrase) {
+				return fmt.Errorf("%s.md never names %q", name, phrase)
+			}
+			return nil
+		})
+
+	// The design work belongs to a session in a sandbox, where the record keeps it. These are the
+	// commands that put a design or a path into the record, and a command file naming one of them is
+	// the operator's own terminal doing the work the record is supposed to hold.
+	sc.Step(`^the installed command "([^"]*)" runs no command that writes a design or a path$`,
+		func(ctx context.Context, name string) error {
+			body, err := installedCommand(ctx, name)
+			if err != nil {
+				return err
+			}
+			for _, writing := range []string{
+				"krewe design set", "krewe design edit", "krewe design contracts", "krewe path set",
+			} {
+				if strings.Contains(body, writing) {
+					return fmt.Errorf("%s.md runs %q, and a command never writes the design or the path",
+						name, writing)
+				}
+			}
+			return nil
+		})
+
+	// The other shape of the same break: the design or the path written as prose in the file itself,
+	// with no command anywhere near it. These labels are what a path document is made of.
+	sc.Step(`^the installed command "([^"]*)" carries no design document of its own$`,
+		func(ctx context.Context, name string) error {
+			body, err := installedCommand(ctx, name)
+			if err != nil {
+				return err
+			}
+			for _, label := range []string{
+				"What changes and why", "What this touches", "What proves it",
+				"The scenario that proves it", "The contracts it builds", "The scope of each contract",
+			} {
+				if strings.Contains(body, label) {
+					return fmt.Errorf("%s.md carries %q, which is a path document written where no record keeps it",
+						name, label)
+				}
+			}
+			return nil
+		})
+
+	// Beside the command, and not anywhere in the file. A yes asked three steps earlier, for
+	// something else, is not the operator approving this design.
+	sc.Step(`^the installed command "([^"]*)" asks for a yes where it runs "([^"]*)"$`,
+		func(ctx context.Context, name, command string) error {
+			body, err := installedCommand(ctx, name)
+			if err != nil {
+				return err
+			}
+			for _, section := range strings.Split(body, "\n## ") {
+				if !strings.Contains(section, command) {
+					continue
+				}
+				if !strings.Contains(section, "yes") {
+					return fmt.Errorf("%s.md runs %q in a step that never asks for a yes:\n%s",
+						name, command, section)
+				}
+				return nil
+			}
+			return fmt.Errorf("%s.md never names %q", name, command)
+		})
+
+	sc.Step(`^the installed command "([^"]*)" says a no leaves the design unapproved$`,
+		func(ctx context.Context, name string) error {
+			body, err := installedCommand(ctx, name)
+			if err != nil {
+				return err
+			}
+			if !strings.Contains(body, "stays unapproved") {
+				return fmt.Errorf("%s.md never says what a no leaves behind", name)
+			}
+			return nil
+		})
+
+	sc.Step(`^standard output names "([^"]*)" before "([^"]*)"$`,
+		func(ctx context.Context, first, second string) error {
+			said := toolFrom(ctx).stdout
+			at, then := strings.Index(said, first), strings.Index(said, second)
+			switch {
+			case at < 0:
+				return fmt.Errorf("standard output never names %q:\n%s", first, said)
+			case then < 0:
+				return fmt.Errorf("standard output never names %q:\n%s", second, said)
+			case at > then:
+				return fmt.Errorf("standard output names %q before %q:\n%s", second, first, said)
+			}
+			return nil
+		})
+
 	// The system puts the session identifier in every sandbox it builds, so the tool reads it to know
 	// it is inside one. It is cleared for every other run, because the machine running this suite may
 	// be a session itself.
@@ -244,4 +382,15 @@ func errorsJoined(errs ...error) error {
 		}
 	}
 	return nil
+}
+
+// installedCommand is one command file as the install wrote it onto the machine. It reads the
+// directory this scenario named, so what is read is what the operator would open.
+func installedCommand(ctx context.Context, name string) (string, error) {
+	at := filepath.Join(commandsFrom(ctx).dir, name+".md")
+	body, err := os.ReadFile(at) //nolint:gosec // the path is this scenario's own directory
+	if err != nil {
+		return "", fmt.Errorf("read what the install wrote: %w", err)
+	}
+	return string(body), nil
 }
