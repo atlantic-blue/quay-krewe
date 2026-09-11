@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	quaycrewv1 "github.com/atlantic-blue/quay-krewe/gen/quaycrew/v1"
@@ -121,5 +122,50 @@ func standAtLevelOne(t *testing.T, m *Memory, project string) {
 	// below by doing nothing at all.
 	if held.GetTrustLevel() != TrustLevelCloses {
 		t.Fatal("the design did not take the level the operator would have raised it to")
+	}
+}
+
+// The ladder has two rungs. Krewe only ever offers the level below the top, so an offer standing at
+// level 1 is a row no call can produce, and the guard in RaiseTrust is what makes sure a row that
+// somehow held one still never reads as level 2.
+//
+// So the state is written here, straight onto the design the memory store holds, and the raise is
+// made through the call the operator makes. Postgres is held to the same thing in
+// TestARaiseAtLevelOneIsRefusedInPostgres.
+func TestARaiseWithAnOfferStandingAtLevelOneIsRefused(t *testing.T) {
+	ctx := context.Background()
+	m := NewMemory()
+	_, project := aPathToFinish(t, m)
+	standAtLevelOne(t, m, project)
+	offerTheLevelAgain(t, m, project)
+
+	if _, err := m.RaiseTrust(ctx, project); !errors.Is(err, ErrNoOfferStanding) {
+		t.Fatalf("a raise at level 1 with an offer standing answered %v, want ErrNoOfferStanding", err)
+	}
+	read, err := m.GetDesign(ctx, project)
+	if err != nil {
+		t.Fatalf("GetDesign: %v", err)
+	}
+	if got := read.GetTrustLevel(); got != TrustLevelCloses {
+		t.Errorf("the design reads back level %d, want %d", got, TrustLevelCloses)
+	}
+}
+
+// offerTheLevelAgain sets an offer on a row that already stands at the top level, which is the state
+// the guard in RaiseTrust exists for and no caller can reach.
+func offerTheLevelAgain(t *testing.T, m *Memory, project string) {
+	t.Helper()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	held, ok := m.designs[project]
+	if !ok {
+		t.Fatal("the project holds no design to offer anything about")
+	}
+	held.TrustOffered = true
+	// Proved here rather than assumed, so a seed that wrote nothing cannot pass the test above by
+	// leaving the row with no offer on it at all.
+	if !held.GetTrustOffered() || held.GetTrustLevel() != TrustLevelCloses {
+		t.Fatalf("the design stands at level %d with an offer of %v",
+			held.GetTrustLevel(), held.GetTrustOffered())
 	}
 }

@@ -2165,6 +2165,334 @@ func runTrustConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 			t.Errorf("the level reads %d, want %d", got, store.TrustLevelChecked)
 		}
 	})
+
+	// The offer, and the raise. Krewe earns the next level by agreeing with the operator over and over,
+	// and it offers rather than takes: nothing in this block raises a level except the call the operator
+	// makes.
+	//
+	// The threshold is set to something small in most of these, because what the cases are about is the
+	// run reaching the number and never the number itself.
+
+	// The offer is made where the run reaches the threshold, on the write that moves the run. It is the
+	// only place one is ever made.
+	t.Run("the agreement that reaches the threshold makes the offer", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		project := newProject(t, s, "acme", "house-bills")
+		feature := newFeature(t, s, project, "the bills")
+		writePath(t, s, feature.GetId(),
+			store.Step{Number: 1, Title: "the first"},
+			store.Step{Number: 2, Title: "the second"})
+		if _, err := s.SetTrustThreshold(ctx, project.GetId(), 2); err != nil {
+			t.Fatalf("SetTrustThreshold: %v", err)
+		}
+
+		recordProof(t, s, feature.GetId(), 1, store.ProofPassing)
+		_, design, err := s.FinishStep(ctx, feature.GetId(), 1, store.Finish{
+			State: store.StepDone, Result: "shipped", ClosedBy: "operator"})
+		if err != nil {
+			t.Fatalf("FinishStep on step 1: %v", err)
+		}
+		if design.GetTrustOffered() {
+			t.Fatalf("krewe was offered the level after 1 agreement against a threshold of 2")
+		}
+		recordProof(t, s, feature.GetId(), 2, store.ProofPassing)
+		_, design, err = s.FinishStep(ctx, feature.GetId(), 2, store.Finish{
+			State: store.StepDone, Result: "shipped", ClosedBy: "operator"})
+		if err != nil {
+			t.Fatalf("FinishStep on step 2: %v", err)
+		}
+		if !design.GetTrustOffered() {
+			t.Fatalf("the run reached %d against a threshold of %d and no offer stands",
+				design.GetTrustRun(), design.GetTrustThreshold())
+		}
+		// Read back, because the offer is a column and the write is what has to have set it. A value that
+		// lived only in the answer would be an offer no later command could find.
+		read, err := s.GetDesign(ctx, project.GetId())
+		if err != nil {
+			t.Fatalf("GetDesign after the offer: %v", err)
+		}
+		if !read.GetTrustOffered() {
+			t.Fatalf("the offer is in the answer and not on the row")
+		}
+	})
+
+	// The trap in the ladder. A threshold set under the run a project already has looks as though it
+	// should offer on the spot, and it must not: the offer belongs to the write that moves the run, so
+	// the operator reads it beside the step that earned it.
+	t.Run("a threshold set below the run makes no offer by itself", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		project := newProject(t, s, "acme", "house-bills")
+		feature := newFeature(t, s, project, "the bills")
+		writePath(t, s, feature.GetId(),
+			store.Step{Number: 1, Title: "the first"},
+			store.Step{Number: 2, Title: "the second"},
+			store.Step{Number: 3, Title: "the third"})
+		for _, number := range []int32{1, 2} {
+			recordProof(t, s, feature.GetId(), number, store.ProofPassing)
+			if _, _, err := s.FinishStep(ctx, feature.GetId(), number, store.Finish{
+				State: store.StepDone, Result: "shipped", ClosedBy: "operator"}); err != nil {
+				t.Fatalf("FinishStep on step %d: %v", number, err)
+			}
+		}
+		design, err := s.SetTrustThreshold(ctx, project.GetId(), 1)
+		if err != nil {
+			t.Fatalf("SetTrustThreshold: %v", err)
+		}
+		if design.GetTrustOffered() {
+			t.Fatalf("setting the threshold to 1 under a run of 2 made an offer by itself")
+		}
+		if got := design.GetTrustRun(); got != 2 {
+			t.Errorf("the run reads %d after the threshold moved, want the 2 it stood at", got)
+		}
+		if got := design.GetTrustAgreements(); got != 2 {
+			t.Errorf("the record reads %d agreements after the threshold moved, want 2", got)
+		}
+		// The next finish is where it arrives, which is the whole of what this rule says.
+		recordProof(t, s, feature.GetId(), 3, store.ProofPassing)
+		_, after, err := s.FinishStep(ctx, feature.GetId(), 3, store.Finish{
+			State: store.StepDone, Result: "shipped", ClosedBy: "operator"})
+		if err != nil {
+			t.Fatalf("FinishStep on step 3: %v", err)
+		}
+		if !after.GetTrustOffered() {
+			t.Fatalf("the finish after the threshold moved made no offer")
+		}
+	})
+
+	// The threshold is a number and nothing else. A write that moved a counter would hand krewe a run it
+	// never earned, or take one away that it did.
+	t.Run("setting the threshold moves no counter", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		project := newProject(t, s, "acme", "house-bills")
+		feature := newFeature(t, s, project, "the bills")
+		writePath(t, s, feature.GetId(), store.Step{Number: 1, Title: "the first"})
+		recordProof(t, s, feature.GetId(), 1, store.ProofPassing)
+		if _, _, err := s.FinishStep(ctx, feature.GetId(), 1, store.Finish{
+			State: store.StepDone, Result: "shipped", ClosedBy: "operator"}); err != nil {
+			t.Fatalf("FinishStep: %v", err)
+		}
+
+		design, err := s.SetTrustThreshold(ctx, project.GetId(), 9)
+		if err != nil {
+			t.Fatalf("SetTrustThreshold: %v", err)
+		}
+		if got := design.GetTrustThreshold(); got != 9 {
+			t.Errorf("the threshold reads %d, want 9", got)
+		}
+		if got := design.GetTrustRun(); got != 1 {
+			t.Errorf("the run reads %d, want the 1 it stood at", got)
+		}
+		if got := design.GetTrustAgreements(); got != 1 {
+			t.Errorf("the record reads %d agreements, want the 1 it had", got)
+		}
+		if got := design.GetTrustDisagreements(); got != 0 {
+			t.Errorf("setting the threshold counted %d disagreements", got)
+		}
+	})
+
+	// The row is made on first use, the way every other design write makes it, so a threshold may be set
+	// before anybody writes a brief.
+	t.Run("setting the threshold on a project with no design makes the row", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		project := newProject(t, s, "acme", "house-bills")
+
+		design, err := s.SetTrustThreshold(ctx, project.GetId(), 3)
+		if err != nil {
+			t.Fatalf("SetTrustThreshold: %v", err)
+		}
+		if got := design.GetTrustThreshold(); got != 3 {
+			t.Errorf("the threshold reads %d, want 3", got)
+		}
+		read, err := s.GetDesign(ctx, project.GetId())
+		if err != nil {
+			t.Fatalf("GetDesign: %v", err)
+		}
+		if got := read.GetTrustThreshold(); got != 3 {
+			t.Errorf("the threshold reads back as %d, want 3", got)
+		}
+		if got := read.GetStepsInFlightCap(); got != store.DefaultStepsInFlightCap {
+			t.Errorf("the row born by a threshold reads a cap of %d, want the default of %d",
+				got, store.DefaultStepsInFlightCap)
+		}
+	})
+
+	t.Run("setting the threshold on a project that does not exist is not found", func(t *testing.T) {
+		s := newDataset(t)(t)
+		if _, err := s.SetTrustThreshold(context.Background(), "nobody", 3); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("SetTrustThreshold on a missing project answered %v, want ErrNotFound", err)
+		}
+	})
+
+	// Accepting the offer. The level moves, the run starts again, and the offer is gone: the operator
+	// answered it, and an offer that stayed would be answered twice.
+	t.Run("accepting the offer moves the level to one and the run to zero", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		project := newProject(t, s, "acme", "house-bills")
+		offerAStandingLevel(t, s, project)
+
+		design, err := s.RaiseTrust(ctx, project.GetId())
+		if err != nil {
+			t.Fatalf("RaiseTrust: %v", err)
+		}
+		if got := design.GetTrustLevel(); got != store.TrustLevelCloses {
+			t.Errorf("the level reads %d after the raise, want %d", got, store.TrustLevelCloses)
+		}
+		if got := design.GetTrustRun(); got != 0 {
+			t.Errorf("the run reads %d after the raise, want 0", got)
+		}
+		if design.GetTrustOffered() {
+			t.Fatalf("the offer still stands after the operator answered it")
+		}
+		if got := design.GetTrustAgreements(); got != 1 {
+			t.Errorf("the raise left %d agreements on the record, want the 1 that earned it", got)
+		}
+		read, err := s.GetDesign(ctx, project.GetId())
+		if err != nil {
+			t.Fatalf("GetDesign after the raise: %v", err)
+		}
+		if read.GetTrustLevel() != store.TrustLevelCloses || read.GetTrustOffered() {
+			t.Fatalf("the row reads level %d with an offer of %v", read.GetTrustLevel(), read.GetTrustOffered())
+		}
+	})
+
+	t.Run("a raise with no offer standing is refused", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		project := newProject(t, s, "acme", "house-bills")
+		if _, err := s.SetProjectBrief(ctx, project.GetId(), "the bills"); err != nil {
+			t.Fatalf("SetProjectBrief: %v", err)
+		}
+
+		if _, err := s.RaiseTrust(ctx, project.GetId()); !errors.Is(err, store.ErrNoOfferStanding) {
+			t.Fatalf("RaiseTrust with no offer answered %v, want ErrNoOfferStanding", err)
+		}
+		design, err := s.GetDesign(ctx, project.GetId())
+		if err != nil {
+			t.Fatalf("GetDesign after the refusal: %v", err)
+		}
+		if got := design.GetTrustLevel(); got != store.TrustLevelChecked {
+			t.Fatalf("the refused raise left the level at %d", got)
+		}
+	})
+
+	// The top of the ladder. A second raise is refused by the same sentinel, because the offer that
+	// would have let it through is one krewe never makes at level 1.
+	t.Run("a raise at level one is refused", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		project := newProject(t, s, "acme", "house-bills")
+		offerAStandingLevel(t, s, project)
+		if _, err := s.RaiseTrust(ctx, project.GetId()); err != nil {
+			t.Fatalf("the first RaiseTrust: %v", err)
+		}
+
+		if _, err := s.RaiseTrust(ctx, project.GetId()); !errors.Is(err, store.ErrNoOfferStanding) {
+			t.Fatalf("a second RaiseTrust answered %v, want ErrNoOfferStanding", err)
+		}
+		design, err := s.GetDesign(ctx, project.GetId())
+		if err != nil {
+			t.Fatalf("GetDesign after the second raise: %v", err)
+		}
+		if got := design.GetTrustLevel(); got != store.TrustLevelCloses {
+			t.Fatalf("the level reads %d after a refused second raise, want %d",
+				got, store.TrustLevelCloses)
+		}
+	})
+
+	t.Run("a raise on a project with no design row is not found", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		project := newProject(t, s, "acme", "house-bills")
+		if _, err := s.RaiseTrust(ctx, project.GetId()); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("RaiseTrust on a project with no design answered %v, want ErrNotFound", err)
+		}
+	})
+
+	t.Run("a raise on a project that does not exist is not found", func(t *testing.T) {
+		s := newDataset(t)(t)
+		if _, err := s.RaiseTrust(context.Background(), "nobody"); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("RaiseTrust on a missing project answered %v, want ErrNotFound", err)
+		}
+	})
+
+	// The offer goes with the run it was made from. One that outlived the disagreement invalidating it
+	// would ask the operator to trust a run that is no longer there.
+	t.Run("a disagreement while the offer stands takes it away", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		project := newProject(t, s, "acme", "house-bills")
+		feature := newFeature(t, s, project, "the bills")
+		writePath(t, s, feature.GetId(),
+			store.Step{Number: 1, Title: "the first"},
+			store.Step{Number: 2, Title: "the second"})
+		if _, err := s.SetTrustThreshold(ctx, project.GetId(), 1); err != nil {
+			t.Fatalf("SetTrustThreshold: %v", err)
+		}
+		recordProof(t, s, feature.GetId(), 1, store.ProofPassing)
+		_, offered, err := s.FinishStep(ctx, feature.GetId(), 1, store.Finish{
+			State: store.StepDone, Result: "shipped", ClosedBy: "operator"})
+		if err != nil {
+			t.Fatalf("FinishStep on step 1: %v", err)
+		}
+		if !offered.GetTrustOffered() {
+			t.Fatalf("no offer stands after one agreement against a threshold of 1")
+		}
+
+		recordProof(t, s, feature.GetId(), 2, store.ProofFailing)
+		_, design, err := s.FinishStep(ctx, feature.GetId(), 2, store.Finish{
+			State: store.StepDone, Result: "the scenario is wrong, not the code", ClosedBy: "operator"})
+		if err != nil {
+			t.Fatalf("FinishStep on step 2: %v", err)
+		}
+		if design.GetTrustOffered() {
+			t.Fatalf("the offer survived the disagreement that set the run back to zero")
+		}
+		// And the raise is refused after it, which is what the cleared column is for.
+		if _, err := s.RaiseTrust(ctx, project.GetId()); !errors.Is(err, store.ErrNoOfferStanding) {
+			t.Fatalf("RaiseTrust after the disagreement answered %v, want ErrNoOfferStanding", err)
+		}
+	})
+
+	// At level 1 no offer is ever made, however long the run gets. The ladder has two rungs, and an
+	// offer of a third would be an offer nothing could accept.
+	t.Run("no offer is made at level one", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		project := newProject(t, s, "acme", "house-bills")
+		feature := newFeature(t, s, project, "the bills")
+		writePath(t, s, feature.GetId(),
+			store.Step{Number: 1, Title: "the first"},
+			store.Step{Number: 2, Title: "the second"})
+		if _, err := s.SetTrustThreshold(ctx, project.GetId(), 1); err != nil {
+			t.Fatalf("SetTrustThreshold: %v", err)
+		}
+		recordProof(t, s, feature.GetId(), 1, store.ProofPassing)
+		if _, _, err := s.FinishStep(ctx, feature.GetId(), 1, store.Finish{
+			State: store.StepDone, Result: "shipped", ClosedBy: "operator"}); err != nil {
+			t.Fatalf("FinishStep on step 1: %v", err)
+		}
+		if _, err := s.RaiseTrust(ctx, project.GetId()); err != nil {
+			t.Fatalf("RaiseTrust: %v", err)
+		}
+
+		recordProof(t, s, feature.GetId(), 2, store.ProofPassing)
+		_, design, err := s.FinishStep(ctx, feature.GetId(), 2, store.Finish{
+			State: store.StepDone, Result: "shipped", ClosedBy: "operator"})
+		if err != nil {
+			t.Fatalf("FinishStep on step 2: %v", err)
+		}
+		if design.GetTrustOffered() {
+			t.Fatalf("an agreement at level %d made an offer of a level above it", design.GetTrustLevel())
+		}
+		if got := design.GetTrustLevel(); got != store.TrustLevelCloses {
+			t.Errorf("the level reads %d, want %d", got, store.TrustLevelCloses)
+		}
+	})
 }
 
 // runDesignConformance holds both stores to the same answers about what a project is for and what
@@ -4457,6 +4785,30 @@ func finishStep(t *testing.T, s store.Store, feature string, number int32, state
 		State: state, Result: "what came of it", ClosedBy: "operator",
 	}); err != nil {
 		t.Fatalf("FinishStep: %v", err)
+	}
+}
+
+// offerAStandingLevel gets a project to the state where krewe has offered it the next level, the only
+// way there is: the threshold is set to one, and one step is finished on a check that passed.
+//
+// It goes through the finish rather than writing the column, because the finish is what makes an
+// offer. A test that set trust_offered itself would prove the raise against a state nothing produces.
+func offerAStandingLevel(t *testing.T, s store.Store, project *quaycrewv1.Project) {
+	t.Helper()
+	ctx := context.Background()
+	feature := newFeature(t, s, project, "the bills")
+	writePath(t, s, feature.GetId(), store.Step{Number: 1, Title: "the first"})
+	if _, err := s.SetTrustThreshold(ctx, project.GetId(), 1); err != nil {
+		t.Fatalf("SetTrustThreshold: %v", err)
+	}
+	recordProof(t, s, feature.GetId(), 1, store.ProofPassing)
+	_, design, err := s.FinishStep(ctx, feature.GetId(), 1, store.Finish{
+		State: store.StepDone, Result: "shipped", ClosedBy: "operator"})
+	if err != nil {
+		t.Fatalf("FinishStep to earn the offer: %v", err)
+	}
+	if !design.GetTrustOffered() {
+		t.Fatalf("one agreement against a threshold of 1 earned no offer")
 	}
 }
 

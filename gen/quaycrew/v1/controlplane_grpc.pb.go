@@ -61,6 +61,8 @@ const (
 	ControlPlaneService_ApproveRestatement_FullMethodName       = "/quaycrew.v1.ControlPlaneService/ApproveRestatement"
 	ControlPlaneService_SetStepsInFlightCap_FullMethodName      = "/quaycrew.v1.ControlPlaneService/SetStepsInFlightCap"
 	ControlPlaneService_SetProofCommand_FullMethodName          = "/quaycrew.v1.ControlPlaneService/SetProofCommand"
+	ControlPlaneService_RaiseTrust_FullMethodName               = "/quaycrew.v1.ControlPlaneService/RaiseTrust"
+	ControlPlaneService_SetTrustThreshold_FullMethodName        = "/quaycrew.v1.ControlPlaneService/SetTrustThreshold"
 	ControlPlaneService_CheckStep_FullMethodName                = "/quaycrew.v1.ControlPlaneService/CheckStep"
 	ControlPlaneService_FinishStep_FullMethodName               = "/quaycrew.v1.ControlPlaneService/FinishStep"
 	ControlPlaneService_ListFeatures_FullMethodName             = "/quaycrew.v1.ControlPlaneService/ListFeatures"
@@ -180,6 +182,12 @@ type ControlPlaneServiceClient interface {
 	// The driver is refused it. A session that could set the command that proves its own work would
 	// choose what proves it, and the check would stop being a check.
 	SetProofCommand(ctx context.Context, in *SetProofCommandRequest, opts ...grpc.CallOption) (*SetProofCommandResponse, error)
+	// Accepting the offer krewe made, and moving the word done up one level. The driver is refused it:
+	// krewe never raises its own level, so the offer is krewe's and the answer is the operator's.
+	RaiseTrust(ctx context.Context, in *RaiseTrustRequest, opts ...grpc.CallOption) (*RaiseTrustResponse, error)
+	// How many agreements in a row earn an offer. The driver is refused it: lowering the number is a
+	// grant, so a session that could set it would shorten the run it has to earn.
+	SetTrustThreshold(ctx context.Context, in *SetTrustThresholdRequest, opts ...grpc.CallOption) (*SetTrustThresholdResponse, error)
 	// Running the scenario the step promised, inside the sandbox of the session that holds it, and
 	// recording what it reported.
 	//
@@ -668,6 +676,26 @@ func (c *controlPlaneServiceClient) SetProofCommand(ctx context.Context, in *Set
 	return out, nil
 }
 
+func (c *controlPlaneServiceClient) RaiseTrust(ctx context.Context, in *RaiseTrustRequest, opts ...grpc.CallOption) (*RaiseTrustResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RaiseTrustResponse)
+	err := c.cc.Invoke(ctx, ControlPlaneService_RaiseTrust_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *controlPlaneServiceClient) SetTrustThreshold(ctx context.Context, in *SetTrustThresholdRequest, opts ...grpc.CallOption) (*SetTrustThresholdResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SetTrustThresholdResponse)
+	err := c.cc.Invoke(ctx, ControlPlaneService_SetTrustThreshold_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *controlPlaneServiceClient) CheckStep(ctx context.Context, in *CheckStepRequest, opts ...grpc.CallOption) (*CheckStepResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(CheckStepResponse)
@@ -1013,6 +1041,12 @@ type ControlPlaneServiceServer interface {
 	// The driver is refused it. A session that could set the command that proves its own work would
 	// choose what proves it, and the check would stop being a check.
 	SetProofCommand(context.Context, *SetProofCommandRequest) (*SetProofCommandResponse, error)
+	// Accepting the offer krewe made, and moving the word done up one level. The driver is refused it:
+	// krewe never raises its own level, so the offer is krewe's and the answer is the operator's.
+	RaiseTrust(context.Context, *RaiseTrustRequest) (*RaiseTrustResponse, error)
+	// How many agreements in a row earn an offer. The driver is refused it: lowering the number is a
+	// grant, so a session that could set it would shorten the run it has to earn.
+	SetTrustThreshold(context.Context, *SetTrustThresholdRequest) (*SetTrustThresholdResponse, error)
 	// Running the scenario the step promised, inside the sandbox of the session that holds it, and
 	// recording what it reported.
 	//
@@ -1206,6 +1240,12 @@ func (UnimplementedControlPlaneServiceServer) SetStepsInFlightCap(context.Contex
 }
 func (UnimplementedControlPlaneServiceServer) SetProofCommand(context.Context, *SetProofCommandRequest) (*SetProofCommandResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SetProofCommand not implemented")
+}
+func (UnimplementedControlPlaneServiceServer) RaiseTrust(context.Context, *RaiseTrustRequest) (*RaiseTrustResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RaiseTrust not implemented")
+}
+func (UnimplementedControlPlaneServiceServer) SetTrustThreshold(context.Context, *SetTrustThresholdRequest) (*SetTrustThresholdResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetTrustThreshold not implemented")
 }
 func (UnimplementedControlPlaneServiceServer) CheckStep(context.Context, *CheckStepRequest) (*CheckStepResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CheckStep not implemented")
@@ -2056,6 +2096,42 @@ func _ControlPlaneService_SetProofCommand_Handler(srv interface{}, ctx context.C
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ControlPlaneService_RaiseTrust_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RaiseTrustRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ControlPlaneServiceServer).RaiseTrust(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ControlPlaneService_RaiseTrust_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ControlPlaneServiceServer).RaiseTrust(ctx, req.(*RaiseTrustRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ControlPlaneService_SetTrustThreshold_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetTrustThresholdRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ControlPlaneServiceServer).SetTrustThreshold(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ControlPlaneService_SetTrustThreshold_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ControlPlaneServiceServer).SetTrustThreshold(ctx, req.(*SetTrustThresholdRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _ControlPlaneService_CheckStep_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(CheckStepRequest)
 	if err := dec(in); err != nil {
@@ -2644,6 +2720,14 @@ var ControlPlaneService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SetProofCommand",
 			Handler:    _ControlPlaneService_SetProofCommand_Handler,
+		},
+		{
+			MethodName: "RaiseTrust",
+			Handler:    _ControlPlaneService_RaiseTrust_Handler,
+		},
+		{
+			MethodName: "SetTrustThreshold",
+			Handler:    _ControlPlaneService_SetTrustThreshold_Handler,
 		},
 		{
 			MethodName: "CheckStep",

@@ -175,6 +175,16 @@ var ErrNotChecked = errors.New("store: nobody read a verdict on this step yet")
 // with.
 var ErrNoProofCommand = errors.New("store: this project has no proof command")
 
+// ErrNoOfferStanding says krewe offered this project nothing, so there is no offer to accept.
+//
+// The read of the offer and the write of the level are one statement, for the reason
+// ErrNothingToApprove is one: a read followed by a write would let an offer cleared between the two
+// come back accepted.
+//
+// A raise at the top level earns this same sentinel. Krewe never offers a level that does not exist,
+// so a raise at level 1 is a raise against no offer however the row got there.
+var ErrNoOfferStanding = errors.New("store: krewe offered this project no level")
+
 // DefaultStepsInFlightCap is how many steps a project nobody configured may hold in state taken at
 // one time. It is the default of the column, repeated here for the stores to answer with when a
 // project carries no design row at all.
@@ -270,6 +280,22 @@ func LoweredTrustLevel(level int32) int32 {
 		return TrustLevelChecked
 	}
 	return level - 1
+}
+
+// OfferTheNextLevel reports whether a finish that just moved the counters earns krewe an offer: the
+// run of agreements reached the project's threshold, and the level is below the top one.
+//
+// It is here rather than in each store, for the reason LoweredTrustLevel is: two stores held to one
+// conformance suite cannot each own the rule, or a project would be offered the word done on one of
+// them and never on the other.
+//
+// A disagreement never reaches it. The caller asks only where the operator agreed, because a
+// disagreement takes the offer away whatever the numbers read.
+//
+// It answers about a run the write has already made. Setting the threshold below the run a project
+// already has makes no offer by itself: nothing calls this except a finish.
+func OfferTheNextLevel(run, threshold, level int32) bool {
+	return run >= threshold && level < TrustLevelCloses
 }
 
 // The three words a step's proof state is one of. A step nobody checked is unproven, which is what
@@ -830,6 +856,29 @@ type Store interface {
 	// The approval is untouched, and so is every trust column. A proof command says how a step is
 	// run, and nothing about what the design says.
 	SetProofCommand(ctx context.Context, project string, settings ProofSettings) (*quaycrewv1.Design, error)
+	// RaiseTrust accepts the offer krewe made and returns the design after the level moves. The write
+	// adds one to trust_level, sets trust_run to zero and takes the offer away.
+	//
+	// A project with no offer standing is ErrNoOfferStanding, and so is a raise at the top level: the
+	// offer is only ever made below it, so a raise there is a raise against nothing. A project that
+	// does not exist, and one carrying no design row, are both ErrNotFound.
+	//
+	// The read of the offer and the write are one statement. Read first and written after, an offer
+	// cleared by a disagreement landing between the two would come back accepted.
+	//
+	// Krewe never calls it. The offer is krewe's and the word that accepts it is the operator's, which
+	// is why DeniedToDriver names this call.
+	RaiseTrust(ctx context.Context, project string) (*quaycrewv1.Design, error)
+	// SetTrustThreshold records the run of agreements that earns an offer of the next level, and
+	// creates the design row on first use.
+	//
+	// The store keeps what it is given. Whether a number is one a person should have typed is the
+	// control plane's question, the way the cap above already is.
+	//
+	// No counter moves. Changing the threshold is neither an agreement nor a disagreement, and a
+	// threshold set below the run a project already has makes no offer by itself: the offer is made
+	// where a finish moves the run.
+	SetTrustThreshold(ctx context.Context, project string, threshold int32) (*quaycrewv1.Design, error)
 
 	// SetPath replaces one feature's path and returns the whole path after the write, in number
 	// order. The steps are what a caller may set; the rest of each row belongs to the system.
@@ -908,6 +957,11 @@ type Store interface {
 	// row of the project holding this feature moves its counters in the same transaction. Agreed says
 	// what agreement is. No reader ever sees a closed step whose counters did not move, which is why
 	// the design comes back from this call rather than from a read after it.
+	//
+	// The offer rides on the same write. An agreement that takes the run to the project's threshold
+	// sets trust_offered, and a disagreement takes it away, because the run went back to zero and an
+	// offer that survived what invalidated it is worse than no offer. OfferTheNextLevel holds the
+	// rule, and this is the only call that makes one.
 	//
 	// The session and the take stamp are untouched, so the record still says who took the step. The
 	// step and the session are separate records, and nothing here reads or writes a session.

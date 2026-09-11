@@ -278,7 +278,19 @@ commands:
                                           the whole record beside them. An agreement is read from the
                                           row and never asked: done after a passing check, or stopped
                                           after a failing one. One disagreement starts the run again
-                                          and takes the level back down. It records nothing
+                                          and takes the level back down. It records nothing. A
+                                          standing offer prints under the record, until you answer it
+  trust raise [<address>]                 accept the offer krewe made, and move the word done to
+                                          level 1. Krewe never raises its own level: it offers when
+                                          the run of agreements reaches the threshold, and this is
+                                          the answer. A raise with no offer standing is refused, and
+                                          the refusal names krewe trust. The line it prints names the
+                                          way back down
+  trust threshold [<address>]             how many agreements in a row earn an offer of level 1.
+    <number>                              The default is 5, that 5 is a guess, and nothing measured
+                                          it: krewe has closed no step yet. Setting it makes no offer
+                                          and moves no counter, because the offer belongs to the step
+                                          you finish next
   attach <session>                         open a session's conversation, with its history
   secret set [<workspace>] <key>          set a workspace secret from standard input, so the value
                                           never reaches your shell history: pipe it in, or redirect

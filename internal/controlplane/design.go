@@ -246,6 +246,79 @@ func (s *Server) SetProofCommand(ctx context.Context, req *quaycrewv1.SetProofCo
 	return &quaycrewv1.SetProofCommandResponse{Design: design}, nil
 }
 
+// trustThresholdBounds are the shortest and longest run of agreements a person may ask krewe to earn.
+//
+// A threshold of zero would offer the next level before krewe agreed with anybody once, which is the
+// ladder with nothing on it. A hundred is longer than any project this system has run, so a number
+// above it is far more likely to be a typed mistake than a deliberate one.
+const (
+	leastTrustThreshold int32 = 1
+	mostTrustThreshold  int32 = 100
+)
+
+// RaiseTrust accepts the offer krewe made, and moves the word done up one level.
+//
+// Krewe never raises its own level. The offer is made by the finish that takes the run to the
+// threshold, and this call is the operator answering it, which is the whole shape of the ladder: the
+// system earns the word and a person hands it over.
+//
+// The refusal names the command that reads the record rather than explaining the rule, because the
+// operator's next move is to go and look at where krewe stands.
+//
+// DeniedToDriver refuses this call to a session. A session that could raise its own level would be
+// closing its own steps on its own word, and the offer would be a step in a script rather than a
+// person's judgement.
+func (s *Server) RaiseTrust(ctx context.Context, req *quaycrewv1.RaiseTrustRequest) (
+	*quaycrewv1.RaiseTrustResponse, error) {
+	if req.GetProject() == "" {
+		return nil, status.Error(codes.InvalidArgument, "which project: say where with an address")
+	}
+	design, err := s.store.RaiseTrust(ctx, req.GetProject())
+	if errors.Is(err, store.ErrNoOfferStanding) {
+		return nil, status.Error(codes.FailedPrecondition, krewEarnedNothingYet)
+	}
+	if err != nil {
+		return nil, storeError(err, "project")
+	}
+	return &quaycrewv1.RaiseTrustResponse{Design: design}, nil
+}
+
+// krewEarnedNothingYet is the refusal for a raise with no offer standing.
+//
+// It names the word that reads the record, because the question behind the refusal is how far off the
+// offer is, and the answer to that is the run against the threshold.
+const krewEarnedNothingYet = "krewe did not earn the next level here yet. " +
+	"Read where it stands with krewe trust [<address>]"
+
+// SetTrustThreshold records how many agreements in a row earn an offer of the next level.
+//
+// The bounds are here rather than in the store, the way the cap above is: one layer owns what a
+// person may type, and the store keeps what it is given.
+//
+// Setting it makes no offer, whatever the number. The offer belongs to the write that moves the run,
+// so a threshold set below a run a project already has is a number the next finish reads. A call that
+// offered on the way past would hand krewe the level for work it did before the operator chose the
+// number.
+//
+// DeniedToDriver refuses this call to a session. Lowering the threshold is a grant: a session that
+// could set it would shorten the run it has to earn before it is offered the word.
+func (s *Server) SetTrustThreshold(ctx context.Context, req *quaycrewv1.SetTrustThresholdRequest) (
+	*quaycrewv1.SetTrustThresholdResponse, error) {
+	if req.GetProject() == "" {
+		return nil, status.Error(codes.InvalidArgument, "which project: say where with an address")
+	}
+	if req.GetThreshold() < leastTrustThreshold || req.GetThreshold() > mostTrustThreshold {
+		return nil, status.Errorf(codes.InvalidArgument,
+			"a threshold of %d is outside the bounds: say between %d and %d",
+			req.GetThreshold(), leastTrustThreshold, mostTrustThreshold)
+	}
+	design, err := s.store.SetTrustThreshold(ctx, req.GetProject(), req.GetThreshold())
+	if err != nil {
+		return nil, storeError(err, "project")
+	}
+	return &quaycrewv1.SetTrustThresholdResponse{Design: design}, nil
+}
+
 // checkProofPattern refuses a pattern the run could not read a count with, and says nothing about an
 // empty one: empty means the caller is not setting a pattern at all.
 //
@@ -1673,7 +1746,39 @@ func (s *Server) FinishStep(ctx context.Context, req *quaycrewv1.FinishStepReque
 	// The design as the write left it, rather than a read after it. The counters moved in the same
 	// transaction as the word, so this answer and the step agree about one finish, and a second read
 	// could already be behind another one.
-	return &quaycrewv1.FinishStepResponse{Step: written, Design: design}, nil
+	return &quaycrewv1.FinishStepResponse{
+		Step: written, Design: design, Offer: theOffer(design),
+	}, nil
+}
+
+// theOffer is the sentence krewe prints when the run of agreements reaches the project's threshold,
+// and nothing when no offer stands.
+//
+// It is read off the row the write answered rather than computed here a second time. The store
+// decides whether an offer stands, in the statement that moves the run, so a rule repeated here would
+// be a second place for it to drift and a sentence printed against a row that says otherwise.
+//
+// The count is the run the write arrived at and never the threshold. A project that set its own
+// number would otherwise read a sentence claiming a run it never had.
+//
+// It offers rather than tells. Krewe never raises its own level, so the sentence ends at the word the
+// operator types and nothing happens until they type it.
+func theOffer(design *quaycrewv1.Design) string {
+	if !design.GetTrustOffered() {
+		return ""
+	}
+	return fmt.Sprintf(
+		"krewe agreed with you %s in a row. Let it close a step its own check passed? "+
+			"Accept with krewe trust raise [<address>]", howManyTimes(design.GetTrustRun()))
+}
+
+// howManyTimes counts the run in words. A project may set its threshold to one, and "1 times" reads
+// as a sentence a machine assembled rather than a record of what happened.
+func howManyTimes(run int32) string {
+	if run == 1 {
+		return "1 time"
+	}
+	return fmt.Sprintf("%d times", run)
 }
 
 // nothingCheckedItYet is gate 3's refusal: the operator reads a verdict before speaking the word.

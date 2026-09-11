@@ -553,6 +553,11 @@ func runStepFinish(ctx context.Context, client quaycrewv1.ControlPlaneServiceCli
 	fmt.Fprintf(out, "step %d.%d of %s is %s: %s\n",
 		held.GetNumber(), step.GetNumber(), located.Path.Project, step.GetState(), step.GetResult())
 	sayWhatTheRowRecords(step, out)
+	// The offer krewe earned with this finish, where it earned one. It is the control plane's
+	// sentence, printed as it came, so the word that accepts it is written in one place.
+	if offer := resp.GetOffer(); offer != "" {
+		fmt.Fprintf(out, "\n%s\n", offer)
+	}
 	if word == "done" {
 		return sayWhatIsNext(ctx, client, held, out)
 	}
