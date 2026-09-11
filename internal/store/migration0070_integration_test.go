@@ -112,7 +112,7 @@ func TestAStepWrittenBeforeTheClosedByColumnReadsBackWhole(t *testing.T) {
 	}
 
 	// The column the migration added takes a word, and the call that closes a step writes it.
-	closed, err := opened.FinishStep(ctx, "f1", 2, store.Finish{
+	closed, _, err := opened.FinishStep(ctx, "f1", 2, store.Finish{
 		State: store.StepDone, Result: "it reads back whole", ClosedBy: "operator",
 	})
 	if err != nil {

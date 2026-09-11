@@ -271,6 +271,14 @@ commands:
     <feature>.<number> "<reason>"         same arguments as step done, in the same order. It runs no
                                           check and it refuses no unchecked step. A stopped step is
                                           not ready, and taking it again starts it clean
+  trust [<address>]                       where the word done sits, and what krewe earned. At level 0
+                                          krewe checks a step and you say done. At level 1 krewe
+                                          closes a step its own check passed. The line under it
+                                          counts the agreements in a row, against the threshold, and
+                                          the whole record beside them. An agreement is read from the
+                                          row and never asked: done after a passing check, or stopped
+                                          after a failing one. One disagreement starts the run again
+                                          and takes the level back down. It records nothing
   attach <session>                         open a session's conversation, with its history
   secret set [<workspace>] <key>          set a workspace secret from standard input, so the value
                                           never reaches your shell history: pipe it in, or redirect

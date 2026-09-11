@@ -202,19 +202,22 @@ func drawPath(out io.Writer, grouped []pathGroup) {
 }
 
 // stepCells is how many cells a step row carries: the number, the title, the state, what krewe`s own
-// run of the scenario reported, the session holding it, and how long ago it was taken.
-const stepCells = 6
+// run of the scenario reported, who closed it, the session holding it, and how long ago it was taken.
+const stepCells = 7
 
 // stepRow is one step as the listing prints it.
 //
 // The verdict sits beside the state because the two answer one question together: a step that reads
-// done and unproven is a step somebody closed without anybody running its scenario.
+// done and unproven is a step somebody closed without anybody running its scenario. Who closed it
+// sits beside the verdict for the same reason: a column of done tells the operator nothing about
+// which of those steps anybody read.
 func stepRow(step *quaycrewv1.Step) []string {
 	return []string{
 		strconv.FormatInt(int64(step.GetNumber()), 10),
 		step.GetTitle(),
 		step.GetState(),
 		proofOn(step),
+		closerOn(step),
 		sessionOn(step),
 		display.Age(step.GetTakenAt()),
 	}
@@ -310,6 +313,16 @@ func proofOn(step *quaycrewv1.Step) string {
 		return "unproven"
 	}
 	return step.GetProofState()
+}
+
+// closerOn is who spoke the word that finished a step, and a dash where nobody closed it yet. A dash
+// for the reason sessionOn gives one: an empty cell in the middle of a row reads as a column that
+// failed to render.
+func closerOn(step *quaycrewv1.Step) string {
+	if step.GetClosedBy() == "" {
+		return "-"
+	}
+	return step.GetClosedBy()
 }
 
 // sessionOn is the session holding a step, and a dash where nobody holds it. A dash rather than an

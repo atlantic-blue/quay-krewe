@@ -212,6 +212,66 @@ type ProofSettings struct {
 	TimeoutSeconds int32
 }
 
+// DefaultTrustThreshold is the run of agreements a project nobody configured needs before krewe is
+// offered the next level. It is the default of the column, repeated here for the reason
+// DefaultStepsInFlightCap is: a project with no design row has to answer what the row would have
+// given it.
+//
+// Five is a guess and nothing measured it. The project sets its own, and the command that prints the
+// record says the number is provisional.
+const DefaultTrustThreshold int32 = 5
+
+// The two levels the word done sits at, and the only two numbers trust_level ever holds.
+//
+// At TrustLevelChecked krewe checks a step and the operator says done. At TrustLevelCloses krewe
+// closes a step its own check passed. A disagreement takes the level back down, and it never goes
+// below the first or above the second.
+const (
+	TrustLevelChecked int32 = 0
+	TrustLevelCloses  int32 = 1
+)
+
+// The two words operator_agreed is one of. A step nobody closed carries neither, which is the empty
+// string, so a reader can tell a step nothing is decided about from a step the operator differed on.
+const (
+	AgreedYes = "yes"
+	AgreedNo  = "no"
+)
+
+// Agreed says whether the operator's word matched what krewe's last run of the scenario reported.
+//
+// It is read from the row and never asked. Done after a passing check agrees with krewe, and stopped
+// after a failing check agrees with it too: both say the operator read the verdict and did what it
+// pointed at. Everything else is a disagreement, including a step closed with nothing run on it,
+// because krewe reported nothing to agree with.
+//
+// Nothing asks the operator. That is a question with an obvious answer and one more keystroke.
+//
+// The Postgres store says this same thing in the statement that writes the state, because the write
+// is one statement there. The conformance suite holds the two to one answer.
+func Agreed(state, proofState string) string {
+	if state == StepDone && proofState == ProofPassing {
+		return AgreedYes
+	}
+	if state == StepStopped && proofState == ProofFailing {
+		return AgreedYes
+	}
+	return AgreedNo
+}
+
+// LoweredTrustLevel is the level a disagreement leaves a project at. It falls by one while the level
+// is above zero, and a disagreement at level 0 records the disagreement and leaves the level alone.
+//
+// The floor is here rather than in each store, for the reason TakeableStates is: two stores held to
+// one conformance suite cannot each own a bound, or a level that went negative in one of them would
+// read as a third level to everything downstream.
+func LoweredTrustLevel(level int32) int32 {
+	if level <= TrustLevelChecked {
+		return TrustLevelChecked
+	}
+	return level - 1
+}
+
 // The three words a step's proof state is one of. A step nobody checked is unproven, which is what
 // every step is born as, and the other two are what a run reported.
 //
@@ -844,9 +904,15 @@ type Store interface {
 	// row keeps the disagreement rather than refusing the word. A stop reads nothing at all, because
 	// a step nobody will finish has to be closable whatever ran on it.
 	//
+	// The same write records whether the operator agreed with krewe's last verdict, and the design
+	// row of the project holding this feature moves its counters in the same transaction. Agreed says
+	// what agreement is. No reader ever sees a closed step whose counters did not move, which is why
+	// the design comes back from this call rather than from a read after it.
+	//
 	// The session and the take stamp are untouched, so the record still says who took the step. The
 	// step and the session are separate records, and nothing here reads or writes a session.
-	FinishStep(ctx context.Context, feature string, number int32, finish Finish) (*quaycrewv1.Step, error)
+	FinishStep(ctx context.Context, feature string, number int32, finish Finish) (
+		*quaycrewv1.Step, *quaycrewv1.Design, error)
 
 	// SetRestatement records what the session wrote about a step before it built anything, and
 	// returns the step after the write. A feature that does not exist and a path that holds no step

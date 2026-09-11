@@ -1296,6 +1296,61 @@ func initializePathSteps(sc *godog.ScenarioContext) {
 		return nil
 	})
 
+	// The trust record. Every one of these reads the design back through the control plane rather
+	// than out of what a write answered, because the question each scenario asks is what the record
+	// holds after the write and not what one call said about it.
+
+	sc.Step(`^step (\d+) says the operator agreed$`, func(ctx context.Context, number int) error {
+		return theStepAgreement(ctx, int32(number), store.AgreedYes)
+	})
+
+	sc.Step(`^step (\d+) says the operator did not agree$`, func(ctx context.Context, number int) error {
+		return theStepAgreement(ctx, int32(number), store.AgreedNo)
+	})
+
+	sc.Step(`^the run of agreements is (\d+)$`, func(ctx context.Context, want int) error {
+		design, err := theTrustRecord(ctx)
+		if err != nil {
+			return err
+		}
+		if got := design.GetTrustRun(); got != int32(want) {
+			return fmt.Errorf("the run of agreements is %d, want %d", got, want)
+		}
+		return nil
+	})
+
+	sc.Step(`^the trust level is (\d+)$`, func(ctx context.Context, want int) error {
+		design, err := theTrustRecord(ctx)
+		if err != nil {
+			return err
+		}
+		if got := design.GetTrustLevel(); got != int32(want) {
+			return fmt.Errorf("the trust level is %d, want %d", got, want)
+		}
+		return nil
+	})
+
+	// Both totals in one line, because a scenario that asserted one of them would pass against a
+	// write that counted the wrong one.
+	sc.Step(`^the trust record counts (\d+) agreements? and (\d+) disagreements?$`,
+		func(ctx context.Context, agreements, disagreements int) error {
+			design, err := theTrustRecord(ctx)
+			if err != nil {
+				return err
+			}
+			if got := design.GetTrustAgreements(); got != int32(agreements) {
+				return fmt.Errorf("the record counts %d agreements, want %d", got, agreements)
+			}
+			if got := design.GetTrustDisagreements(); got != int32(disagreements) {
+				return fmt.Errorf("the record counts %d disagreements, want %d", got, disagreements)
+			}
+			return nil
+		})
+
+	sc.Step(`^the caller reads the trust record$`, func(ctx context.Context) error {
+		return runTool(ctx, "trust", whereTheProjectIs(ctx))
+	})
+
 	sc.Step(`^the caller marks step "([^"]*)" done with "([^"]*)"$`,
 		func(ctx context.Context, said, result string) error {
 			return runTool(ctx, "step", "done", whereTheProjectIs(ctx), said, result)
@@ -1667,6 +1722,32 @@ func recordAVerdictOf(ctx context.Context, feature string, number int32, state s
 		State: state, ScenariosRun: 1, Output: output,
 	})
 	return err
+}
+
+// theStepAgreement reads one step back and holds its record of the operator's word to what the
+// scenario says. The step is read from the path the last write left, which is what every other
+// assertion here reads.
+func theStepAgreement(ctx context.Context, number int32, want string) error {
+	step, err := stepNumbered(ctx, number)
+	if err != nil {
+		return err
+	}
+	if got := step.GetOperatorAgreed(); got != want {
+		return fmt.Errorf("step %d says the operator agreed %q, want %q", number, got, want)
+	}
+	return nil
+}
+
+// theTrustRecord reads the project's design back, which is where the trust record lives. It is read
+// through the control plane rather than out of what the finish answered, because what these
+// scenarios ask is what the record holds now.
+func theTrustRecord(ctx context.Context) (*quaycrewv1.Design, error) {
+	w := worldFrom(ctx)
+	resp, err := w.client.GetDesign(ctx, &quaycrewv1.GetDesignRequest{Project: w.projectID})
+	if err != nil {
+		return nil, fmt.Errorf("read the trust record: %w", err)
+	}
+	return resp.GetDesign(), nil
 }
 
 // finishStep closes a step of the feature a scenario means when it names none.

@@ -144,6 +144,9 @@ func runStepShow(ctx context.Context, client quaycrewv1.ControlPlaneServiceClien
 		fmt.Fprintf(out, "session: %s\n", step.GetSession())
 	}
 	fmt.Fprintf(out, "%s\n", whatTheLastRunSaid(step))
+	if closer := whoClosedIt(step); closer != "" {
+		fmt.Fprintf(out, "%s\n", closer)
+	}
 	// Under the proof line, so the operator reads why a check failed without running it again.
 	if output := strings.TrimRight(step.GetProofOutput(), "\n"); output != "" {
 		fmt.Fprintf(out, "\n%s\n", output)
@@ -220,6 +223,36 @@ func whatTheLastRunSaid(step *quaycrewv1.Step) string {
 	}
 	return said
 }
+
+// whoClosedIt is who spoke the word that finished this step, and whether that word matched krewe's
+// last verdict. It is empty while the step is ready or taken, and the line is left out then, the way
+// every empty block of this output is left out.
+//
+// The two sit on one line because they are one fact about the close. Who closed it says whether
+// anybody read the step, and the agreement says what they made of what krewe reported.
+func whoClosedIt(step *quaycrewv1.Step) string {
+	if step.GetClosedBy() == "" {
+		return ""
+	}
+	said := "closed by " + closerNamed(step.GetClosedBy())
+	if step.GetOperatorAgreed() == "" {
+		return said
+	}
+	return fmt.Sprintf("%s, and the row records %s", said, whatTheRowRecords(step))
+}
+
+// closerNamed reads the word the row keeps as a sentence names the closer. The operator is a person
+// and takes the article, and krewe is a name and does not.
+func closerNamed(closedBy string) string {
+	if closedBy == closedByKrewe {
+		return closedByKrewe
+	}
+	return "the " + closedBy
+}
+
+// closedByKrewe is the word the row carries when krewe closed a step its own check passed. It is the
+// control plane's and it is read off the wire, so it is named here rather than compared inline.
+const closedByKrewe = "krewe"
 
 // runStepRestatement prints what the session wrote about the step it holds.
 //
@@ -519,26 +552,47 @@ func runStepFinish(ctx context.Context, client quaycrewv1.ControlPlaneServiceCli
 	step := resp.GetStep()
 	fmt.Fprintf(out, "step %d.%d of %s is %s: %s\n",
 		held.GetNumber(), step.GetNumber(), located.Path.Project, step.GetState(), step.GetResult())
+	sayWhatTheRowRecords(step, out)
 	if word == "done" {
-		sayIfTheyDisagreed(step, out)
 		return sayWhatIsNext(ctx, client, held, out)
 	}
 	return nil
 }
 
-// sayIfTheyDisagreed says plainly that the operator closed a step krewe's check said no about.
+// sayWhatTheRowRecords says whether the operator's word matched krewe's last verdict.
 //
-// The word is the operator's and the check is refused nothing by it, so the line is a record rather
-// than a warning: the operator is told what was written, not argued with.
+// It prints on both words. Done after a passing check agrees with krewe, and so does a stop after a
+// failing one: the operator read the verdict and did what it pointed at. The other two are
+// disagreements, and the count behind them is what decides whether krewe is ever offered the word.
 //
-// It prints for done alone. A stop after a failing check agrees with the verdict, and a stop reads no
-// verdict at all.
-func sayIfTheyDisagreed(step *quaycrewv1.Step, out io.Writer) {
-	if step.GetProofState() != proofFailing {
+// The line is a record and never an argument. The word is the operator's and nothing refuses it, so
+// this says what was written rather than telling anybody they were wrong.
+func sayWhatTheRowRecords(step *quaycrewv1.Step, out io.Writer) {
+	if step.GetOperatorAgreed() == "" {
 		return
 	}
-	fmt.Fprintf(out, "the check said %s, so the row records a disagreement\n", proofFailing)
+	// A step nobody checked is closed against no verdict at all, so the line says that rather than
+	// naming a state the operator never read. It is still a disagreement: krewe reported nothing to
+	// agree with.
+	if step.GetProofState() == "" || step.GetProofState() == proofUnproven {
+		fmt.Fprintf(out, "nothing checked it, so the row records %s\n", whatTheRowRecords(step))
+		return
+	}
+	fmt.Fprintf(out, "the check said %s, so the row records %s\n",
+		step.GetProofState(), whatTheRowRecords(step))
 }
+
+// whatTheRowRecords is the two words the trust record counts in, as a sentence reads them.
+func whatTheRowRecords(step *quaycrewv1.Step) string {
+	if step.GetOperatorAgreed() == agreedYes {
+		return "an agreement"
+	}
+	return "a disagreement"
+}
+
+// agreedYes is the word the row carries when the operator's word matched the verdict. It is the
+// store's and it is read off the wire, so it is named here rather than compared inline.
+const agreedYes = "yes"
 
 // sayWhatIsNext prints the step the operator may take now, under the line saying this one is done.
 //

@@ -1851,7 +1851,320 @@ func RunConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 	runTakeConformance(t, newDataset)
 	runRestatementConformance(t, newDataset)
 	runProofResultConformance(t, newDataset)
+	runTrustConformance(t, newDataset)
 	runFeatureConformance(t, newDataset)
+}
+
+// runTrustConformance holds both stores to the same answers about whether the operator agreed with
+// krewe's verdict, and about the counters that agreement moves.
+//
+// Every case closes a step and then reads the design, because the two move in one transaction. A
+// counter that moved in memory and not in Postgres is a project that earns the word done on one store
+// and never on the other.
+func runTrustConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
+	t.Helper()
+
+	// Done after a run that passed. The operator read the verdict and did what it pointed at, which
+	// is what agreement is, and nobody was asked.
+	t.Run("finishing a step after a passing check records an agreement", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		project := newProject(t, s, "acme", "house-bills")
+		feature := newFeature(t, s, project, "the bills")
+		writePath(t, s, feature.GetId(), store.Step{Number: 1, Title: "the first"})
+		recordProof(t, s, feature.GetId(), 1, store.ProofPassing)
+
+		written, design, err := s.FinishStep(ctx, feature.GetId(), 1, store.Finish{
+			State: store.StepDone, Result: "shipped as pull request 712", ClosedBy: "operator",
+		})
+		if err != nil {
+			t.Fatalf("FinishStep: %v", err)
+		}
+		if got := written.GetOperatorAgreed(); got != store.AgreedYes {
+			t.Errorf("the step reads %q, want %q", got, store.AgreedYes)
+		}
+		// The design the write answered, not a read after it. The two move in one transaction, so an
+		// answer that was one finish behind would be a second answer to one question.
+		if got := design.GetTrustRun(); got != 1 {
+			t.Errorf("the run reads %d after one agreement, want 1", got)
+		}
+		if got := design.GetTrustAgreements(); got != 1 {
+			t.Errorf("the record reads %d agreements, want 1", got)
+		}
+		if got := design.GetTrustDisagreements(); got != 0 {
+			t.Errorf("the record reads %d disagreements, and nobody differed", got)
+		}
+		read, err := s.GetDesign(ctx, project.GetId())
+		if err != nil {
+			t.Fatalf("GetDesign after the finish: %v", err)
+		}
+		if read.GetTrustRun() != 1 || read.GetTrustAgreements() != 1 {
+			t.Fatalf("the design reads back a run of %d and %d agreements",
+				read.GetTrustRun(), read.GetTrustAgreements())
+		}
+	})
+
+	// Done after a run that said no. The word is the operator's and nothing refuses it, and the row
+	// keeps the difference rather than the word.
+	t.Run("finishing a step after a failing check records a disagreement", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		project := newProject(t, s, "acme", "house-bills")
+		feature := newFeature(t, s, project, "the bills")
+		writePath(t, s, feature.GetId(), store.Step{Number: 1, Title: "the first"})
+		recordProof(t, s, feature.GetId(), 1, store.ProofFailing)
+
+		written, design, err := s.FinishStep(ctx, feature.GetId(), 1, store.Finish{
+			State: store.StepDone, Result: "the scenario is wrong, not the code", ClosedBy: "operator",
+		})
+		if err != nil {
+			t.Fatalf("FinishStep: %v", err)
+		}
+		if got := written.GetOperatorAgreed(); got != store.AgreedNo {
+			t.Errorf("the step reads %q, want %q", got, store.AgreedNo)
+		}
+		if got := design.GetTrustRun(); got != 0 {
+			t.Errorf("the run reads %d after a disagreement, want 0", got)
+		}
+		if got := design.GetTrustDisagreements(); got != 1 {
+			t.Errorf("the record reads %d disagreements, want 1", got)
+		}
+		if got := design.GetTrustAgreements(); got != 0 {
+			t.Errorf("the record reads %d agreements, and nobody agreed", got)
+		}
+	})
+
+	// A stop after a run that said no agrees with krewe rather than differing from it: the run said
+	// the work is not there, and the operator stopped the work.
+	t.Run("stopping a step after a failing check records an agreement", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		project := newProject(t, s, "acme", "house-bills")
+		feature := newFeature(t, s, project, "the bills")
+		writePath(t, s, feature.GetId(), store.Step{Number: 1, Title: "the first"})
+		recordProof(t, s, feature.GetId(), 1, store.ProofFailing)
+
+		written, design, err := s.FinishStep(ctx, feature.GetId(), 1, store.Finish{
+			State: store.StepStopped, Result: "the approach was wrong", ClosedBy: "operator",
+		})
+		if err != nil {
+			t.Fatalf("FinishStep: %v", err)
+		}
+		if got := written.GetOperatorAgreed(); got != store.AgreedYes {
+			t.Errorf("the stopped step reads %q, want %q", got, store.AgreedYes)
+		}
+		if got := design.GetTrustAgreements(); got != 1 {
+			t.Errorf("the record reads %d agreements after a stop on a failing check, want 1", got)
+		}
+		if got := design.GetTrustRun(); got != 1 {
+			t.Errorf("the run reads %d, want 1", got)
+		}
+	})
+
+	// And the other way round. A stop on work krewe said was there is the operator differing with it.
+	t.Run("stopping a step after a passing check records a disagreement", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		project := newProject(t, s, "acme", "house-bills")
+		feature := newFeature(t, s, project, "the bills")
+		writePath(t, s, feature.GetId(), store.Step{Number: 1, Title: "the first"})
+		recordProof(t, s, feature.GetId(), 1, store.ProofPassing)
+
+		written, design, err := s.FinishStep(ctx, feature.GetId(), 1, store.Finish{
+			State: store.StepStopped, Result: "the feature was dropped", ClosedBy: "operator",
+		})
+		if err != nil {
+			t.Fatalf("FinishStep: %v", err)
+		}
+		if got := written.GetOperatorAgreed(); got != store.AgreedNo {
+			t.Errorf("the stopped step reads %q, want %q", got, store.AgreedNo)
+		}
+		if got := design.GetTrustDisagreements(); got != 1 {
+			t.Errorf("the record reads %d disagreements, want 1", got)
+		}
+		if got := design.GetTrustRun(); got != 0 {
+			t.Errorf("the run reads %d after a disagreement, want 0", got)
+		}
+	})
+
+	// A step nobody ran anything on is closed against no verdict, so there is nothing to agree with.
+	// It is a disagreement because krewe reported nothing, and the count is what decides whether krewe
+	// is ever offered the word.
+	t.Run("stopping a step nothing checked records a disagreement", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		project := newProject(t, s, "acme", "house-bills")
+		feature := newFeature(t, s, project, "the bills")
+		writePath(t, s, feature.GetId(), store.Step{Number: 1, Title: "the first"})
+
+		written, design, err := s.FinishStep(ctx, feature.GetId(), 1, store.Finish{
+			State: store.StepStopped, Result: "the customer withdrew it", ClosedBy: "operator",
+		})
+		if err != nil {
+			t.Fatalf("FinishStep: %v", err)
+		}
+		if got := written.GetOperatorAgreed(); got != store.AgreedNo {
+			t.Errorf("the stopped step reads %q, want %q", got, store.AgreedNo)
+		}
+		if got := design.GetTrustDisagreements(); got != 1 {
+			t.Errorf("the record reads %d disagreements, want 1", got)
+		}
+	})
+
+	// The run is a run of consecutive agreements and never a ratio. One disagreement starts it again,
+	// which is the whole difference between a measure of how things stand now and a number that
+	// drifts upward over a long record.
+	t.Run("one disagreement sets the run back to zero and the totals keep every one", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		project := newProject(t, s, "acme", "house-bills")
+		feature := newFeature(t, s, project, "the bills")
+		writePath(t, s, feature.GetId(),
+			store.Step{Number: 1, Title: "the first"},
+			store.Step{Number: 2, Title: "the second"},
+			store.Step{Number: 3, Title: "the third"})
+		for _, number := range []int32{1, 2} {
+			recordProof(t, s, feature.GetId(), number, store.ProofPassing)
+			if _, _, err := s.FinishStep(ctx, feature.GetId(), number, store.Finish{
+				State: store.StepDone, Result: "shipped", ClosedBy: "operator",
+			}); err != nil {
+				t.Fatalf("FinishStep on step %d: %v", number, err)
+			}
+		}
+		recordProof(t, s, feature.GetId(), 3, store.ProofFailing)
+		_, design, err := s.FinishStep(ctx, feature.GetId(), 3, store.Finish{
+			State: store.StepDone, Result: "the scenario is wrong, not the code", ClosedBy: "operator",
+		})
+		if err != nil {
+			t.Fatalf("FinishStep on step 3: %v", err)
+		}
+		if got := design.GetTrustRun(); got != 0 {
+			t.Errorf("the run reads %d after two agreements and one disagreement, want 0", got)
+		}
+		if got := design.GetTrustAgreements(); got != 2 {
+			t.Errorf("the record reads %d agreements, want the two that happened", got)
+		}
+		if got := design.GetTrustDisagreements(); got != 1 {
+			t.Errorf("the record reads %d disagreements, want 1", got)
+		}
+	})
+
+	// The floor. Level 0 is where the system starts, so a disagreement there records the
+	// disagreement and leaves the level alone: a level below zero is not a level.
+	t.Run("a disagreement at level 0 leaves the level at 0", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		project := newProject(t, s, "acme", "house-bills")
+		feature := newFeature(t, s, project, "the bills")
+		writePath(t, s, feature.GetId(),
+			store.Step{Number: 1, Title: "the first"},
+			store.Step{Number: 2, Title: "the second"})
+		for _, number := range []int32{1, 2} {
+			recordProof(t, s, feature.GetId(), number, store.ProofFailing)
+			_, design, err := s.FinishStep(ctx, feature.GetId(), number, store.Finish{
+				State: store.StepDone, Result: "the scenario is wrong, not the code", ClosedBy: "operator",
+			})
+			if err != nil {
+				t.Fatalf("FinishStep on step %d: %v", number, err)
+			}
+			if got := design.GetTrustLevel(); got != store.TrustLevelChecked {
+				t.Fatalf("the level reads %d after disagreement %d, want %d",
+					got, number, store.TrustLevelChecked)
+			}
+		}
+	})
+
+	// The step and the design move together or not at all. A refused finish is where that shows: a
+	// counter moved outside the write would count a disagreement against a step the gate never let
+	// through, and nothing would ever put it back.
+	t.Run("a refused finish moves no counter", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		project := newProject(t, s, "acme", "house-bills")
+		feature := newFeature(t, s, project, "the bills")
+		writePath(t, s, feature.GetId(), store.Step{Number: 1, Title: "the first"})
+
+		if _, _, err := s.FinishStep(ctx, feature.GetId(), 1, store.Finish{
+			State: store.StepDone, Result: "shipped", ClosedBy: "operator",
+		}); !errors.Is(err, store.ErrNotChecked) {
+			t.Fatalf("finishing a step nobody checked answered %v, want ErrNotChecked", err)
+		}
+		design, err := s.GetDesign(ctx, project.GetId())
+		if err != nil {
+			t.Fatalf("GetDesign after the refusal: %v", err)
+		}
+		if design.GetTrustAgreements() != 0 || design.GetTrustDisagreements() != 0 {
+			t.Fatalf("the refused finish counted %d agreements and %d disagreements",
+				design.GetTrustAgreements(), design.GetTrustDisagreements())
+		}
+		read, err := s.GetStep(ctx, feature.GetId(), 1)
+		if err != nil {
+			t.Fatalf("GetStep after the refusal: %v", err)
+		}
+		if read.GetOperatorAgreed() != "" {
+			t.Fatalf("the refused step says the operator agreed %q", read.GetOperatorAgreed())
+		}
+	})
+
+	// The trust record is the project's, and every feature of it counts into one. Two features that
+	// each kept their own count would let a project earn the word twice over.
+	t.Run("the features of one project count into one record", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		project := newProject(t, s, "acme", "house-bills")
+		first := newFeature(t, s, project, "authentication")
+		second := newFeature(t, s, project, "payment")
+		for _, feature := range []string{first.GetId(), second.GetId()} {
+			writePath(t, s, feature, store.Step{Number: 1, Title: "the first"})
+			recordProof(t, s, feature, 1, store.ProofPassing)
+			if _, _, err := s.FinishStep(ctx, feature, 1, store.Finish{
+				State: store.StepDone, Result: "shipped", ClosedBy: "operator",
+			}); err != nil {
+				t.Fatalf("FinishStep on %s: %v", feature, err)
+			}
+		}
+		design, err := s.GetDesign(ctx, project.GetId())
+		if err != nil {
+			t.Fatalf("GetDesign: %v", err)
+		}
+		if got := design.GetTrustRun(); got != 2 {
+			t.Errorf("the run reads %d after one step of each feature, want 2", got)
+		}
+		if got := design.GetTrustAgreements(); got != 2 {
+			t.Errorf("the record reads %d agreements, want 2", got)
+		}
+	})
+
+	// A project nobody wrote a design for still counts. The row is made by the finish, the way every
+	// other design write makes it, and it carries the threshold the column would have given it.
+	t.Run("a project with no design row counts its first finish", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		project := newProject(t, s, "acme", "house-bills")
+		feature := newFeature(t, s, project, "the bills")
+		writePath(t, s, feature.GetId(), store.Step{Number: 1, Title: "the first"})
+		recordProof(t, s, feature.GetId(), 1, store.ProofPassing)
+
+		if _, _, err := s.FinishStep(ctx, feature.GetId(), 1, store.Finish{
+			State: store.StepDone, Result: "shipped", ClosedBy: "operator",
+		}); err != nil {
+			t.Fatalf("FinishStep: %v", err)
+		}
+		design, err := s.GetDesign(ctx, project.GetId())
+		if err != nil {
+			t.Fatalf("GetDesign: %v", err)
+		}
+		if got := design.GetTrustAgreements(); got != 1 {
+			t.Errorf("the record reads %d agreements on a project with no design, want 1", got)
+		}
+		if got := design.GetTrustThreshold(); got != store.DefaultTrustThreshold {
+			t.Errorf("the threshold reads %d, want the default of %d",
+				got, store.DefaultTrustThreshold)
+		}
+		if got := design.GetTrustLevel(); got != store.TrustLevelChecked {
+			t.Errorf("the level reads %d, want %d", got, store.TrustLevelChecked)
+		}
+	})
 }
 
 // runDesignConformance holds both stores to the same answers about what a project is for and what
@@ -3680,7 +3993,7 @@ func runPathConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 				t.Fatalf("TakeStep on step 1: %v", err)
 			}
 			recordProof(t, s, feature.GetId(), 1, store.ProofFailing)
-			if _, err := s.FinishStep(ctx, feature.GetId(), 1, store.Finish{
+			if _, _, err := s.FinishStep(ctx, feature.GetId(), 1, store.Finish{
 				State: store.StepDone, Result: "it goes in anyway", ClosedBy: "operator",
 			}); err != nil {
 				t.Fatalf("FinishStep on step 1: %v", err)
@@ -4140,7 +4453,7 @@ func finishStep(t *testing.T, s store.Store, feature string, number int32, state
 	if state == store.StepDone {
 		recordProof(t, s, feature, number, store.ProofPassing)
 	}
-	if _, err := s.FinishStep(context.Background(), feature, number, store.Finish{
+	if _, _, err := s.FinishStep(context.Background(), feature, number, store.Finish{
 		State: state, Result: "what came of it", ClosedBy: "operator",
 	}); err != nil {
 		t.Fatalf("FinishStep: %v", err)
@@ -4372,7 +4685,7 @@ func runTakeConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 		writePath(t, s, feature.GetId(), store.Step{Number: 1, Title: "the first"})
 		recordProof(t, s, feature.GetId(), 1, store.ProofPassing)
 
-		written, err := s.FinishStep(ctx, feature.GetId(), 1, store.Finish{
+		written, _, err := s.FinishStep(ctx, feature.GetId(), 1, store.Finish{
 			State: store.StepDone, Result: "shipped as pull request 712", ClosedBy: "operator",
 		})
 		if err != nil {
@@ -4417,7 +4730,7 @@ func runTakeConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 			t.Fatalf("TakeStep: %v", err)
 		}
 		recordProof(t, s, feature.GetId(), 1, store.ProofPassing)
-		if _, err := s.FinishStep(ctx, feature.GetId(), 1, store.Finish{
+		if _, _, err := s.FinishStep(ctx, feature.GetId(), 1, store.Finish{
 			State: store.StepDone, Result: "it reads back whole", ClosedBy: "operator",
 		}); err != nil {
 			t.Fatalf("FinishStep: %v", err)
@@ -4442,7 +4755,7 @@ func runTakeConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 		feature := newFeature(t, s, newProject(t, s, "acme", "house-bills"), "the bills")
 		writePath(t, s, feature.GetId(), store.Step{Number: 1, Title: "the first"})
 
-		written, err := s.FinishStep(ctx, feature.GetId(), 1, store.Finish{
+		written, _, err := s.FinishStep(ctx, feature.GetId(), 1, store.Finish{
 			State: store.StepStopped, Result: "the customer withdrew it", ClosedBy: "operator",
 		})
 		if err != nil {
@@ -4462,7 +4775,7 @@ func runTakeConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 		feature := newFeature(t, s, newProject(t, s, "acme", "house-bills"), "the bills")
 		writePath(t, s, feature.GetId(), store.Step{Number: 1, Title: "the first"})
 
-		if _, err := s.FinishStep(ctx, feature.GetId(), 1, store.Finish{
+		if _, _, err := s.FinishStep(ctx, feature.GetId(), 1, store.Finish{
 			State: store.StepDone, Result: "shipped as pull request 712", ClosedBy: "operator",
 		}); !errors.Is(err, store.ErrNotChecked) {
 			t.Fatalf("finishing a step nobody checked answered %v, want ErrNotChecked", err)
@@ -4493,7 +4806,7 @@ func runTakeConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 		writePath(t, s, feature.GetId(), store.Step{Number: 1, Title: "the first"})
 		recordProof(t, s, feature.GetId(), 1, store.ProofFailing)
 
-		written, err := s.FinishStep(ctx, feature.GetId(), 1, store.Finish{
+		written, _, err := s.FinishStep(ctx, feature.GetId(), 1, store.Finish{
 			State: store.StepDone, Result: "the scenario is wrong, not the code", ClosedBy: "operator",
 		})
 		if err != nil {
@@ -4516,7 +4829,7 @@ func runTakeConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 		feature := newFeature(t, s, newProject(t, s, "acme", "house-bills"), "the bills")
 		writePath(t, s, feature.GetId(), store.Step{Number: 1, Title: "the first"})
 
-		written, err := s.FinishStep(ctx, feature.GetId(), 1, store.Finish{
+		written, _, err := s.FinishStep(ctx, feature.GetId(), 1, store.Finish{
 			State: store.StepStopped, Result: "the customer withdrew it", ClosedBy: "operator",
 		})
 		if err != nil {
@@ -4543,7 +4856,7 @@ func runTakeConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 		}
 
 		recordProof(t, s, first.GetId(), 3, store.ProofPassing)
-		if _, err := s.FinishStep(ctx, first.GetId(), 3, store.Finish{
+		if _, _, err := s.FinishStep(ctx, first.GetId(), 3, store.Finish{
 			State: store.StepDone, Result: "shipped", ClosedBy: "operator",
 		}); err != nil {
 			t.Fatalf("FinishStep: %v", err)
@@ -4569,10 +4882,10 @@ func runTakeConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 		writePath(t, s, feature.GetId(), store.Step{Number: 1, Title: "the first"})
 
 		finish := store.Finish{State: store.StepDone, Result: "shipped", ClosedBy: "operator"}
-		if _, err := s.FinishStep(ctx, feature.GetId(), 7, finish); !errors.Is(err, store.ErrNotFound) {
+		if _, _, err := s.FinishStep(ctx, feature.GetId(), 7, finish); !errors.Is(err, store.ErrNotFound) {
 			t.Fatalf("FinishStep on a step nobody wrote answered %v, want ErrNotFound", err)
 		}
-		if _, err := s.FinishStep(ctx, "no-such-feature", 1, finish); !errors.Is(err, store.ErrNotFound) {
+		if _, _, err := s.FinishStep(ctx, "no-such-feature", 1, finish); !errors.Is(err, store.ErrNotFound) {
 			t.Fatalf("FinishStep on a missing feature answered %v, want ErrNotFound", err)
 		}
 	})
@@ -4587,7 +4900,7 @@ func runTakeConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 		writePath(t, s, feature.GetId(), store.Step{Number: 1, Title: "the first"})
 		recordProof(t, s, feature.GetId(), 1, store.ProofPassing)
 
-		if _, err := s.FinishStep(ctx, feature.GetId(), 1, store.Finish{
+		if _, _, err := s.FinishStep(ctx, feature.GetId(), 1, store.Finish{
 			State: store.StepDone, Result: "shipped as pull request 712", ClosedBy: "operator",
 		}); err != nil {
 			t.Fatalf("FinishStep: %v", err)

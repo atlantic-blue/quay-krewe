@@ -678,3 +678,77 @@ stale.
 - STORE-8 states the rule the code follows: "`after` and `ErrPredecessorNotDone` stay inside the
   feature. A step waits for a lower step of its own path, and never for a step of another feature."
   Read across the project, authentication and payment could not run at once at all.
+
+## Settled on 2026-09-11, building S-25, where a contract and the code disagreed
+
+Six entries. In each one the code on `main` wins and the sentence in the contract is recorded as
+stale, or the part of the contract that has no code behind it yet is recorded as waiting for it.
+
+**The trust columns ship in migration 0075, not 0074 and not 0069.**
+- Status: settled, and the contract text is stale.
+- TABLE-1 says "the columns migration `0074` adds, for the trust ladder", TABLE-2 says the same
+  number for the two columns on the step, and the graph's partial contract note for this slice says
+  0069. All three numbers are taken. 0069 names the contracts a step builds, and 0074 added the four
+  proof result columns in S-20, one slice before this one. The next free number is 0075.
+- A migration number is the file name a system records in `schema_migrations`, so a second file under
+  a number already applied never runs at all.
+- S-20 recorded this in advance: it says "that slice takes the next free number when it comes rather
+  than the one written down".
+
+**Seven columns ship here, not eight, because `closed_by` is already on the table.**
+- Status: settled, and the contract text is stale.
+- TABLE-2 lists `closed_by` and `operator_agreed` together under the trust ladder's migration.
+  Migration 0070 added `closed_by` when a step first recorded what came of it, and `FinishStep`
+  has been writing `operator` into it since S-22.
+- So this migration adds `operator_agreed` to `feature_steps` and the six trust columns to
+  `project_designs`. A second `add column if not exists` for `closed_by` would run clean and say
+  nothing, which is worse than leaving it out: a reader of the file would take it for the column's
+  origin and look for its meaning in the wrong slice.
+
+**`FinishStep` answers the step and the design, and the response carries no `next` and no `offer`.**
+- Status: settled for this slice, and the two fields belong to slices that have not shipped.
+- WIRE-12 answers `FinishStepResponse { Step step = 1; Design design = 2; int32 next = 3; string
+  offer = 4; }`. The design ships here, because the counters move in the same transaction as the word
+  and a read after the commit would be a second answer that can already be one finish behind.
+- `next` is read through `ListSteps` by the command line, which is what prints the line today, and
+  the offer is S-26. Neither is added, for the rule S-22 recorded about this same message: a field is
+  added with the write that fills it, so no reader ever sees a field that is always zero.
+
+**`krewe trust` prints no offer, because nothing sets `trust_offered` yet.**
+- Status: settled for this slice, and the line ships with the offer in S-26.
+- COMMAND-17 says "It prints the offer when one stands", and its second acceptance criterion reads
+  "A standing offer prints, and names the command that accepts it". TRUST-2 holds the sentence, and
+  TRUST-2 is S-26.
+- Nothing in this slice writes `trust_offered`, so a branch reading it could never be true and no
+  scenario could reach it. A branch nothing can enter is a branch nothing proves, and the mutation
+  that deleted it would redden nothing.
+- What does ship is everything the offer is decided from: the level, the run, the threshold and both
+  totals, with a line saying what each level means. That is what COMMAND-17 asks the output to be
+  enough for.
+- The same reasoning names the project with no design. The store answers a project with no row with
+  the column defaults, so the command reads an empty brief and an empty body to say "has no design
+  yet", the way `krewe design` already reads them.
+
+**A disagreement at level 1 is proved in each store's own test, not in `features/path.feature`.**
+- Status: settled for this slice, and the scenario belongs with the raise in S-26.
+- TRUST-1 says a disagreement lowers `trust_level` by one while the level is above zero, and this
+  slice builds that rule in both stores.
+- Nothing raises a level. The raise is the operator accepting an offer, which is STORE-15 and
+  COMMAND-18 in S-26, so no caller and no scenario can put a project above level 0 through anything
+  this slice ships.
+- So the level is written where each store holds it, and the finish is made through the call that
+  closes a step: `TestADisagreementAtLevelOneLowersTheLevel` writes it onto the memory store's own
+  design row, and `TestADisagreementAtLevelOneLowersTheLevelInPostgres` writes the column in one
+  statement. It is the shape `restatement_test.go` already uses for the word that approves a
+  restatement, which the conformance suite could not reach for the same reason.
+- The floor is reachable and is a scenario: a disagreement at level 0 records the disagreement and
+  leaves the level where it is.
+
+**A finish makes the design row where the project has none.**
+- Status: settled, and the contracts say nothing either way.
+- TABLE-1 says the row "appears when somebody sets a brief or a design body". A project can hold a
+  path and finish a step without either, and the counters have to go somewhere, so the finish makes
+  the row the way every other design write makes it.
+- The row is born carrying the column defaults, so a project that counted its first finish reads the
+  same threshold, cap, pattern and budget as one with no row at all. `krewe trust` still says the
+  project has no design, because it reads the brief and the body rather than the row's existence.
