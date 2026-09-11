@@ -3335,6 +3335,85 @@ Feature: A project holds a numbered path of steps
     Then step 1 reads back as passing
     And the check asked no model anything
 
+  # A session the system reclaimed has no container. A check that refused there left a step nobody
+  # could move: the session is gone, so the step cannot be checked, so it cannot be closed. Krewe
+  # starts the container instead, under the session's own name, and says so before the wait.
+
+  Scenario: A check on a reclaimed session starts a container and runs the scenario in it
+    Given a step taken, restated and approved, naming the scenario "a project carries a brief"
+    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the session holding the step was reclaimed
+    And the run in the container krewe starts answers "1 scenarios (1 passed)" and exits 0
+    When the operator checks step 1
+    Then the run was given "go test ./features/... -run 'a project carries a brief'"
+    And step 1 reads back as passing
+    And step 1 ran 1 scenario
+    And krewe made the session 1 container
+    And the check warns "krewe started a container"
+
+  # The container carries the session's own name. A container under a fresh name would leave two for
+  # one session, and the next exec would adopt the wrong one or make a third.
+  Scenario: A second check on the same session reuses that container and starts no second one
+    Given a step taken, restated and approved, naming the scenario "a project carries a brief"
+    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the session holding the step was reclaimed
+    And the run in the container krewe starts answers "1 scenarios (1 passed)" and exits 0
+    When the operator checks step 1
+    And the operator checks step 1
+    Then step 1 reads back as passing
+    And krewe made the session 1 container
+    And the second check warns nothing
+
+  # The important refusal in this slice. A run in an empty directory reports no scenarios, krewe
+  # records no scenarios as failing, and the operator then reads a fault in the code that is not one.
+  # So a tree that cannot be restored stops the run rather than falling through into it.
+  Scenario: A working tree that cannot be restored refuses, and nothing is run
+    Given a step taken, restated and approved, naming the scenario "a project carries a brief"
+    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the session holding the step was reclaimed
+    And the session's working directory cannot be made
+    When the operator checks step 1
+    Then the control plane refuses it as a fault of its own
+    And the refusal suggests "working tree could not be restored"
+    And step 1 reads back as unproven
+    And krewe made the session no container
+
+  Scenario: A container that cannot be started refuses, naming what failed
+    Given a step taken, restated and approved, naming the scenario "a project carries a brief"
+    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the session holding the step was reclaimed
+    And no container can be started, saying "no room on this machine"
+    When the operator checks step 1
+    Then the control plane refuses it as a fault of its own
+    And the refusal suggests "no room on this machine"
+    And step 1 reads back as unproven
+
+  # A container is a place to run something. Making one says nothing about the step, so the word that
+  # closes a step, the approval under it and the session that holds it all read as they did.
+  Scenario: The step is still taken by the same session after a container is made for it
+    Given a step taken, restated and approved, naming the scenario "a project carries a brief"
+    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the session holding the step was reclaimed
+    And the run in the container krewe starts answers "1 scenarios (1 passed)" and exits 0
+    When the operator checks step 1
+    Then step 1 is still held by the same session
+    And step 1's restatement is still approved
+    And krewe closed nothing
+    And the session holding the step still reads as reclaimed
+
+  # The line is printed before the wait, because the whole reason it exists is that the operator is
+  # about to wait longer than a check takes and should read why while it is happening.
+  Scenario: The caller checks a step on a reclaimed session and reads that krewe starts a container
+    Given the system listens on an address the tool can dial
+    And a step taken, restated and approved, naming the scenario "a project carries a brief"
+    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the session holding the step was reclaimed
+    And the run in the container krewe starts answers "1 scenarios (1 passed)" and exits 0
+    When the caller checks step "1.1"
+    Then standard output says "krewe starts a container" above "verdict:"
+    And standard output carries "verdict: passing, 1 scenario ran"
+    And the command succeeds
+
   # The session reads the path in its own working directory, so what krewe found is in front of the
   # next session rather than in a listing somebody has to go and read.
   Scenario: A checked step carries its verdict in the path a session reads

@@ -242,7 +242,7 @@ func (s *Server) CheckStep(ctx context.Context, req *quaycrewv1.CheckStepRequest
 		return nil, refusalToRun(why, held)
 	}
 
-	result, err := s.runTheScenario(ctx, feature.GetProject(), held, design)
+	result, warnings, err := s.runTheScenario(ctx, feature.GetProject(), held, design)
 	if err != nil {
 		return nil, err
 	}
@@ -253,7 +253,7 @@ func (s *Server) CheckStep(ctx context.Context, req *quaycrewv1.CheckStepRequest
 	// The design travels beside the step because a caller reads a verdict against the command that
 	// produced it. It is the one read before the run: nothing about a design moves when a scenario
 	// runs, and the trust record that will move with a verdict does not exist yet.
-	return &quaycrewv1.CheckStepResponse{Step: written, Design: design}, nil
+	return &quaycrewv1.CheckStepResponse{Step: written, Design: design, Warnings: warnings}, nil
 }
 
 // whyNothingCanRun is the rule this step and this project fail, and nil where a run may go ahead.
@@ -298,28 +298,24 @@ func refusalToRun(why error, held *quaycrewv1.Step) error {
 }
 
 // runTheScenario runs the step's scenario in the sandbox of the session that holds it, and turns what
-// came back into a verdict.
+// came back into a verdict. Beside the verdict it answers what the operator has to be told about the
+// run, which today is the container krewe had to start to do it.
 //
-// The sandbox is the one the session already has. Nothing is created, nothing is copied and nothing
-// is cloned: the run reads the working directory the session has been writing in, which is what makes
-// the check cost a container exec and nothing else.
+// The sandbox is usually the one the session already has, and the run then reads the working
+// directory the session has been writing in, which is what makes a check cost a container exec and
+// nothing else. A session the system reclaimed has no container, and that is where the cost goes up:
+// see theSandboxToRunIn.
 func (s *Server) runTheScenario(ctx context.Context, project string, held *quaycrewv1.Step,
-	design *quaycrewv1.Design) (store.ProofResult, error) {
+	design *quaycrewv1.Design) (store.ProofResult, []string, error) {
 	// By handle or by identifier, because the step records whichever the take wrote and a session
 	// answers to both. This is the read krewe step restatement already makes to find the same session.
 	session, err := s.sessionAt(ctx, "", project, held.GetSession())
 	if err != nil {
-		return store.ProofResult{}, err
+		return store.ProofResult{}, nil, err
 	}
-	box, running, err := s.provider.Existing(ctx, session.GetId())
+	box, warnings, err := s.theSandboxToRunIn(ctx, session, held)
 	if err != nil {
-		return store.ProofResult{}, status.Errorf(codes.Internal,
-			"the container holding step %d could not be reached: %v", held.GetNumber(), err)
-	}
-	if !running {
-		return store.ProofResult{}, status.Errorf(codes.Internal,
-			"the session holding step %d has no container, so there is nothing to run the scenario in",
-			held.GetNumber())
+		return store.ProofResult{}, nil, err
 	}
 
 	command := strings.ReplaceAll(design.GetProofCommand(), scenarioToken, held.GetProofScenario())
@@ -337,7 +333,7 @@ func (s *Server) runTheScenario(ctx context.Context, project string, held *quayc
 	if err != nil {
 		// A command the shell cannot start is a verdict and not an error. Nothing about the step is
 		// wrong, the run said nothing, and a count of zero never passes.
-		return failedRun(fmt.Sprintf("the run could not start: %v", err)), nil
+		return failedRun(fmt.Sprintf("the run could not start: %v", err)), warnings, nil
 	}
 	printed := theEndOfTheRun(started.Stdout())
 	ran := started.Wait()
@@ -346,9 +342,76 @@ func (s *Server) runTheScenario(ctx context.Context, project string, held *quayc
 	}
 	if errors.Is(under.Err(), context.DeadlineExceeded) {
 		return failedRun(fmt.Sprintf("%s\n\nthe run passed its budget of %d seconds and was stopped",
-			strings.TrimRight(printed, "\n"), int(budget/time.Second))), nil
+			strings.TrimRight(printed, "\n"), int(budget/time.Second))), warnings, nil
 	}
-	return verdictOf(ran, printed, design.GetProofCountPattern()), nil
+	return verdictOf(ran, printed, design.GetProofCountPattern()), warnings, nil
+}
+
+// theSandboxToRunIn is the container this step's scenario runs in, and what the operator has to be
+// told about getting it.
+//
+// The session usually still has one, and then this costs one question and says nothing. A session the
+// system reclaimed has none, and a check that refused there left a step nobody could move: the
+// session is gone, so it cannot be checked, so it cannot be closed. So krewe starts the container
+// instead, under the session's own name, and the operator reads a warning saying it did.
+//
+// What it reads is the container rather than the status, so a session with no container is answered
+// the same way whatever put it in that state, and the sentence says what happened rather than why.
+//
+// The container is the session's own because sandboxFor is the path every exec takes. A container
+// under a fresh name would leave two containers for one session, and the next exec would adopt the
+// wrong one or make a third.
+//
+// Nothing about the session changes here. The step is still taken by the same session, its status
+// still reads reclaimed, and no approval and no proof column moves because a container was made.
+func (s *Server) theSandboxToRunIn(ctx context.Context, session *quaycrewv1.Session,
+	held *quaycrewv1.Step) (sandbox.Sandbox, []string, error) {
+	box, running, err := s.provider.Existing(ctx, session.GetId())
+	if err != nil {
+		return nil, nil, status.Errorf(codes.Internal,
+			"the container holding step %d could not be reached: %v", held.GetNumber(), err)
+	}
+	if running {
+		return box, nil, nil
+	}
+	// Before the container, because the working tree reaches a container as a bind mount and a mount
+	// is computed when the container starts. A tree restored after that would be restored into a
+	// container already mounted over nothing.
+	if err := s.restoreTheWorkingTree(session); err != nil {
+		return nil, nil, status.Errorf(codes.Internal,
+			"the session holding step %d has no container, and its working tree could not be restored: %v. "+
+				"Nothing was run: a scenario run in an empty directory reports no scenarios, "+
+				"which reads as a fault in the code and is not one", held.GetNumber(), err)
+	}
+	made, err := s.sandboxFor(ctx, session)
+	if err != nil {
+		return nil, nil, status.Errorf(codes.Internal,
+			"the session holding step %d has no container, and one could not be started: %v. "+
+				"Read what the sandbox said, fix it, then check the step again", held.GetNumber(), err)
+	}
+	return made, []string{fmt.Sprintf(
+		"the session holding step %d had no container, so krewe started a container for it "+
+			"before the run. That is what the extra wait was", held.GetNumber())}, nil
+}
+
+// restoreTheWorkingTree puts the directories this session works in back, so the container about to
+// start mounts the work rather than nothing.
+//
+// The bytes never left this machine. A session's working directory and its workspace's volume are
+// bind mounts, so reclaiming a container takes the container and leaves every file where it was, and
+// restoring the tree is making sure those directories are there and can be written before anything
+// mounts them.
+//
+// A system that keeps nothing on disk has no directories to restore. Its state lives in the container
+// and went with it, and there is nothing here that can fail.
+func (s *Server) restoreTheWorkingTree(session *quaycrewv1.Session) error {
+	if _, err := s.storage.SessionDirectory(boxOf(session)); err != nil {
+		if errors.Is(err, sandbox.ErrNoDirectories) {
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 // whereTheWorkIs is the directory inside the container that the run is pointed at: the repository the

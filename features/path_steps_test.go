@@ -2,6 +2,7 @@ package features_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -50,6 +51,15 @@ type pathWorld struct {
 	// only way to say so in a scenario whose setup already asked it three times.
 	checked     *quaycrewv1.CheckStepResponse
 	askedBefore int
+	// checks is what every check of a step answered, in the order the scenario made them. The
+	// scenario about a second check reads the second answer rather than the last, because what it is
+	// about is the difference between the two: the first says krewe started a container and the
+	// second says nothing, which is how a scenario states that the container was reused.
+	checks []*quaycrewv1.CheckStepResponse
+	// containersBefore is how many containers the session holding the step had been made when the
+	// scenario reclaimed it, so a count afterwards is the containers the check made and not the one
+	// the take made.
+	containersBefore int
 	// recorded is the path as it stood before a scenario closed the feature, so a later read is
 	// compared against what was there rather than against what the scenario meant to write. A step
 	// somebody took has already moved, and this is what says closing the feature moved nothing more.
@@ -133,6 +143,7 @@ func milestoneNumbered(ctx context.Context, number int32) (*quaycrewv1.Milestone
 func initializePathSteps(sc *godog.ScenarioContext) {
 	initializeFeatureSteps(sc)
 	initializeProofRunSteps(sc)
+	initializeReclaimedSessionSteps(sc)
 	sc.Before(func(ctx context.Context, _ *godog.Scenario) (context.Context, error) {
 		return context.WithValue(ctx, pathKey{}, &pathWorld{}), nil
 	})
@@ -2212,6 +2223,7 @@ func initializeProofRunSteps(sc *godog.ScenarioContext) {
 			return nil
 		}
 		p.checked = resp
+		p.checks = append(p.checks, resp)
 		return nil
 	})
 
@@ -2474,4 +2486,199 @@ func lastOf(text string) string {
 		return text
 	}
 	return "..." + text[len(text)-200:]
+}
+
+// What a check does when the session holding the step no longer has a container.
+//
+// A session the system reclaimed keeps everything except its container: the conversation, the step it
+// holds and every file it wrote are where they were. So the check starts a container for it rather
+// than refusing, and these steps are about the three things that decide whether that works. The
+// container is the session's own, so a second check reuses it. A working tree that cannot be restored
+// stops the run. The operator is told before the wait rather than after it.
+func initializeReclaimedSessionSteps(sc *godog.ScenarioContext) {
+	sc.Step(`^the session holding the step was reclaimed$`, func(ctx context.Context) error {
+		w, p := worldFrom(ctx), pathFrom(ctx)
+		if p.take == nil {
+			return fmt.Errorf("no step was taken, so no session holds one")
+		}
+		held := p.take.GetSession().GetId()
+		// Counted before the reclaim, so an assertion after the check counts the containers this
+		// slice made and not the one the take made.
+		p.containersBefore = containersMadeFor(w, held)
+		if _, err := w.client.ReclaimSession(ctx, &quaycrewv1.ReclaimSessionRequest{Id: held}); err != nil {
+			return fmt.Errorf("reclaiming the session that took the step: %w", err)
+		}
+		// The reclaim is the setup rather than the scenario, so it is read back here: a scenario about
+		// what a check does with no container is worth nothing if the container is still there.
+		if _, running, err := w.provider.Existing(ctx, held); err != nil || running {
+			return fmt.Errorf("the session still has a container after the reclaim: running=%v, %v", running, err)
+		}
+		return nil
+	})
+
+	// Set on the provider rather than on a sandbox, because the sandbox this answer is for does not
+	// exist yet: the check is what makes it. The provider hands its replies to every sandbox it makes.
+	sc.Step(`^the run in the container krewe starts answers "([^"]*)" and exits (\d+)$`,
+		func(ctx context.Context, output string, code int) error {
+			w := worldFrom(ctx)
+			w.provider.Replies = append(w.provider.Replies, sandbox.Reply{
+				Match: theProofCommandRuns, Out: unescape(output), Err: exitedWith(code)})
+			return nil
+		})
+
+	sc.Step(`^the session's working directory cannot be made$`, func(ctx context.Context) error {
+		w, p := worldFrom(ctx), pathFrom(ctx)
+		if p.take == nil {
+			return fmt.Errorf("no step was taken, so no session holds one")
+		}
+		session := p.take.GetSession()
+		dir, kept := w.storage.WorkingDir(sandbox.Config{
+			ID: session.GetId(), Workspace: w.workspaceID, Project: w.projectID})
+		if !kept {
+			return fmt.Errorf("this system keeps no directories, so there is no working tree to break")
+		}
+		if err := os.RemoveAll(dir); err != nil {
+			return err
+		}
+		// A file where the directory belongs, which is a mount source that cannot be made and cannot
+		// be mounted. Nothing can restore a working tree onto it.
+		return os.WriteFile(dir, []byte("not a directory"), 0o600)
+	})
+
+	sc.Step(`^no container can be started, saying "([^"]*)"$`, func(ctx context.Context, said string) error {
+		worldFrom(ctx).provider.CreateErr = errors.New(said)
+		return nil
+	})
+
+	// Counted from the moment the session was reclaimed, so this is the containers the check made.
+	sc.Step(`^krewe made the session (\d+) containers?$`, func(ctx context.Context, want int) error {
+		return containersMade(ctx, want)
+	})
+
+	sc.Step(`^krewe made the session no container$`, func(ctx context.Context) error {
+		return containersMade(ctx, 0)
+	})
+
+	sc.Step(`^the check warns "([^"]*)"$`, func(ctx context.Context, want string) error {
+		p := pathFrom(ctx)
+		if p.checked == nil {
+			return fmt.Errorf("no check was run, so nothing answered")
+		}
+		for _, warning := range p.checked.GetWarnings() {
+			if strings.Contains(warning, want) {
+				return nil
+			}
+		}
+		return fmt.Errorf("the check warned %q, want one of them to carry %q", p.checked.GetWarnings(), want)
+	})
+
+	// The second answer rather than the last, because what this says is that the two differ: the
+	// first check started a container and the second found it already there.
+	sc.Step(`^the second check warns nothing$`, func(ctx context.Context) error {
+		p := pathFrom(ctx)
+		if len(p.checks) < 2 {
+			return fmt.Errorf("%d checks were run, and this is about the second", len(p.checks))
+		}
+		if warnings := p.checks[1].GetWarnings(); len(warnings) != 0 {
+			return fmt.Errorf("the second check warned %q, and it started no container", warnings)
+		}
+		return nil
+	})
+
+	sc.Step(`^the control plane refuses it as a fault of its own$`, func(ctx context.Context) error {
+		return refused(worldFrom(ctx), codes.Internal)
+	})
+
+	// Read out of the store rather than off the answer, because a call that answered with the right
+	// session and moved the row underneath reads the same to its caller.
+	sc.Step(`^step (\d+) is still held by the same session$`, func(ctx context.Context, number int) error {
+		p := pathFrom(ctx)
+		if p.take == nil {
+			return fmt.Errorf("no step was taken, so no session holds one")
+		}
+		step, err := stepAsItStands(ctx, int32(number))
+		if err != nil {
+			return err
+		}
+		if got := step.GetSession(); got != p.take.GetStep().GetSession() {
+			return fmt.Errorf("step %d is held by %q, and %q took it",
+				number, got, p.take.GetStep().GetSession())
+		}
+		if got := step.GetState(); got != "taken" {
+			return fmt.Errorf("step %d reads %q, and making a container closes nothing", number, got)
+		}
+		return nil
+	})
+
+	// The word on the session is the system's record of taking its container back, and a check is not
+	// a dispatch. Nothing about the session moves because krewe ran one command in it.
+	sc.Step(`^the session holding the step still reads as reclaimed$`, func(ctx context.Context) error {
+		w, p := worldFrom(ctx), pathFrom(ctx)
+		if p.take == nil {
+			return fmt.Errorf("no step was taken, so no session holds one")
+		}
+		read, err := w.client.GetSession(ctx, &quaycrewv1.GetSessionRequest{Id: p.take.GetSession().GetId()})
+		if err != nil {
+			return err
+		}
+		if got := read.GetSession().GetStatus(); got != "reclaimed" {
+			return fmt.Errorf("the session reads %q, and making a container moves nothing about it", got)
+		}
+		return nil
+	})
+
+	sc.Step(`^step (\d+)'s restatement is still approved$`, func(ctx context.Context, number int) error {
+		step, err := stepAsItStands(ctx, int32(number))
+		if err != nil {
+			return err
+		}
+		if !step.GetRestatementApproved() {
+			return fmt.Errorf("step %d's restatement reads as unapproved, and a container cleared nothing", number)
+		}
+		return nil
+	})
+
+	// Where one line sits against another, because the whole point of the container line is that it
+	// arrives while the operator is waiting rather than with the verdict.
+	sc.Step(`^standard output says "([^"]*)" above "([^"]*)"$`,
+		func(ctx context.Context, first, second string) error {
+			printed := toolFrom(ctx).stdout
+			above, below := strings.Index(printed, first), strings.Index(printed, second)
+			if above < 0 {
+				return fmt.Errorf("standard output is %q, and it does not carry %q", printed, first)
+			}
+			if below < 0 {
+				return fmt.Errorf("standard output is %q, and it does not carry %q", printed, second)
+			}
+			if above > below {
+				return fmt.Errorf("standard output carries %q below %q: %q", first, second, printed)
+			}
+			return nil
+		})
+}
+
+// containersMade says how many containers were made for the session holding the step since it was
+// reclaimed.
+func containersMade(ctx context.Context, want int) error {
+	w, p := worldFrom(ctx), pathFrom(ctx)
+	if p.take == nil {
+		return fmt.Errorf("no step was taken, so no session holds one")
+	}
+	got := containersMadeFor(w, p.take.GetSession().GetId()) - p.containersBefore
+	if got != want {
+		return fmt.Errorf("krewe made %d containers for the session, want %d", got, want)
+	}
+	return nil
+}
+
+// containersMadeFor is how many containers this provider has actually made for one session. A
+// container it adopted is not one it made, which is what lets a scenario say a second check made none.
+func containersMadeFor(w *world, session string) int {
+	made := 0
+	for _, cfg := range w.provider.Configurations() {
+		if cfg.ID == session {
+			made++
+		}
+	}
+	return made
 }

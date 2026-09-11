@@ -544,3 +544,33 @@ recorded as stale.
 - What krewe has to say about a run goes under the output rather than above it, for the same reason
   the cut line goes above: the trim keeps the end, so a note written above a long run would be the
   first thing dropped. "The pattern found no count" is the last line of the record, where it survives.
+
+## Settled on 2026-09-11, building S-21, where a contract and the code disagreed
+
+Two entries. In each one the code on `main` wins and the sentence in the design document is recorded
+as stale.
+
+**The working tree is restored before the container starts, not into a container already running.**
+- Status: settled, and the contract text is stale about a mechanism that shipped before it.
+- PROOF-2 orders it as step 3: "Start a container for the session with `Provider.Create`, and restore
+  the working tree into it."
+- On `main` a session's working tree reaches a container as a bind mount. `Storage.Prepare` makes the
+  directories and computes the mount, and `DockerProvider.Create` calls it before the container
+  starts, so the mount is fixed at creation. A tree restored after that would be restored into a
+  container already mounted over nothing.
+- So `restoreTheWorkingTree` runs first. It asks the storage for the session's own directory, which
+  makes it where it is missing and refuses where it cannot be made. The invariant the contract cares
+  about is kept and is stronger: a tree that cannot be restored runs nothing, and starts no container
+  either.
+- A system that keeps no directories on disk has nothing to restore. Its state lived in the container
+  and went with it, so the restore answers yes and the run goes ahead.
+
+**Krewe starts the container through `sandboxFor`, which is the path every exec takes.**
+- Status: settled, and the contract text names the call one level down.
+- PROOF-2 says `Provider.Create`. `sandboxFor` is what calls it everywhere else, and it adds what a
+  container needs before anything runs in it: the start gate, the context files, the skills the
+  session holds, its secret files and its signing. A check that called the provider directly would
+  run a scenario in a container missing all of them.
+- It creates under `boxOf(session)`, so the container carries the session's own name. That is the
+  invariant PROOF-2 states, and it is what makes a second check adopt the first container rather than
+  make a second.
