@@ -82,9 +82,11 @@ func TestEveryCommandHasAPlaceInTheListing(t *testing.T) {
 	}
 }
 
-// The order the commands are met in: a project is started before it is designed. A directory read
-// would give back design first, which is why the order is declared rather than read.
-func TestTheListingNamesInitBeforeDesign(t *testing.T) {
+// The order the commands are met in: a project is started, then designed, then read back. A
+// directory read would give back design, init, status, which is why the order is declared rather
+// than read. The list here is written out rather than taken from commands.Order, so a wrong order
+// declared in the package fails here instead of agreeing with itself.
+func TestTheListingNamesTheCommandsInTheOrderTheyAreMetIn(t *testing.T) {
 	at := func(want string) int {
 		for i, one := range commands.All() {
 			if one.Name == want {
@@ -94,14 +96,17 @@ func TestTheListingNamesInitBeforeDesign(t *testing.T) {
 		return -1
 	}
 
-	first, second := at("init"), at("design")
-	switch {
-	case first < 0:
-		t.Fatal("this build carries no init command")
-	case second < 0:
-		t.Fatal("this build carries no design command")
-	case first > second:
-		t.Error("the listing names design before init, and a project is started before it is designed")
+	met := []string{"init", "design", "status"}
+	for _, name := range met {
+		if at(name) < 0 {
+			t.Fatalf("this build carries no %s command", name)
+		}
+	}
+	for i := 1; i < len(met); i++ {
+		if at(met[i-1]) > at(met[i]) {
+			t.Errorf("the listing names %s before %s, and they are met the other way round",
+				met[i], met[i-1])
+		}
 	}
 }
 
@@ -175,6 +180,105 @@ func TestNoCommandWritesADesignBodyOrAPath(t *testing.T) {
 			}
 		}
 	}
+}
+
+// writingCommands is every word of the tool that only writes. A command file that names one of them
+// runs it, so this is the list a readout may not touch.
+//
+// krewe path cap is not here, because the same word reads: with no number after it, the manual says
+// it prints the cap and writes nothing. The form that writes is the one carrying a number, and
+// capWithANumber below is what refuses that.
+//
+// The same list is read by features/commands_steps_test.go, over the file the install put on the
+// machine. Each hook and each suite reads its own copy, the way the four design writes already do.
+var writingCommands = []string{
+	"krewe use",
+	"krewe workspace create", "krewe workspace delete",
+	"krewe project create", "krewe project delete", "krewe project repository",
+	"krewe target",
+	"krewe exec",
+	"krewe archive", "krewe unarchive", "krewe label", "krewe mode", "krewe stop", "krewe drain",
+	"krewe volume cp", "krewe volume delete",
+	"krewe context set", "krewe context edit", "krewe context clear",
+	"krewe design brief", "krewe design set", "krewe design edit", "krewe design contracts",
+	"krewe design approve", "krewe design proof",
+	"krewe feature add", "krewe feature intention", "krewe feature done", "krewe feature stop",
+	"krewe feature open",
+	"krewe path set",
+	"krewe step take", "krewe step approve", "krewe step check", "krewe step done",
+	"krewe step stop", "krewe step reopen",
+	"krewe trust raise", "krewe trust threshold",
+	"krewe secret set", "krewe secret mount",
+	"krewe skill import", "krewe skill attach", "krewe skill detach",
+	"krewe hook import", "krewe hook attach", "krewe hook detach",
+	"krewe commands install",
+}
+
+// capWithANumber is krewe path cap carrying a number, which is the form that writes the cap. The
+// number is a digit or the placeholder a command file writes in place of one.
+var capWithANumber = regexp.MustCompile(`krewe path cap(?:\s+\S+)?\s+(?:\d+|<number>)`)
+
+// asksForAYes is the word a command file uses where it waits for the operator to agree.
+var asksForAYes = regexp.MustCompile(`(?i)\byes\b`)
+
+// The status command is a readout. It reads the path, the sessions and the design, and it prints
+// what they said. A command that wrote something would take an action the operator never asked for,
+// out of a word they typed to look at the project.
+func TestTheStatusCommandRunsNoCommandThatWrites(t *testing.T) {
+	body := statusBody(t)
+
+	for _, writing := range writingCommands {
+		if strings.Contains(body, writing) {
+			t.Errorf("status.md runs %q, and the status command writes nothing", writing)
+		}
+	}
+	if found := capWithANumber.FindString(body); found != "" {
+		t.Errorf("status.md runs %q, which writes the cap", strings.TrimSpace(found))
+	}
+}
+
+// No yes, because there is nothing to agree to. A readout that stopped to ask would be one more
+// thing to answer, where the whole point is to type one word and read the state.
+func TestTheStatusCommandAsksForNoYes(t *testing.T) {
+	if found := asksForAYes.FindString(statusBody(t)); found != "" {
+		t.Errorf("status.md asks for a %q, and it approves nothing", found)
+	}
+}
+
+// The three commands SLASH-6 names. The readout is built out of what they printed, so a file that
+// stopped naming one of them would print a part of the state from nothing.
+func TestTheStatusCommandReadsThePathTheSessionsAndTheDesign(t *testing.T) {
+	body := statusBody(t)
+
+	for _, reading := range []string{
+		"krewe path <workspace>/<project>",
+		"krewe sessions <workspace>/<project>",
+		"krewe design <workspace>/<project>",
+	} {
+		if !strings.Contains(body, reading) {
+			t.Errorf("status.md never runs %q", reading)
+		}
+	}
+}
+
+// A project with no path has no readout to print, so the one line it gets names the command that
+// writes one. A readout of zeros would read as a project where nothing is happening.
+func TestTheStatusCommandNamesTheCommandThatWritesAPath(t *testing.T) {
+	if !strings.Contains(statusBody(t), "/krewe:design") {
+		t.Error("status.md never names /krewe:design, so a project with no path is left looking it up")
+	}
+}
+
+// statusBody is the status command as this build carries it.
+func statusBody(t *testing.T) string {
+	t.Helper()
+	for _, one := range commands.All() {
+		if one.Name == "status" {
+			return one.Body
+		}
+	}
+	t.Fatal("this build carries no status command")
+	return ""
 }
 
 // manualPhrases is every command the tool has, read out of the usage the tool itself prints. A

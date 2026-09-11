@@ -1120,3 +1120,45 @@ hid the rest of it.**
 - So the test reads the two apart. A command written out to be typed, in an indented code line or an
   inline code span, is held to its whole phrase. Prose keeps the loose read. The same mutation in
   `init.md` is refused as well, so this holds over the set rather than over the file this slice adds.
+
+## Settled on 2026-09-11, building S-34, where a contract and the code disagreed
+
+Three entries. Two are the shape the last six slices recorded: the contract names something the code
+does not carry, and the code wins. The third is a decision for the operator.
+
+**The readout reads five commands, because no three of them carry the cap or the trust level.**
+- Status: settled, and the contract names three.
+- SLASH-6 reads "It runs `krewe path`, `krewe sessions` and `krewe design`", and the same contract
+  asks the readout to carry "the steps in flight against the cap" and "the trust level".
+- `krewe path` prints the step rows, the counts by state and the next line. It never prints the cap.
+  `krewe design` prints the brief, the approval and the body. It never prints the trust level.
+  `sayTheCap` in `cmd/krewe/path.go` is the only place that prints the cap, and `runTrust` is the
+  only place that prints the level.
+- So the file reads `krewe path cap <address>` and `krewe trust <address>` as well. Both write
+  nothing: the manual says the cap with no number "prints the cap and what runs now and writes
+  nothing", and it says `krewe trust` "records nothing". The invariant the contract cares about
+  holds, and the readout is built out of rows somebody else wrote.
+
+**What waits on the operator is read per step, because the path listing carries no restatement
+column.**
+- Status: settled, and the contract says to read it from the states the path carries.
+- SLASH-6 reads "'What waits on the operator' reads the states the path already carries", and its
+  acceptance asks that "a step whose restatement nobody read is named as waiting on the operator".
+- `stepRow` in `cmd/krewe/path.go` draws seven cells: the number, the title, the state, the verdict,
+  who closed it, the session and the age. The restatement and its approval live on the `Step`
+  message as fields 14 to 17, and no listing prints them.
+- So the file reads the state and the verdict off the listing, and reads
+  `krewe step restatement <address> <feature>.<number>` for each step in state taken. That command
+  prints `approval:` and a word, and the manual says it dispatches nothing.
+
+**The readout names the read that lands the operator on the step, and never the command that acts.**
+- Status: settled for this slice, and it is a decision for the operator rather than a defect.
+- SLASH-6 reads "The readout names the next command to type, so the operator reads one line and
+  acts". The slice forbids the file to name any command that writes. A step that is ready is taken
+  with `krewe step take`, and a restatement is agreed with `krewe step approve`. Both write.
+- The two cannot both hold, so the readout names `krewe step show <address> <feature>.<number>`,
+  which prints the step whole and records nothing. `/krewe:design` is named where the design is the
+  thing waiting.
+- The cost is stated: the operator reads the step, then types the take themselves. A readout that
+  named the take would put a writing command one paste away from a word typed to look at a project.
+  It is the operator's to say which they would rather have.
