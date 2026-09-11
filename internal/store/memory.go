@@ -1125,6 +1125,43 @@ func (m *Memory) FinishStep(_ context.Context, feature string, number int32, fin
 	return proto.Clone(step).(*quaycrewv1.Step), design, nil
 }
 
+// ReopenStep takes a step back off krewe and lowers the level that let krewe close it.
+//
+// The state, the closer and the write happen under one hold of the lock, the way the postgres store
+// does them in one statement, so a step closed beside this call cannot be reopened against a row
+// nobody read.
+//
+// why goes into result over what krewe wrote there. The record then says what was wrong while the
+// step stays taken, which is what krewe step show reads back.
+//
+// The counters move through the function a finish moves them with, so a reopen counts as the
+// disagreement it is and the two paths cannot drift. The session, the take stamp, the proof columns
+// and the restatement columns are left where they are: the operator answers the same conversation,
+// and the session proved itself already.
+func (m *Memory) ReopenStep(_ context.Context, feature string, number int32, why string) (
+	*quaycrewv1.Step, *quaycrewv1.Design, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	held, err := m.featureLocked(feature)
+	if err != nil {
+		return nil, nil, err
+	}
+	step, err := m.stepLocked(feature, number)
+	if err != nil {
+		return nil, nil, err
+	}
+	if step.GetState() != StepDone || step.GetClosedBy() != ClosedByKrewe {
+		return nil, nil, ErrNotClosedByKrewe
+	}
+	step.Result = why
+	step.State = StepTaken
+	step.OperatorAgreed = AgreedNo
+	step.ClosedBy = ""
+	step.FinishedAt = nil
+	design := m.moveTheCountersLocked(held.GetProject(), AgreedNo)
+	return proto.Clone(step).(*quaycrewv1.Step), design, nil
+}
+
 // moveTheCountersLocked records one agreement or one disagreement on the project's design row, and
 // answers the row after the write.
 //

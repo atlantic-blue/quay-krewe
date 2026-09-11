@@ -1594,6 +1594,78 @@ func (p *Postgres) FinishStep(ctx context.Context, feature string, number int32,
 	return step, design, nil
 }
 
+// ReopenStep takes a step back off krewe and lowers the level that let krewe close it.
+//
+// The state and the closer are read in the statement that writes the row, rather than in a read
+// before it, so a step closed beside this call cannot be reopened against a row nobody read. The step
+// is read again only to say which refusal a write of no rows earned: a step that is not there, and a
+// step krewe did not close, are two different things to the person who typed the command.
+//
+// why goes into result over what krewe wrote there, in that same statement, so no reader ever sees a
+// step back in state taken still carrying the result of the close.
+//
+// The counters move in the same transaction, through the function a finish moves them with, so a
+// reopen counts as the disagreement it is: the level falls by one, the run goes to zero, and the
+// disagreements gain one. The design comes back from this call for the reason FinishStep answers one,
+// because a read after the commit is a second answer that can already be behind another write.
+//
+// The session, the take stamp, the proof columns and the restatement columns are left where they are.
+// The operator answers the same conversation with an ordinary exec, and a reopen that cleared the
+// restatement would make the session prove itself again for a fault of the checker.
+func (p *Postgres) ReopenStep(ctx context.Context, feature string, number int32, why string) (
+	*quaycrewv1.Step, *quaycrewv1.Design, error) {
+	if err := p.featureExists(ctx, feature); err != nil {
+		return nil, nil, err
+	}
+	transaction, err := p.pool.Begin(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("begin the reopen: %w", err)
+	}
+	defer func() { _ = transaction.Rollback(ctx) }()
+
+	// The project row is held for the rest of the transaction, the way the finish holds it, so a
+	// reopen and a finish at one moment move the counters one after the other rather than both
+	// reading the same run and both writing it.
+	var project string
+	if err := transaction.QueryRow(ctx, `
+		select p.id from features f
+		join projects p on p.id = f.project
+		where f.id = $1
+		for update of p`, feature).Scan(&project); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil, ErrNotFound
+		}
+		return nil, nil, fmt.Errorf("hold the project: %w", err)
+	}
+
+	step, err := scanStep(transaction.QueryRow(ctx, `
+		update feature_steps s
+		set state = $4, result = $3, operator_agreed = $5,
+			closed_by = '', finished_at = null, updated_at = now()
+		where s.feature = $1 and s.number = $2
+			and s.state = $6 and s.closed_by = $7
+		returning `+stepColumns,
+		feature, number, why, StepTaken, AgreedNo, StepDone, ClosedByKrewe))
+	if errors.Is(err, pgx.ErrNoRows) {
+		if _, missing := p.GetStep(ctx, feature, number); missing != nil {
+			return nil, nil, missing
+		}
+		return nil, nil, ErrNotClosedByKrewe
+	}
+	if err != nil {
+		return nil, nil, fmt.Errorf("reopen step: %w", err)
+	}
+
+	design, err := moveTheCounters(ctx, transaction, project, AgreedNo)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := transaction.Commit(ctx); err != nil {
+		return nil, nil, fmt.Errorf("commit the reopen: %w", err)
+	}
+	return step, design, nil
+}
+
 // moveTheCounters records one agreement or one disagreement on the project's design row, and answers
 // the row after the write.
 //

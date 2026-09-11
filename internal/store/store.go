@@ -185,6 +185,18 @@ var ErrNoProofCommand = errors.New("store: this project has no proof command")
 // so a raise at level 1 is a raise against no offer however the row got there.
 var ErrNoOfferStanding = errors.New("store: krewe offered this project no level")
 
+// ErrNotClosedByKrewe says a reopen was asked for on a step that teaches krewe nothing to take back:
+// one the operator closed, or one that is not done at all.
+//
+// The two are one sentinel because they are one rule from the side of the trust record. A reopen is
+// the operator saying krewe was wrong, and a step krewe did not close says nothing about krewe. The
+// control plane reads the row to tell a person which of the two they typed.
+//
+// The read of the state and the write are one statement, for the reason ErrNothingToApprove is one: a
+// read followed by a write would let a step closed between the two be reopened against a row nobody
+// read.
+var ErrNotClosedByKrewe = errors.New("store: krewe did not close this step")
+
 // DefaultStepsInFlightCap is how many steps a project nobody configured may hold in state taken at
 // one time. It is the default of the column, repeated here for the stores to answer with when a
 // project carries no design row at all.
@@ -247,6 +259,14 @@ const (
 	AgreedYes = "yes"
 	AgreedNo  = "no"
 )
+
+// ClosedByKrewe is the word closed_by carries when krewe closed a step its own check passed.
+//
+// It is here because the store reads it rather than only writing it: a reopen is allowed on a step
+// krewe closed and refused on every other, so both stores have to refuse the same rows. The control
+// plane writes the word from this constant for the same reason, because a word one layer spelled for
+// itself would refuse every reopen in the system.
+const ClosedByKrewe = "krewe"
 
 // Agreed says whether the operator's word matched what krewe's last run of the scenario reported.
 //
@@ -966,6 +986,28 @@ type Store interface {
 	// The session and the take stamp are untouched, so the record still says who took the step. The
 	// step and the session are separate records, and nothing here reads or writes a session.
 	FinishStep(ctx context.Context, feature string, number int32, finish Finish) (
+		*quaycrewv1.Step, *quaycrewv1.Design, error)
+
+	// ReopenStep takes a step back off krewe: the state goes back to taken, the row records that the
+	// operator differed, and the project's trust level falls by one. A feature that does not exist and
+	// a path that holds no step of that number are both ErrNotFound.
+	//
+	// It is allowed only on a step in state done whose closed_by is ClosedByKrewe. Every other row is
+	// ErrNotClosedByKrewe, a step the operator closed as much as a step nobody closed: nothing about
+	// trust is learned from the operator disagreeing with the operator.
+	//
+	// why is written into result, over whatever krewe wrote there, so the row says what was wrong
+	// while the step stays taken. The store keeps what it is given, and whether a why says anything is
+	// the control plane question, the way the two words a step ends with already are.
+	//
+	// The design row moves in the same transaction, through the counters a finish moves, so a reopen
+	// counts exactly as any other disagreement: the level falls by one, the run goes to zero, the
+	// disagreements gain one, and no reader ever sees a reopened step whose level did not fall.
+	//
+	// The session, the take stamp, the proof columns and the restatement columns are untouched. The
+	// operator answers the same conversation with an ordinary exec, and a reopen that cleared the
+	// restatement would make the session prove itself again for a fault of the checker.
+	ReopenStep(ctx context.Context, feature string, number int32, why string) (
 		*quaycrewv1.Step, *quaycrewv1.Design, error)
 
 	// SetRestatement records what the session wrote about a step before it built anything, and

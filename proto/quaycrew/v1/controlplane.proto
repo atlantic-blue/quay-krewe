@@ -1000,6 +1000,27 @@ message FinishStepResponse {
   string offer = 4;
 }
 
+// ReopenStepRequest takes a step back off krewe: the step it closed, and what it got wrong.
+//
+// The step is addressed by its feature and its number, the way every other step call addresses one.
+//
+// why is required. It is the record the level rests on, so a reopen that said nothing would lower a
+// level with nothing behind it, and the next reader would have a number and no reason.
+message ReopenStepRequest {
+  string feature = 1;
+  int32 number = 2;
+  string why = 3;
+}
+// ReopenStepResponse is the step back in state taken, and the design after the level fell.
+//
+// The design is answered rather than read back afterwards, for the reason FinishStepResponse answers
+// one: the step and the level move in one transaction, and a second read can already be behind
+// another write.
+message ReopenStepResponse {
+  Step step = 1;
+  Design design = 2;
+}
+
 // Feature is one narrowed part of a project. A project delivers several at the same time, each with
 // its own milestones, and none of them waits for another.
 //
@@ -1721,6 +1742,11 @@ service ControlPlaneService {
   // Recording what came of a step: done, or stopped, and what somebody wrote about it. It touches no
   // session, because the step and the session that took it are separate records.
   rpc FinishStep(FinishStepRequest) returns (FinishStepResponse);
+
+  // Taking a step back off krewe, when it closed one the operator does not agree is finished. The
+  // step returns to the session that holds it, and the level falls by one, which is what makes the
+  // close safe to have. The driver may call it: a reopen lowers the level and grants nothing.
+  rpc ReopenStep(ReopenStepRequest) returns (ReopenStepResponse);
 
   // The narrowed parts of a project. The driver may call all three: a design session reads what
   // features exist and names the ones it is about to write paths for, and naming one grants it

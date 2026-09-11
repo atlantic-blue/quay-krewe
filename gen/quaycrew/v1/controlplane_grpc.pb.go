@@ -65,6 +65,7 @@ const (
 	ControlPlaneService_SetTrustThreshold_FullMethodName        = "/quaycrew.v1.ControlPlaneService/SetTrustThreshold"
 	ControlPlaneService_CheckStep_FullMethodName                = "/quaycrew.v1.ControlPlaneService/CheckStep"
 	ControlPlaneService_FinishStep_FullMethodName               = "/quaycrew.v1.ControlPlaneService/FinishStep"
+	ControlPlaneService_ReopenStep_FullMethodName               = "/quaycrew.v1.ControlPlaneService/ReopenStep"
 	ControlPlaneService_ListFeatures_FullMethodName             = "/quaycrew.v1.ControlPlaneService/ListFeatures"
 	ControlPlaneService_AddFeature_FullMethodName               = "/quaycrew.v1.ControlPlaneService/AddFeature"
 	ControlPlaneService_SetFeatureIntention_FullMethodName      = "/quaycrew.v1.ControlPlaneService/SetFeatureIntention"
@@ -201,6 +202,10 @@ type ControlPlaneServiceClient interface {
 	// Recording what came of a step: done, or stopped, and what somebody wrote about it. It touches no
 	// session, because the step and the session that took it are separate records.
 	FinishStep(ctx context.Context, in *FinishStepRequest, opts ...grpc.CallOption) (*FinishStepResponse, error)
+	// Taking a step back off krewe, when it closed one the operator does not agree is finished. The
+	// step returns to the session that holds it, and the level falls by one, which is what makes the
+	// close safe to have. The driver may call it: a reopen lowers the level and grants nothing.
+	ReopenStep(ctx context.Context, in *ReopenStepRequest, opts ...grpc.CallOption) (*ReopenStepResponse, error)
 	// The narrowed parts of a project. The driver may call all three: a design session reads what
 	// features exist and names the ones it is about to write paths for, and naming one grants it
 	// nothing that dispatching would not.
@@ -716,6 +721,16 @@ func (c *controlPlaneServiceClient) FinishStep(ctx context.Context, in *FinishSt
 	return out, nil
 }
 
+func (c *controlPlaneServiceClient) ReopenStep(ctx context.Context, in *ReopenStepRequest, opts ...grpc.CallOption) (*ReopenStepResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ReopenStepResponse)
+	err := c.cc.Invoke(ctx, ControlPlaneService_ReopenStep_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *controlPlaneServiceClient) ListFeatures(ctx context.Context, in *ListFeaturesRequest, opts ...grpc.CallOption) (*ListFeaturesResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ListFeaturesResponse)
@@ -1060,6 +1075,10 @@ type ControlPlaneServiceServer interface {
 	// Recording what came of a step: done, or stopped, and what somebody wrote about it. It touches no
 	// session, because the step and the session that took it are separate records.
 	FinishStep(context.Context, *FinishStepRequest) (*FinishStepResponse, error)
+	// Taking a step back off krewe, when it closed one the operator does not agree is finished. The
+	// step returns to the session that holds it, and the level falls by one, which is what makes the
+	// close safe to have. The driver may call it: a reopen lowers the level and grants nothing.
+	ReopenStep(context.Context, *ReopenStepRequest) (*ReopenStepResponse, error)
 	// The narrowed parts of a project. The driver may call all three: a design session reads what
 	// features exist and names the ones it is about to write paths for, and naming one grants it
 	// nothing that dispatching would not.
@@ -1252,6 +1271,9 @@ func (UnimplementedControlPlaneServiceServer) CheckStep(context.Context, *CheckS
 }
 func (UnimplementedControlPlaneServiceServer) FinishStep(context.Context, *FinishStepRequest) (*FinishStepResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method FinishStep not implemented")
+}
+func (UnimplementedControlPlaneServiceServer) ReopenStep(context.Context, *ReopenStepRequest) (*ReopenStepResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ReopenStep not implemented")
 }
 func (UnimplementedControlPlaneServiceServer) ListFeatures(context.Context, *ListFeaturesRequest) (*ListFeaturesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListFeatures not implemented")
@@ -2168,6 +2190,24 @@ func _ControlPlaneService_FinishStep_Handler(srv interface{}, ctx context.Contex
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ControlPlaneService_ReopenStep_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReopenStepRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ControlPlaneServiceServer).ReopenStep(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ControlPlaneService_ReopenStep_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ControlPlaneServiceServer).ReopenStep(ctx, req.(*ReopenStepRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _ControlPlaneService_ListFeatures_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ListFeaturesRequest)
 	if err := dec(in); err != nil {
@@ -2736,6 +2776,10 @@ var ControlPlaneService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "FinishStep",
 			Handler:    _ControlPlaneService_FinishStep_Handler,
+		},
+		{
+			MethodName: "ReopenStep",
+			Handler:    _ControlPlaneService_ReopenStep_Handler,
 		},
 		{
 			MethodName: "ListFeatures",

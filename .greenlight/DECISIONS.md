@@ -844,3 +844,47 @@ nothing.**
   design read before the run is one finish behind by the time the response is built. The response
   carries what the write answered, for the reason S-25 gave: no reader sees a closed step whose
   counters did not move.
+
+## Settled on 2026-09-11, building S-28, where a contract and the code disagreed
+
+Four entries. In each one the code on `main` wins and the sentence in the contract is recorded as
+stale, or the decision the contract left open is recorded with the reason it went that way.
+
+**`ReopenStep` takes a feature and a number, where the contract writes a project and a number.**
+- Status: settled, and the contract text is stale in the same way S-24, S-25, S-26 and S-27 recorded
+  it.
+- STORE-14 gives the signature `ReopenStep(ctx, project string, number int32, why string)`, and
+  WIRE-15 carries `string project = 1`. A path belongs to a feature since the features slice, so a
+  project and a bare number name no step: two features of one project each hold a step 2.
+- Every other step call on `main` takes a feature, and the command line reads `<feature>.<number>`
+  through `stepAddressed` in `cmd/krewe/step.go`. The store call and the request field follow those.
+- The trust record is still the project's. The store reads the project through the feature, in the
+  same transaction, which is the join `FinishStep` already makes.
+
+**The level falls by one rather than to zero.**
+- Status: settled, and the two sentences in the contracts disagree with each other.
+- WIRE-15's acceptance criterion reads "puts it back to taken and drops the level to 0". TRUST-4's
+  rule reads "It lowers `trust_level` by one" and its invariant reads "The level falls by one, never
+  to zero from any height".
+- The rule is built, because it is the one the design argues for. The two read the same today, since
+  the level never goes above 1, and they stop reading the same the moment a level 2 exists.
+- `store.LoweredTrustLevel` already held the fall of one and the floor at zero, for the disagreement
+  a finish records. A reopen moves the counters through the same function in the memory store and
+  the same statement in Postgres, so the two paths cannot drift.
+
+**`result` carries the why after the reopen, rather than being left empty.**
+- Status: settled, and it is how the two sentences of STORE-14 read together.
+- The invariant reads "clears `finished_at`, `closed_by` and `result`", and the sentence under it
+  reads "`why` is written into `result` before the state changes, so the record says what was wrong".
+- One statement writes the why over what krewe wrote there. What is cleared is the record of the
+  close, and what stands in its place is the record of the correction, which is what
+  `krewe step show` reads back while the step is taken.
+
+**`ReopenStep` is not named in `DeniedToDriver`.**
+- Status: settled, and the contract says nothing either way.
+- WIRE-16 lists a `PermissionDenied` for the raise and says "`RaiseTrust` is named in
+  `DeniedToDriver`". WIRE-15 lists no such refusal and names no such thing.
+- The ladder is refused to the driver because those calls grant capability. A reopen lowers the
+  level by one and hands the work back, so a session that reopened its own step would be taking the
+  word done away from itself. The comment above `DeniedToDriver` records that reasoning beside the
+  calls it refuses.
