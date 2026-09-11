@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -123,6 +124,223 @@ func workspaceNames(ctx context.Context, client quaycrewv1.ControlPlaneServiceCl
 		names[w.GetId()] = w.GetName()
 	}
 	return names
+}
+
+// Path lists the steps of a project's path: what each one is, where it got to, and which of them is
+// waiting for the operator. Reading that meant leaving the console for the command line.
+//
+// Neither `p` nor `s` is a spelling here. Projects and sessions hold those letters, and a word that
+// opens a different view than it opened yesterday costs more than a longer word does.
+func Path(client quaycrewv1.ControlPlaneServiceClient) Resource {
+	return Resource{
+		Name:    "path",
+		Aliases: []string{"steps"},
+		Columns: []Column{
+			{Title: "number", Width: 6, Colour: dim},
+			// The flexible column. A title is a sentence, and a sentence cut to a fixed width stops
+			// being one, so it takes whatever the row has left.
+			{Title: "title", Width: 0},
+			// The cell the operator opens this view for, so it is coloured by what it says.
+			{Title: "state", Width: 12, Colour: colourOfStepState},
+			{Title: "proof", Width: 10, Colour: colourOfProof},
+			// Empty where nobody closed the step. The command line draws a dash in the same cell
+			// because its columns are only as wide as their widest value; here the table pads every
+			// row, so an empty cell reads as empty rather than as a column that failed to render.
+			{Title: "closed by", Width: 10, Colour: dim},
+			{Title: "session", Width: 10, Colour: dim},
+			{Title: "age", Width: 10, Colour: dim},
+		},
+		// No order of its own. The control plane answers in number order, and these cells are
+		// rendered text, so ordering them here compares "10" against "2" as words and draws step 10
+		// above step 2. The sessions view carries the same note for the same reason.
+		SortBy:  -1,
+		DrillTo: "sessions",
+		DrillBy: sessionsOfStep,
+		List:    pathLister(client),
+	}
+}
+
+// pathLister reads the path of every feature of the project the operator drilled into, and lists the
+// steps of all of them.
+//
+// A path belongs to a feature and a feature belongs to a project, so reading a project's path is two
+// calls rather than one: `ListSteps` names a feature and never a project. A step carries its feature
+// on the wire and not its project, and enter needs the project, so each row is given the project of
+// the feature it was listed under.
+func pathLister(client quaycrewv1.ControlPlaneServiceClient) Lister {
+	// parent is a project id when drilled into from one, and empty at the top level, where every
+	// project's features answer.
+	return func(ctx context.Context, parent string) ([]Row, error) {
+		features, err := client.ListFeatures(ctx, &quaycrewv1.ListFeaturesRequest{Project: parent})
+		if err != nil {
+			return nil, err
+		}
+		rows := make([]Row, 0, len(features.GetFeatures()))
+		for _, feature := range features.GetFeatures() {
+			listed, err := client.ListSteps(ctx, &quaycrewv1.ListStepsRequest{Feature: feature.GetId()})
+			if err != nil {
+				return nil, err
+			}
+			for _, step := range listed.GetSteps() {
+				rows = append(rows, stepRow(step, feature.GetProject()))
+			}
+		}
+		return rows, nil
+	}
+}
+
+// Where the two cells a key reads back out of a step row sit: the number a refusal names, and the
+// session that says whether there is anything to open.
+const (
+	stepNumberColumn  = 0
+	stepSessionColumn = 5
+)
+
+// sessionsOfStep is what enter descends into from a step: the sessions of the project, rather than
+// the one session that took the step. Selecting a row of the view below is a mechanism the console
+// does not have, and the contract defers it.
+//
+// A step nobody took names no session, and the refusal says which step. Opening the project's
+// sessions on that row would answer a question nobody asked.
+func sessionsOfStep(row Row) (string, error) {
+	if len(row.Cells) <= stepSessionColumn || row.Cells[stepSessionColumn] == "" {
+		return "", fmt.Errorf("nobody took step %s, so there is no session to open", numberOfStep(row))
+	}
+	return row.Parent, nil
+}
+
+// numberOfStep is the step a row is about, as a refusal names it.
+func numberOfStep(row Row) string {
+	if len(row.Cells) <= stepNumberColumn {
+		return "that step"
+	}
+	return row.Cells[stepNumberColumn]
+}
+
+func stepRow(step *quaycrewv1.Step, project string) Row {
+	// A number counts from one inside each feature, so two features of one project both hold a step
+	// 2 and the identifier carries the feature.
+	state := stepStateCell(step)
+	return Row{
+		ID:     step.GetFeature() + "." + strconv.Itoa(int(step.GetNumber())),
+		Parent: project,
+		Label:  step.GetTitle(),
+		Cells: []string{
+			strconv.Itoa(int(step.GetNumber())),
+			step.GetTitle(),
+			state,
+			proofCell(step),
+			step.GetClosedBy(),
+			display.ShortID(step.GetSession()),
+			display.Age(step.GetTakenAt()),
+		},
+		State: stateFromStep(state),
+	}
+}
+
+// The words a step carries on the wire. They are the store's, and they are named here rather than
+// compared inline for the reason the command line names them: a word that quietly stopped matching
+// would leave a row uncoloured and say nothing about it.
+const (
+	stepReady   = "ready"
+	stepTaken   = "taken"
+	stepDone    = "done"
+	stepStopped = "stopped"
+
+	proofUnproven = "unproven"
+	proofPassing  = "passing"
+	proofFailing  = "failing"
+)
+
+// waitingOnYou is what the state cell says for a step that has stopped moving until a person reads
+// something. It is worked out from the row and never asked of the control plane: what the operator
+// owes a step is not a state the step is in.
+const waitingOnYou = "waiting on you"
+
+// stepStateCell is the word the state column draws.
+func stepStateCell(step *quaycrewv1.Step) string {
+	if waitsForTheOperator(step) {
+		return waitingOnYou
+	}
+	return step.GetState()
+}
+
+// waitsForTheOperator says whether a step has stopped until somebody reads it. There are two shapes:
+// a restatement nobody approved, and a check that passed with no word spoken to close the step.
+//
+// Only a step somebody holds can wait. A ready step has nobody on it, and a done or a stopped step is
+// closed, so an unapproved restatement under either is a record rather than a question.
+func waitsForTheOperator(step *quaycrewv1.Step) bool {
+	if step.GetState() != stepTaken {
+		return false
+	}
+	if step.GetRestatement() != "" && !step.GetRestatementApproved() {
+		return true
+	}
+	return step.GetProofState() == proofPassing && step.GetClosedBy() == ""
+}
+
+// proofCell is what krewe's own run of the step's scenario last reported. A step nobody checked reads
+// unproven, which is the word both stores write, and the empty string is what a row written before
+// that column existed carries.
+func proofCell(step *quaycrewv1.Step) string {
+	if step.GetProofState() == "" {
+		return proofUnproven
+	}
+	return step.GetProofState()
+}
+
+// stateFromStep colours a row by where its step got to: green for one nobody has started, yellow for
+// one in flight, faint for one that is finished, red for one somebody abandoned.
+//
+// It reads the cell rather than the step, the way stateFromStatus does, so the word on the screen and
+// the colour under it cannot disagree. A step waiting on the operator is in flight, and is drawn as
+// one.
+func stateFromStep(cell string) State {
+	switch cell {
+	case stepReady:
+		return StateReady
+	case stepTaken, waitingOnYou:
+		return StateBusy
+	case stepDone:
+		return StateStopped
+	case stepStopped:
+		return StateFailed
+	// Unknown falls through on purpose: a state neither this nor the store knows is left uncoloured
+	// rather than dressed as one of the four.
+	default:
+		return StateUnknown
+	}
+}
+
+// colourOfStepState puts the state in the colour of the state, the way the sessions view colours a
+// status.
+func colourOfStepState(cell string) string {
+	switch stateFromStep(cell) {
+	case StateReady:
+		return ansiGreenCode
+	case StateBusy:
+		return ansiYellowCode
+	case StateStopped:
+		return dimCode
+	case StateFailed:
+		return ansiRedCode
+	default:
+		return ""
+	}
+}
+
+// colourOfProof draws a verdict in the colour of the verdict, and dims the step nobody ran: unproven
+// is the absence of a reading rather than a bad one.
+func colourOfProof(cell string) string {
+	switch cell {
+	case proofPassing:
+		return ansiGreenCode
+	case proofFailing:
+		return ansiRedCode
+	default:
+		return dimCode
+	}
 }
 
 // Contexts lists the directories the model reads. An empty one is the normal state, so whether the

@@ -351,6 +351,27 @@ func initializeConsoleSteps(sc *godog.ScenarioContext) {
 		return expectRows(consoleFrom(ctx), "sessions", want)
 	})
 
+	// The path view is scoped to the project it was drilled into, so it is opened the way the drill
+	// leaves it: the view, and the project under it.
+	sc.Step(`^the operator opens the console on the project's path$`, func(ctx context.Context) error {
+		c, w := consoleFrom(ctx), worldFrom(ctx)
+		if err := c.open(ctx, w.client, "path"); err != nil {
+			return err
+		}
+		return c.list(ctx, w.projectID)
+	})
+
+	sc.Step(`^the console lists (\d+) steps?$`, func(ctx context.Context, want int) error {
+		return expectRows(consoleFrom(ctx), "path", want)
+	})
+
+	sc.Step(`^the console is showing the path$`, func(ctx context.Context) error {
+		if got := consoleFrom(ctx).active.Name; got != "path" {
+			return fmt.Errorf("the console is showing %q, want path", got)
+		}
+		return nil
+	})
+
 	// The command bar resolves what was typed, so this drives the same path a keystroke does rather
 	// than asking the registry a question the operator never asks it.
 	sc.Step(`^the operator opens the console by typing "([^"]*)"$`, func(ctx context.Context, typed string) error {

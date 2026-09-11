@@ -928,3 +928,37 @@ add`.**
 - The write is `--file <path>` as the contract says, and the flag is optional on `main`: with no file
   the command prints the document and writes nothing. The brief gives the write form only, because a
   session reading the brief is about to write one.
+
+## Settled on 2026-09-11, building S-30, where a contract and the code disagreed
+
+Three entries. In each one the code on `main` wins and the sentence in the contract, or in the
+slice's own note, is recorded as stale.
+
+**Reading a project's path is two calls, because `ListSteps` names a feature and never a project.**
+- Status: settled, and the contract text is stale in the same way S-24 to S-28 recorded it.
+- CONSOLE-1 reads "`List` calls `ListSteps` with the project", and its input is "the identifier of
+  the project the operator drilled in from". CONSOLE-2 reads "one `ListSteps` call with an empty
+  project".
+- A path belongs to a feature since the features slice. `ListStepsRequest` carries `string feature =
+  1`, and `internal/store` refuses a feature it does not hold, so a project identifier in that field
+  names nothing and the view would draw a refusal on every project.
+- The view calls `ListFeatures` with the project and then `ListSteps` with each feature it answered
+  with. Two features of one project both belong on the screen, and both paths are drawn.
+- The order is still the control plane's. A call that names a feature is sorted in number order by
+  `ListSteps` itself, which is why `SortBy` stays at -1.
+
+**A step carries its feature on the wire and not its project, so the row is given the project it was
+listed under.**
+- Status: settled, and the contract says nothing either way.
+- CONSOLE-1 reads "`DrillBy` returning the step's project when the step names a session". The `Step`
+  message has no project field, and nothing on it can be read as one.
+- Each row is built with the project of the feature it was listed under, which is the project the
+  lister was scoped by, so `DrillBy` hands back what the contract asks for without a third call.
+
+**This slice adds no migration, because the columns the cells read already shipped.**
+- Status: settled, and the note on S-30 in `GRAPH.json` is stale.
+- The note reads "It depends on S-25 because the closer cell reads a column that migration 0069
+  adds".
+- `closed_by` shipped in migration 0070 and the trust columns in 0075, both on `main`. The
+  restatement columns the derived state cell reads shipped earlier still. The view reads the wire
+  and writes nothing, so it needs no schema of its own.
