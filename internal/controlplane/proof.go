@@ -250,8 +250,9 @@ func (s *Server) CheckStep(ctx context.Context, req *quaycrewv1.CheckStepRequest
 	if err != nil {
 		return nil, storeError(err, "step")
 	}
-	// The design is read again after the write, because the trust record moves with a verdict once
-	// the ladder exists and a caller reads the two together.
+	// The design travels beside the step because a caller reads a verdict against the command that
+	// produced it. It is the one read before the run: nothing about a design moves when a scenario
+	// runs, and the trust record that will move with a verdict does not exist yet.
 	return &quaycrewv1.CheckStepResponse{Step: written, Design: design}, nil
 }
 
