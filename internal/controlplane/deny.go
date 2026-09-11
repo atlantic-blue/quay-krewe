@@ -59,6 +59,11 @@ import (
 // it was supposed to earn. Reading the record stays open, because what a session is allowed to do is
 // something it should be able to look up.
 //
+// Reopening a step is not refused, and it belongs to that same rule rather than standing against it.
+// A reopen lowers the level by one and puts the work back, so a session that reopened its own step
+// would be taking the word done away from itself. It grants nothing, and the operator reads the
+// disagreement it records.
+//
 // Setting the threshold is refused beside it because lowering the number is the same grant by a
 // longer road: a session that could say two agreements are enough would be writing its own offer.
 // Raising the number grants nothing, and the call is refused whole rather than by the direction of

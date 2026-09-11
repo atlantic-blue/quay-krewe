@@ -274,6 +274,15 @@ commands:
     <feature>.<number> "<reason>"         same arguments as step done, in the same order. It runs no
                                           check and it refuses no unchecked step. A stopped step is
                                           not ready, and taking it again starts it clean
+  step reopen [<address>]                 take a step back off krewe, when it closed one you do not
+    <feature>.<number> "<why>"            agree is finished. The step goes back to taken, and krewe
+                                          drops one trust level, so the run of agreements starts
+                                          again. It works only on a step krewe closed: a step you
+                                          closed yourself is refused, because nothing about trust is
+                                          learned from you disagreeing with you. The why is required,
+                                          and it is the record the level rests on. Nothing is
+                                          dispatched and nothing restarts: the same session still
+                                          holds the step, its restatement and the conversation
   trust [<address>]                       where the word done sits, and what krewe earned. At level 0
                                           krewe checks a step and you say done. At level 1 krewe
                                           closes a step its own check passed. The line under it

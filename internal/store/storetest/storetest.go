@@ -2493,6 +2493,262 @@ func runTrustConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 			t.Errorf("the level reads %d, want %d", got, store.TrustLevelCloses)
 		}
 	})
+
+	// The way back down. The operator differs with a close krewe made, the step goes back to the
+	// session that holds it, and the level pays for the difference.
+
+	t.Run("a reopen of a step krewe closed puts it back to taken and lowers the level", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		project := newProject(t, s, "acme", "house-bills")
+		feature := aStepKreweClosed(t, s, project)
+
+		written, design, err := s.ReopenStep(ctx, feature.GetId(), 2, "the scenario does not describe the value")
+		if err != nil {
+			t.Fatalf("ReopenStep: %v", err)
+		}
+		if got := written.GetState(); got != store.StepTaken {
+			t.Errorf("the reopened step reads %q, want %q", got, store.StepTaken)
+		}
+		if got := written.GetOperatorAgreed(); got != store.AgreedNo {
+			t.Errorf("the reopened step says the operator agreed %q, want %q", got, store.AgreedNo)
+		}
+		if got := written.GetClosedBy(); got != "" {
+			t.Errorf("the reopened step still says %q closed it", got)
+		}
+		if written.GetFinishedAt() != nil {
+			t.Errorf("the reopened step still carries the moment %v it was closed", written.GetFinishedAt())
+		}
+		// The why, over what krewe wrote there. The record says what was wrong while the step is taken,
+		// which is what krewe step show reads back.
+		if got := written.GetResult(); got != "the scenario does not describe the value" {
+			t.Errorf("the reopened step says its result is %q, want the why", got)
+		}
+		if got := design.GetTrustLevel(); got != store.TrustLevelChecked {
+			t.Errorf("the level reads %d after the reopen, want %d", got, store.TrustLevelChecked)
+		}
+		read, err := s.GetStep(ctx, feature.GetId(), 2)
+		if err != nil {
+			t.Fatalf("GetStep after the reopen: %v", err)
+		}
+		if read.GetState() != store.StepTaken || read.GetClosedBy() != "" {
+			t.Fatalf("the row reads %q, closed by %q", read.GetState(), read.GetClosedBy())
+		}
+	})
+
+	// A reopen counts as the disagreement it is, through the counters a finish moves. The run starts
+	// again because the agreements behind it are the ones the operator just took back.
+	t.Run("a reopen sets the run to zero and counts one disagreement", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		project := newProject(t, s, "acme", "house-bills")
+		feature := aStepKreweClosed(t, s, project)
+
+		_, design, err := s.ReopenStep(ctx, feature.GetId(), 2, "the step is not built")
+		if err != nil {
+			t.Fatalf("ReopenStep: %v", err)
+		}
+		if got := design.GetTrustRun(); got != 0 {
+			t.Errorf("the run reads %d after a reopen, want 0", got)
+		}
+		if got := design.GetTrustDisagreements(); got != 1 {
+			t.Errorf("the record reads %d disagreements, want 1", got)
+		}
+		if got := design.GetTrustAgreements(); got != 2 {
+			t.Errorf("the record reads %d agreements, want the two that happened", got)
+		}
+		if design.GetTrustOffered() {
+			t.Error("an offer stands after the operator differed with krewe")
+		}
+	})
+
+	// The half of the reopen that is easy to get wrong. The session proved itself already, and the
+	// fault the operator is recording is the fault of the checker, so nothing about the session or its
+	// work is taken away.
+	t.Run("a reopened step keeps its session, its proof columns and its restatement", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		project := newProject(t, s, "acme", "house-bills")
+		feature := aStepKreweClosed(t, s, project)
+		held, err := s.GetStep(ctx, feature.GetId(), 2)
+		if err != nil {
+			t.Fatalf("GetStep before the reopen: %v", err)
+		}
+
+		written, _, err := s.ReopenStep(ctx, feature.GetId(), 2, "the scenario is not the value")
+		if err != nil {
+			t.Fatalf("ReopenStep: %v", err)
+		}
+		if got := written.GetSession(); got != held.GetSession() {
+			t.Errorf("the reopened step names session %q, and %q took it", got, held.GetSession())
+		}
+		if written.GetTakenAt() == nil || !written.GetTakenAt().AsTime().Equal(held.GetTakenAt().AsTime()) {
+			t.Errorf("the take stamp reads %v, and the take wrote %v",
+				written.GetTakenAt(), held.GetTakenAt())
+		}
+		if got := written.GetProofState(); got != store.ProofPassing {
+			t.Errorf("the reopened step reads %q, and the run that closed it passed", got)
+		}
+		if got := written.GetProofScenariosRun(); got != 1 {
+			t.Errorf("the reopened step says %d scenarios ran, want the 1 the run reported", got)
+		}
+		if written.GetProofRanAt() == nil {
+			t.Error("the reopened step carries no moment of the run that closed it")
+		}
+		if got := written.GetRestatement(); got != "what this step changes" {
+			t.Errorf("the reopened step reads back the restatement %q", got)
+		}
+		if !written.GetRestatementApproved() {
+			t.Error("the reopened step reads as unapproved, so the session must restate itself again")
+		}
+	})
+
+	// Nothing about trust is learned from the operator disagreeing with the operator, so the row a
+	// person closed themselves is refused.
+	t.Run("a reopen of a step the operator closed is refused and moves nothing", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		project := newProject(t, s, "acme", "house-bills")
+		feature := newFeature(t, s, project, "the bills")
+		writePath(t, s, feature.GetId(), store.Step{Number: 1, Title: "the first"})
+		finishStep(t, s, feature.GetId(), 1, store.StepDone)
+
+		if _, _, err := s.ReopenStep(ctx, feature.GetId(), 1, "I read it wrong"); !errors.Is(
+			err, store.ErrNotClosedByKrewe) {
+			t.Fatalf("a reopen of a step the operator closed answered %v, want ErrNotClosedByKrewe", err)
+		}
+		read, err := s.GetStep(ctx, feature.GetId(), 1)
+		if err != nil {
+			t.Fatalf("GetStep after the refusal: %v", err)
+		}
+		if got := read.GetState(); got != store.StepDone {
+			t.Errorf("the refused step reads %q, want it left at %q", got, store.StepDone)
+		}
+		if got := read.GetResult(); got != "what came of it" {
+			t.Errorf("the refused step says its result is %q, so the why was written anyway", got)
+		}
+		design, err := s.GetDesign(ctx, project.GetId())
+		if err != nil {
+			t.Fatalf("GetDesign after the refusal: %v", err)
+		}
+		if design.GetTrustDisagreements() != 0 || design.GetTrustAgreements() != 1 {
+			t.Fatalf("the refused reopen counted %d agreements and %d disagreements",
+				design.GetTrustAgreements(), design.GetTrustDisagreements())
+		}
+	})
+
+	// A step nobody closed is refused by the same sentinel. There is no close to take back.
+	t.Run("a reopen of a step that is not done is refused", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		project := newProject(t, s, "acme", "house-bills")
+		feature := newFeature(t, s, project, "the bills")
+		writePath(t, s, feature.GetId(), store.Step{Number: 1, Title: "the first"})
+
+		if _, _, err := s.ReopenStep(ctx, feature.GetId(), 1, "krewe closed it too early"); !errors.Is(
+			err, store.ErrNotClosedByKrewe) {
+			t.Fatalf("a reopen of a ready step answered %v, want ErrNotClosedByKrewe", err)
+		}
+		read, err := s.GetStep(ctx, feature.GetId(), 1)
+		if err != nil {
+			t.Fatalf("GetStep after the refusal: %v", err)
+		}
+		if got := read.GetState(); got != "ready" {
+			t.Errorf("the refused step reads %q, want it left ready", got)
+		}
+	})
+
+	// The floor, from the other side of the ladder. A level below zero is not a level, so a second
+	// reopen records the disagreement and leaves the level where it is.
+	t.Run("a reopen at level zero leaves the level at zero", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		project := newProject(t, s, "acme", "house-bills")
+		feature := aStepKreweClosed(t, s, project)
+		if _, _, err := s.ReopenStep(ctx, feature.GetId(), 2, "the step is not built"); err != nil {
+			t.Fatalf("the first ReopenStep: %v", err)
+		}
+		// Closed by krewe a second time, which is the row this case needs. Whether the level allowed
+		// that close is the control plane question: the store keeps the word it is given.
+		if _, _, err := s.FinishStep(ctx, feature.GetId(), 2, store.Finish{
+			State: store.StepDone, Result: "krewe closed this step", ClosedBy: store.ClosedByKrewe,
+		}); err != nil {
+			t.Fatalf("the second close: %v", err)
+		}
+
+		_, design, err := s.ReopenStep(ctx, feature.GetId(), 2, "it is still not built")
+		if err != nil {
+			t.Fatalf("the second ReopenStep: %v", err)
+		}
+		if got := design.GetTrustLevel(); got != store.TrustLevelChecked {
+			t.Fatalf("the level reads %d after a reopen at level 0, want %d",
+				got, store.TrustLevelChecked)
+		}
+		if got := design.GetTrustDisagreements(); got != 2 {
+			t.Errorf("the record reads %d disagreements after two reopens, want 2", got)
+		}
+	})
+
+	t.Run("a reopen of a step the path does not hold is not found", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		project := newProject(t, s, "acme", "house-bills")
+		feature := aStepKreweClosed(t, s, project)
+
+		if _, _, err := s.ReopenStep(ctx, feature.GetId(), 9, "krewe closed it too early"); !errors.Is(
+			err, store.ErrNotFound) {
+			t.Fatalf("a reopen of step 9 answered %v, want ErrNotFound", err)
+		}
+	})
+
+	t.Run("a reopen on a feature that does not exist is not found", func(t *testing.T) {
+		s := newDataset(t)(t)
+		if _, _, err := s.ReopenStep(context.Background(), "nobody", 1, "krewe closed it too early"); !errors.Is(
+			err, store.ErrNotFound) {
+			t.Fatalf("a reopen on a missing feature answered %v, want ErrNotFound", err)
+		}
+	})
+}
+
+// aStepKreweClosed stands a project up in the state a reopen takes back: the level at one, and a
+// second step taken, restated, checked and closed by krewe. It answers the feature holding that path.
+//
+// It walks the calls the system walks rather than writing the columns, for the reason
+// offerAStandingLevel does: a test that set trust_level and closed_by itself would prove the reopen
+// against a row nothing produces.
+//
+// The step is taken and restated because half of what the reopen promises is what it leaves alone.
+// A step with no session and no restatement cannot fail that promise.
+func aStepKreweClosed(t *testing.T, s store.Store, project *quaycrewv1.Project) *quaycrewv1.Feature {
+	t.Helper()
+	ctx := context.Background()
+	feature := newFeature(t, s, project, "the bills")
+	writePath(t, s, feature.GetId(),
+		store.Step{Number: 1, Title: "the first"},
+		store.Step{Number: 2, Title: "the second"})
+	if _, err := s.SetTrustThreshold(ctx, project.GetId(), 1); err != nil {
+		t.Fatalf("SetTrustThreshold: %v", err)
+	}
+	finishStep(t, s, feature.GetId(), 1, store.StepDone)
+	if _, err := s.RaiseTrust(ctx, project.GetId()); err != nil {
+		t.Fatalf("RaiseTrust to the level that closes a step: %v", err)
+	}
+	if _, _, err := s.TakeStep(ctx, feature.GetId(), 2, "session-that-builds-it"); err != nil {
+		t.Fatalf("TakeStep: %v", err)
+	}
+	if _, err := s.SetRestatement(ctx, feature.GetId(), 2, "what this step changes"); err != nil {
+		t.Fatalf("SetRestatement: %v", err)
+	}
+	if _, err := s.ApproveRestatement(ctx, feature.GetId(), 2); err != nil {
+		t.Fatalf("ApproveRestatement: %v", err)
+	}
+	recordProof(t, s, feature.GetId(), 2, store.ProofPassing)
+	if _, _, err := s.FinishStep(ctx, feature.GetId(), 2, store.Finish{
+		State: store.StepDone, Result: "krewe closed this step", ClosedBy: store.ClosedByKrewe,
+	}); err != nil {
+		t.Fatalf("the close krewe makes: %v", err)
+	}
+	return feature
 }
 
 // runDesignConformance holds both stores to the same answers about what a project is for and what

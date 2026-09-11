@@ -4028,6 +4028,147 @@ Feature: A project holds a numbered path of steps
     And standard output carries "krewe step reopen"
     And the command succeeds
 
+  # The way back down from a close krewe made, and the only reason that close is safe to have. A
+  # checker nobody can correct is a checker the operator stops handing the word done to, so the
+  # correction is a command rather than a repair somebody makes in the database.
+  #
+  # It costs the level. Leaving the level where it is was rejected in the design, because that lets a
+  # checker the operator does not believe keep the word.
+  #
+  # The step under these is step 2, closed by krewe on its own check, which is the road the scenarios
+  # above walk. The three things the model was asked are the take, the read of the restatement and
+  # the approval, all of them before the reopen: a reopen adds none, because it dispatches nothing.
+
+  Scenario: Reopening a step krewe closed puts it back to taken and lowers the level by one
+    Given krewe is at trust level 1, with step 2 taken, restated and approved, naming the scenario "a project carries a brief"
+    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the run answers "1 scenarios (1 passed)" and exits 0
+    And the operator checks step 2
+    And krewe closed step 2
+    When the operator reopens step 2 saying "the scenario passes and the step is not built"
+    Then step 2 is still taken
+    And step 2 says nobody closed it
+    And step 2 says the operator did not agree
+    And the trust level is 0
+    And the model was asked 3 things in all
+
+  # A reopen counts as the disagreement it is. The run starts again because the agreements behind it
+  # are the ones the operator is taking back.
+  Scenario: The reopen sets the run of agreements to zero and adds one to the disagreements
+    Given krewe is at trust level 1, with step 2 taken, restated and approved, naming the scenario "a project carries a brief"
+    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the run answers "1 scenarios (1 passed)" and exits 0
+    And the operator checks step 2
+    And krewe closed step 2
+    When the operator reopens step 2 saying "the scenario passes and the step is not built"
+    Then the run of agreements is 0
+    And the trust record counts 2 agreements and 1 disagreement
+    And krewe is offered nothing
+
+  # Nothing about trust is learned from the operator disagreeing with the operator, so the row a
+  # person closed themselves is refused, and the refusal says that rather than naming a way round it.
+  Scenario: Reopening a step the operator closed is refused, and the refusal says why
+    Given the project's design is "the design, whole"
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+      """
+    And krewe checked step 1, and it passed
+    And the operator finishes step 1 with "shipped as pull request 738"
+    When the operator reopens step 1 saying "I read the verdict wrong"
+    Then the control plane refuses it as the wrong state
+    And the refusal suggests "the operator closed step 1"
+    And the refusal suggests "Nothing about trust is learned from the operator disagreeing with the operator"
+    And step 1 is still done
+    And the trust level is 0
+    And the trust record counts 1 agreement and 0 disagreements
+
+  # There is no close to take back, so the same sentinel refuses it.
+  Scenario: Reopening a step that is not done is refused
+    Given the project's design is "the design, whole"
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+      """
+    When the operator reopens step 1 saying "krewe closed it too early"
+    Then the control plane refuses it as the wrong state
+    And the refusal suggests "Only a step krewe closed can be reopened"
+    And step 1 is still ready
+    And the trust record counts 0 agreements and 0 disagreements
+
+  # The level falls on this record. A reopen that said nothing would lower a level and leave the next
+  # reader a number with no reason, so the why is asked for before anything else is read.
+  Scenario: A reopen with an empty why is refused, and the refusal says what to write
+    Given the project's design is "the design, whole"
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+      """
+    And krewe checked step 1, and it passed
+    And the operator finishes step 1 with "shipped as pull request 738"
+    When the operator reopens step 1 saying nothing
+    Then the control plane refuses it as invalid
+    And the refusal suggests "say what krewe got wrong"
+    And step 1 is still done
+
+  # The half of the reopen that is easy to get wrong. The session proved itself already and the fault
+  # being recorded is the fault of the checker, so a reopen that cleared the restatement would make
+  # the session prove itself again for something it did not do.
+  Scenario: The reopened step keeps its session, its proof state and its restatement
+    Given krewe is at trust level 1, with step 2 taken, restated and approved, naming the scenario "a project carries a brief"
+    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the run answers "1 scenarios (1 passed)" and exits 0
+    And the operator checks step 2
+    And krewe closed step 2
+    When the operator reopens step 2 saying "the scenario does not describe the value"
+    Then step 2 is still held by the same session
+    And step 2 reads back as passing
+    And step 2's restatement is still approved
+    And step 2 reads back the restatement "The store holds a project's design."
+
+  # These scenarios run the command line tool as a caller runs it: its own process, its own standard
+  # output, its own exit status.
+
+  Scenario: The caller reopens a step krewe closed and the path reads it as taken
+    Given the system listens on an address the tool can dial
+    And krewe is at trust level 1, with step 2 taken, restated and approved, naming the scenario "a project carries a brief"
+    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the run answers "1 scenarios (1 passed)" and exits 0
+    And the operator checks step 2
+    When the caller reopens step "1.2" with "the scenario passes and the step is not built"
+    Then standard output carries "step 1.2 of house-bills is taken again"
+    And the caller reads the path
+    And standard output carries "taken"
+    And the command succeeds
+
+  # The record says what was wrong while the step is taken, which is the whole point of writing the
+  # why onto the row rather than into a log nobody reads.
+  Scenario: Why reads back through krewe step show while the step stays taken
+    Given the system listens on an address the tool can dial
+    And krewe is at trust level 1, with step 2 taken, restated and approved, naming the scenario "a project carries a brief"
+    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the run answers "1 scenarios (1 passed)" and exits 0
+    And the operator checks step 2
+    And the caller reopens step "1.2" with "the scenario passes and the step is not built"
+    When the caller shows step "1.2"
+    Then standard output carries "state: taken"
+    And standard output carries "result: the scenario passes and the step is not built"
+    And standard output does not carry "closed by"
+    And the command succeeds
+
+  # What the correction cost, said on the spot. An operator who has to go and look up the level after
+  # every reopen stops reading it at all.
+  Scenario: The output names the new trust level and says the run of agreements starts again
+    Given the system listens on an address the tool can dial
+    And krewe is at trust level 1, with step 2 taken, restated and approved, naming the scenario "a project carries a brief"
+    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the run answers "1 scenarios (1 passed)" and exits 0
+    And the operator checks step 2
+    When the caller reopens step "1.2" with "the scenario passes and the step is not built"
+    Then standard output carries "krewe is at trust level 0, and the run of agreements starts again"
+    And standard output carries "nothing was dispatched"
+    And the command succeeds
+
   # Krewe never raises its own level, so there is nothing to accept until it asks. The refusal names
   # the word that reads the record, because the question behind it is how far off the offer is.
   Scenario: A raise with no offer standing is refused

@@ -1189,6 +1189,19 @@ func initializePathSteps(sc *godog.ScenarioContext) {
 		return finishStep(ctx, 7, "done", "shipped")
 	})
 
+	// Taking a step back off krewe. It is the way down from a close krewe made, and the level pays
+	// for it.
+
+	sc.Step(`^the operator reopens step (\d+) saying "([^"]*)"$`,
+		func(ctx context.Context, number int, why string) error {
+			return reopenStep(ctx, int32(number), why)
+		})
+
+	sc.Step(`^the operator reopens step (\d+) saying nothing$`,
+		func(ctx context.Context, number int) error {
+			return reopenStep(ctx, int32(number), "")
+		})
+
 	sc.Step(`^step (\d+) says its result is "([^"]*)"$`,
 		func(ctx context.Context, number int, want string) error {
 			step, err := stepNumbered(ctx, int32(number))
@@ -1232,6 +1245,23 @@ func initializePathSteps(sc *godog.ScenarioContext) {
 			}
 			return nil
 		})
+
+	// The two columns a reopen clears. A step back in state taken still naming a closer, or still
+	// carrying the moment it finished, is a row that says two things at once.
+	sc.Step(`^step (\d+) says nobody closed it$`, func(ctx context.Context, number int) error {
+		step, err := stepAsItStands(ctx, int32(number))
+		if err != nil {
+			return err
+		}
+		if got := step.GetClosedBy(); got != "" {
+			return fmt.Errorf("step %d still says %q closed it", number, got)
+		}
+		if step.GetFinishedAt() != nil {
+			return fmt.Errorf("step %d still carries the moment %v it finished",
+				number, step.GetFinishedAt())
+		}
+		return nil
+	})
 
 	// The step and the session are separate records. A finish that cleared either of these would take
 	// away the record of who did the work.
@@ -1530,6 +1560,11 @@ func initializePathSteps(sc *godog.ScenarioContext) {
 
 	// One step whole, which is the read the listing above cannot answer: a row holds a line, and an
 	// intention, a list of files and the end of a failed run do not fit on one.
+	sc.Step(`^the caller reopens step "([^"]*)" with "([^"]*)"$`,
+		func(ctx context.Context, said, why string) error {
+			return runTool(ctx, "step", "reopen", whereTheProjectIs(ctx), said, why)
+		})
+
 	sc.Step(`^the caller shows step "([^"]*)"$`, func(ctx context.Context, said string) error {
 		return runTool(ctx, "step", "show", whereTheProjectIs(ctx), said)
 	})
@@ -1869,6 +1904,27 @@ func finishStepOf(ctx context.Context, feature string, number int32, state, resu
 		return nil
 	}
 	return readPath(ctx, feature)
+}
+
+// reopenStep takes one step back off krewe, on the feature a scenario means when it names none, and
+// reads the path back so an assertion reads the record rather than the answer the call gave.
+//
+// A refusal is kept the way every other refusal here is kept, and the path is left as it stood, so a
+// scenario about a refused reopen reads what the write did not change.
+func reopenStep(ctx context.Context, number int32, why string) error {
+	w := worldFrom(ctx)
+	held, err := theFeature(ctx)
+	if err != nil {
+		return err
+	}
+	_, err = w.client.ReopenStep(ctx, &quaycrewv1.ReopenStepRequest{
+		Feature: held.GetId(), Number: number, Why: why,
+	})
+	w.lastErr = err
+	if err != nil {
+		return nil
+	}
+	return readPath(ctx, held.GetId())
 }
 
 // readPath reads one feature's path into the world the assertions go through.

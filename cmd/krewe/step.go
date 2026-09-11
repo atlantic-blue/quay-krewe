@@ -23,7 +23,8 @@ const stepUsage = "usage: krewe step take [<address>] <feature>.<number>" +
 	"\n       krewe step approve [<address>] <feature>.<number>" +
 	"\n       krewe step check [<address>] <feature>.<number>" +
 	"\n       krewe step done [<address>] <feature>.<number> \"<result>\"" +
-	"\n       krewe step stop [<address>] <feature>.<number> \"<reason>\""
+	"\n       krewe step stop [<address>] <feature>.<number> \"<reason>\"" +
+	"\n       krewe step reopen [<address>] <feature>.<number> \"<why>\""
 
 func runStep(ctx context.Context, client quaycrewv1.ControlPlaneServiceClient, args []string, out io.Writer) error {
 	if len(args) > 0 && args[0] == "take" {
@@ -43,6 +44,9 @@ func runStep(ctx context.Context, client quaycrewv1.ControlPlaneServiceClient, a
 	}
 	if len(args) > 0 && (args[0] == "done" || args[0] == "stop") {
 		return runStepFinish(ctx, client, args[0], args[1:], out)
+	}
+	if len(args) > 0 && args[0] == "reopen" {
+		return runStepReopen(ctx, client, args[1:], out)
 	}
 	return fmt.Errorf("%s", stepUsage)
 }
@@ -579,6 +583,59 @@ func runStepFinish(ctx context.Context, client quaycrewv1.ControlPlaneServiceCli
 	}
 	if word == "done" {
 		return sayWhatIsNext(ctx, client, held, out)
+	}
+	return nil
+}
+
+// runStepReopen takes a step back off krewe, when krewe closed one the operator does not agree is
+// finished.
+//
+// It takes the same arguments in the same order as the two words that close a step, so the way back
+// is one more thing of the same shape rather than a new one to learn.
+//
+// why is required, and the control plane refuses an empty one: the level falls on this record, so a
+// reopen that said nothing would leave the next reader a number with no reason.
+//
+// It dispatches nothing. The step goes back to the session that already holds it, and the last line
+// says how to answer that conversation.
+func runStepReopen(ctx context.Context, client quaycrewv1.ControlPlaneServiceClient,
+	args []string, out io.Writer) error {
+	usage := "usage: krewe step reopen [<address>] <feature>.<number> \"<why>\""
+	if len(args) < 2 || len(args) > 3 {
+		return fmt.Errorf("%s", usage)
+	}
+	typed, said, why := "", args[0], args[1]
+	if len(args) == 3 {
+		typed, said, why = args[0], args[1], args[2]
+	}
+	located, err := designProject(ctx, client, typed)
+	if err != nil {
+		return err
+	}
+	features, err := featuresOf(ctx, client, located.ProjectID)
+	if err != nil {
+		return err
+	}
+	held, number, err := stepAddressed(said, features, located.Path.Project)
+	if err != nil {
+		return err
+	}
+	resp, err := client.ReopenStep(ctx, &quaycrewv1.ReopenStepRequest{
+		Feature: held.GetId(), Number: number, Why: why,
+	})
+	if err != nil {
+		return fmt.Errorf("%w\n\nnothing was written", err)
+	}
+	step := resp.GetStep()
+	fmt.Fprintf(out, "step %d.%d of %s is taken again: %s\n",
+		held.GetNumber(), step.GetNumber(), located.Path.Project, step.GetResult())
+	// The level the write left, read off the answer rather than counted here, because the fall is the
+	// store rule and a second subtraction here would be a second place for it to drift.
+	fmt.Fprintf(out, "krewe is at trust level %d, and the run of agreements starts again\n",
+		resp.GetDesign().GetTrustLevel())
+	if session := step.GetSession(); session != "" {
+		fmt.Fprintf(out, "nothing was dispatched: answer that session with krewe exec %s/%s/%s \"...\"\n",
+			located.Path.Workspace, located.Path.Project, session)
 	}
 	return nil
 }

@@ -1693,9 +1693,13 @@ func buildText(step *quaycrewv1.Step) string {
 //
 // They are named together because one column holds them and three readers compare against it. A word
 // one of those spelled for itself would read as a step nobody closed.
+//
+// The second is the store word rather than a copy of it. The store refuses a reopen on every step
+// krewe did not close, so a spelling that drifted from the one written here would refuse every reopen
+// in the system.
 const (
 	closedByOperator = "operator"
-	closedByKrewe    = "krewe"
+	closedByKrewe    = store.ClosedByKrewe
 )
 
 // stepFinishStates are the two ways a step ends, in the order the refusal names them.
@@ -1800,6 +1804,82 @@ func nothingCheckedItYet(number int32) string {
 	return fmt.Sprintf(
 		"nothing checked step %d yet. Run krewe step check [<address>] <feature>.<number>, "+
 			"read the verdict, then say done", number)
+}
+
+// ReopenStep takes a step back off krewe, and makes the correction cost the level.
+//
+// It is the way back down from a close krewe made, and it is the whole reason that close is safe to
+// have. A checker nobody can correct is a checker the operator stops handing the word to, so the
+// correction is a command rather than a repair somebody makes in the database.
+//
+// The level falls by one. Leaving it where it is was rejected in the design: that lets a checker the
+// operator does not believe keep the word done. It never falls to zero from a height and never below
+// zero, because no measurement supports a bigger fall.
+//
+// why is required, and it is refused before anything is read. The level rests on that record, so a
+// reopen that said nothing would lower a level and leave the next reader a number with no reason.
+//
+// Nothing dispatches and nothing restarts. The step keeps its session, so the operator answers the
+// same conversation with an ordinary exec, and it keeps its restatement, so the session is not made
+// to prove itself again for a fault of the checker.
+func (s *Server) ReopenStep(ctx context.Context, req *quaycrewv1.ReopenStepRequest) (
+	*quaycrewv1.ReopenStepResponse, error) {
+	if req.GetFeature() == "" {
+		return nil, status.Error(codes.InvalidArgument, "which feature: a step belongs to one, so say its number")
+	}
+	if req.GetNumber() < 1 {
+		return nil, status.Error(codes.InvalidArgument, "a step number counts from one")
+	}
+	if req.GetWhy() == "" {
+		return nil, status.Error(codes.InvalidArgument, sayWhatKreweGotWrong)
+	}
+
+	// The whole path, so a number nobody wrote is refused with how many steps there are rather than
+	// with a bare not found, and so the refusal below can say which rule this step fails. It is the
+	// read the finish already does, for the first of those reasons.
+	steps, err := s.store.ListSteps(ctx, req.GetFeature())
+	if err != nil {
+		return nil, storeError(err, "feature")
+	}
+	held := stepNumbered(steps, req.GetNumber())
+	if held == nil {
+		return nil, noSuchStep(req.GetNumber(), len(steps))
+	}
+	written, design, err := s.store.ReopenStep(ctx, req.GetFeature(), req.GetNumber(), req.GetWhy())
+	if errors.Is(err, store.ErrNotClosedByKrewe) {
+		return nil, status.Error(codes.FailedPrecondition, nothingToTakeBack(held))
+	}
+	if err != nil {
+		return nil, storeError(err, "step")
+	}
+	// The design as the write left it, rather than a read after it, for the reason the finish answers
+	// one: the level fell in the same transaction as the state, and a second read can already be
+	// behind another write.
+	return &quaycrewv1.ReopenStepResponse{Step: written, Design: design}, nil
+}
+
+// sayWhatKreweGotWrong is the refusal for a reopen that says nothing.
+//
+// It asks for the thing rather than naming the rule, because the next move is to type the
+// sentence, and the sentence is the record the level rests on.
+const sayWhatKreweGotWrong = "say what krewe got wrong, because that is the record the level rests on"
+
+// nothingToTakeBack is the refusal for a reopen on a step krewe did not close.
+//
+// The store answers one sentinel for the two rows this covers, and the sentence is built from the row
+// the path already carries, because the two are a different mistake to the person who typed it. A
+// step the operator closed was read by a person, and a step that is not done was never closed at all.
+//
+// It names neither a command to type nor a way around the rule. There is none: a step the operator
+// closed is reopened by nobody, and that is the rule rather than a gap in it.
+func nothingToTakeBack(step *quaycrewv1.Step) string {
+	if step.GetState() != stepDone {
+		return fmt.Sprintf("step %d is %s, and a reopen takes back a step krewe closed. "+
+			"Only a step krewe closed can be reopened", step.GetNumber(), step.GetState())
+	}
+	return fmt.Sprintf("the operator closed step %d. "+
+		"Nothing about trust is learned from the operator disagreeing with the operator",
+		step.GetNumber())
 }
 
 // stepNumbered is the step of that number, and nil when the path holds none.
