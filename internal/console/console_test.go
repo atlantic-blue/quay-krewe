@@ -104,6 +104,39 @@ func (f *fakeClient) ListProjects(_ context.Context, req *quaycrewv1.ListProject
 	return &quaycrewv1.ListProjectsResponse{Projects: matched}, nil
 }
 
+// The three calls the projects view makes to count a project's path, its trust and its flight. This
+// double is a system nobody has designed: no feature, no step, and the design every project that
+// exists answers with before anybody writes one.
+func (f *fakeClient) ListFeatures(context.Context, *quaycrewv1.ListFeaturesRequest, ...grpc.CallOption) (*quaycrewv1.ListFeaturesResponse, error) {
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
+	return &quaycrewv1.ListFeaturesResponse{}, nil
+}
+
+func (f *fakeClient) ListSteps(context.Context, *quaycrewv1.ListStepsRequest, ...grpc.CallOption) (*quaycrewv1.ListStepsResponse, error) {
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
+	return &quaycrewv1.ListStepsResponse{}, nil
+}
+
+// GetDesign answers the way the control plane does for a project with no design row: the identifier,
+// and every default that row would have carried. A double that answered zeroes would let a cell that
+// reads the cap pass here and draw 0 in front of the operator.
+func (f *fakeClient) GetDesign(_ context.Context, req *quaycrewv1.GetDesignRequest, _ ...grpc.CallOption) (*quaycrewv1.GetDesignResponse, error) {
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
+	return &quaycrewv1.GetDesignResponse{Design: bornDesign(req.GetProject())}, nil
+}
+
+// bornDesign is store.DefaultStepsInFlightCap and store.DefaultTrustThreshold, which is what a
+// project that exists answers with before anybody designs it.
+func bornDesign(project string) *quaycrewv1.Design {
+	return &quaycrewv1.Design{Project: project, StepsInFlightCap: 10, TrustThreshold: 5}
+}
+
 func (f *fakeClient) ListSessions(_ context.Context, req *quaycrewv1.ListSessionsRequest, _ ...grpc.CallOption) (*quaycrewv1.ListSessionsResponse, error) {
 	if f.listErr != nil {
 		return nil, f.listErr

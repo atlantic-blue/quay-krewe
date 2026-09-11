@@ -38,6 +38,21 @@ func (t *treeClient) ListProjects(_ context.Context, req *quaycrewv1.ListProject
 	return &quaycrewv1.ListProjectsResponse{Projects: matched}, nil
 }
 
+// The three calls the projects view makes to count a project's path, its trust and its flight. The
+// tree is about moving between levels, so this system has nothing designed in it: no feature, no
+// step, and the design every project answers with before anybody writes one.
+func (t *treeClient) ListFeatures(context.Context, *quaycrewv1.ListFeaturesRequest, ...grpc.CallOption) (*quaycrewv1.ListFeaturesResponse, error) {
+	return &quaycrewv1.ListFeaturesResponse{}, nil
+}
+
+func (t *treeClient) ListSteps(context.Context, *quaycrewv1.ListStepsRequest, ...grpc.CallOption) (*quaycrewv1.ListStepsResponse, error) {
+	return &quaycrewv1.ListStepsResponse{}, nil
+}
+
+func (t *treeClient) GetDesign(_ context.Context, req *quaycrewv1.GetDesignRequest, _ ...grpc.CallOption) (*quaycrewv1.GetDesignResponse, error) {
+	return &quaycrewv1.GetDesignResponse{Design: bornDesign(req.GetProject())}, nil
+}
+
 func (t *treeClient) ListSessions(_ context.Context, req *quaycrewv1.ListSessionsRequest, _ ...grpc.CallOption) (*quaycrewv1.ListSessionsResponse, error) {
 	matched := make([]*quaycrewv1.Session, 0, len(t.sessions))
 	for _, session := range t.sessions {

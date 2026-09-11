@@ -58,6 +58,10 @@ func workspaceRow(workspace *quaycrewv1.Workspace) Row {
 //
 // A session is what a person dispatches, so it is what enter reaches. Nothing sits between a project
 // and its conversations any more.
+//
+// Three of the cells are counted rather than read: how far the path got, where the word done sits,
+// and how much of the project is moving right now. None of the three is a field on the wire, because
+// each is a statement about rows the reader already has to hand.
 func Projects(client quaycrewv1.ControlPlaneServiceClient) Resource {
 	return Resource{
 		Name:    "projects",
@@ -66,7 +70,14 @@ func Projects(client quaycrewv1.ControlPlaneServiceClient) Resource {
 			{Title: "id", Width: 10, Colour: dim},
 			{Title: "name", Width: 24, Colour: colourOfName},
 			{Title: "workspace", Width: 18, Colour: colourOfName},
-			{Title: "deploys to", Width: 26, Colour: dim},
+			// Where a project ships is a declaration rather than a state, and it is the widest
+			// column here, so it is the one that gives way first when the three counted cells below
+			// do not fit beside it.
+			{Title: "deploys to", Width: 26, Give: 1, Colour: dim},
+			{Title: "path", Width: 6, Give: 4, Colour: dim},
+			// Wide enough for a level, the run behind it, and the word an offer adds: 0 (5/5) offered.
+			{Title: "trust", Width: 15, Give: 3, Colour: dim},
+			{Title: "flight", Width: 6, Give: 2, Colour: dim},
 			{Title: "age", Width: 0, Colour: dim},
 		},
 		DrillTo: "sessions",
@@ -87,16 +98,19 @@ func Projects(client quaycrewv1.ControlPlaneServiceClient) Resource {
 				return nil, err
 			}
 			names := workspaceNames(ctx, client)
+			counted, read := stepsByProject(ctx, client)
 			rows := make([]Row, 0, len(resp.GetProjects()))
 			for _, project := range resp.GetProjects() {
-				rows = append(rows, projectRow(project, names[project.GetWorkspace()]))
+				rows = append(rows, projectRow(project, names[project.GetWorkspace()],
+					counted[project.GetId()], read, designOf(ctx, client, project.GetId())))
 			}
 			return rows, nil
 		},
 	}
 }
 
-func projectRow(project *quaycrewv1.Project, workspaceName string) Row {
+func projectRow(project *quaycrewv1.Project, workspaceName string,
+	counted pathCount, read bool, design *quaycrewv1.Design) Row {
 	// ID and Parent stay whole: they are what drilling and actions use.
 	return Row{
 		ID:     project.GetId(),
@@ -107,10 +121,134 @@ func projectRow(project *quaycrewv1.Project, workspaceName string) Row {
 			project.GetName(),
 			display.Name(workspaceName, project.GetWorkspace()),
 			deploysTo(project.GetDeployTarget()),
+			pathCell(counted, read),
+			trustCell(design),
+			flightCell(counted, read, design),
 			display.Age(project.GetCreatedAt()),
 		},
 		State: StateReady,
 	}
+}
+
+// pathCount is what one pass over every step says about one project: how long its path is, how much
+// of it is closed, and how much of it is moving.
+type pathCount struct {
+	steps  int
+	done   int
+	flight int
+}
+
+// stepsByProject counts every project's path in two calls, whatever the page holds.
+//
+// The count is the listing's promise: a page of forty projects reads the same two calls a page of one
+// reads. A call per row would be forty calls every three seconds, because the console refreshes
+// itself.
+//
+// Neither call names a project. ListSteps names a feature and answers for every feature when it names
+// none, and a step carries its feature on the wire rather than its project, so the features are read
+// first to say which project each step belongs to.
+//
+// The second answer says whether the pass happened at all. A control plane that will not count steps
+// still has rows worth drawing, so the failure is swallowed the way GetUsage already is in the
+// header, and the two counted cells are left empty rather than being drawn as zero.
+func stepsByProject(ctx context.Context,
+	client quaycrewv1.ControlPlaneServiceClient) (map[string]pathCount, bool) {
+	features, err := client.ListFeatures(ctx, &quaycrewv1.ListFeaturesRequest{})
+	if err != nil {
+		return nil, false
+	}
+	owner := make(map[string]string, len(features.GetFeatures()))
+	for _, feature := range features.GetFeatures() {
+		owner[feature.GetId()] = feature.GetProject()
+	}
+	listed, err := client.ListSteps(ctx, &quaycrewv1.ListStepsRequest{})
+	if err != nil {
+		return nil, false
+	}
+	counted := make(map[string]pathCount, len(owner))
+	for _, step := range listed.GetSteps() {
+		project, known := owner[step.GetFeature()]
+		if !known {
+			continue
+		}
+		held := counted[project]
+		held.steps++
+		switch step.GetState() {
+		case stepDone:
+			held.done++
+		case stepTaken:
+			held.flight++
+		}
+		counted[project] = held
+	}
+	return counted, true
+}
+
+// designOf reads one project's design, and answers nil where it could not.
+//
+// This is the one read here that is per project, because GetDesign is the only way to the trust
+// record and it takes one project. The contract names it that way too: the input is the design of
+// each project on the page.
+//
+// A design a control plane will not answer for leaves the two cells that read it empty, for the
+// reason the steps pass does: a row that cannot say where trust sits is still a row.
+func designOf(ctx context.Context, client quaycrewv1.ControlPlaneServiceClient,
+	project string) *quaycrewv1.Design {
+	resp, err := client.GetDesign(ctx, &quaycrewv1.GetDesignRequest{Project: project})
+	if err != nil {
+		return nil
+	}
+	return resp.GetDesign()
+}
+
+// pathCell is how much of the path is closed, out of how long it is.
+//
+// A project with no path draws nothing. Nothing there is not a count of zero: 0/0 reads as a path
+// that exists and has not started, and the two are different questions for the operator.
+func pathCell(counted pathCount, read bool) string {
+	if !read || counted.steps == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%d/%d", counted.done, counted.steps)
+}
+
+// trustCell is where the word done sits, with the run of agreements behind it and the threshold that
+// run is counted against.
+//
+// A standing offer is named in the cell, so the operator finds it on the listing they already read
+// rather than by running krewe trust on each project in turn.
+//
+// A project with no design draws nothing, which is the rule krewe trust already reads by: a project
+// nobody designed has taken no step, so it agreed with nothing, and a record of zeroes there reads as
+// a project that tried and failed.
+func trustCell(design *quaycrewv1.Design) string {
+	if design == nil {
+		return ""
+	}
+	if design.GetBrief() == "" && design.GetBody() == "" {
+		return ""
+	}
+	cell := fmt.Sprintf("%d (%d/%d)",
+		design.GetTrustLevel(), design.GetTrustRun(), design.GetTrustThreshold())
+	if design.GetTrustOffered() {
+		cell += " offered"
+	}
+	return cell
+}
+
+// flightCell is how many steps of this project are in state taken, out of how many may be.
+//
+// It counts the rows the path cell counts, out of the cap the control plane refuses the next take
+// against, so both cells answer from one pass and cannot disagree.
+//
+// A project at its cap is drawn plainly, with no colour and no mark. The refusal is what the operator
+// reads when they take the next step, and a listing that shouted about a full project would be
+// shouting about the normal state of a project with work in it.
+func flightCell(counted pathCount, read bool, design *quaycrewv1.Design) string {
+	if !read || design == nil {
+		return ""
+	}
+	return fmt.Sprintf("%d/%d", counted.flight, design.GetStepsInFlightCap())
 }
 
 // workspaceNames maps workspace id to name. An error yields an empty map rather than failing a list.

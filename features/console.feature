@@ -432,3 +432,25 @@ Feature: The operator sees the system from the console
     When the operator opens the console by typing "steps"
     Then the console is showing the path
     And the console lists 1 step
+
+  # How far a project got, and where krewe stands, on the listing the operator already reads. Both
+  # answers were a command line away, one project at a time.
+  Scenario: The projects listing counts the path, the trust and the flight
+    Given the project's path is:
+      """
+      ## 1. The store holds a project's brief
+      ## 2. The design reaches the session
+      ## 3. The riskiest assumption is measured
+      """
+    And the operator wrote the project's design as "the design, whole"
+    When the operator drills into workspace "acme"
+    Then the projects listing draws "0/3" in the "path" column
+    And the projects listing draws "0 (0/5)" in the "trust" column
+    And the projects listing draws "0/10" in the "flight" column
+
+  # Nothing there is not a count of zero. A project nobody wrote a path for draws an empty cell, so
+  # the column answers "which of these has been designed" at a glance.
+  Scenario: A project with no path and no design says nothing in those columns
+    When the operator drills into workspace "acme"
+    Then the projects listing says nothing in the "path" column
+    And the projects listing says nothing in the "trust" column
