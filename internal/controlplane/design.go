@@ -186,6 +186,92 @@ func (s *Server) SetStepsInFlightCap(ctx context.Context, req *quaycrewv1.SetSte
 	return &quaycrewv1.SetStepsInFlightCapResponse{Design: design}, nil
 }
 
+// scenarioToken is what a proof command carries where the name of one scenario goes. The run puts the
+// step's scenario there, so a command without it runs whatever the runner finds.
+const scenarioToken = "{scenario}"
+
+// proofTimeoutBounds are the shortest and longest budget a person may set for one proof run.
+//
+// A budget of zero is not a budget, it is a run that ends before it starts. An hour is longer than any
+// single scenario this system runs, and a number typed by accident is far more likely than a suite
+// that genuinely wants one.
+const (
+	leastProofTimeout int32 = 1
+	mostProofTimeout  int32 = 3600
+)
+
+// SetProofCommand records what one scenario run looks like in this project.
+//
+// The three refusals are here rather than in the store, the way the cap above is: one layer owns what
+// a person may type, and the store keeps what it is given.
+//
+// Each one names the value it refused. A refusal that said only what is accepted leaves the operator
+// reading their own shell history to find out which of three settings it was about.
+//
+// An empty value leaves that setting where it is, so a command is set without losing the pattern the
+// project already had. That is why the pattern and the budget are checked only when they carry
+// something: an empty pattern is not a pattern that fails to compile, it is a caller saying nothing
+// about the pattern.
+//
+// DeniedToDriver refuses this call to a session. The proof command is the operator's, never the
+// session's: a session that could set the command that proves its own work would choose what proves
+// it, and the check would stop being a check.
+func (s *Server) SetProofCommand(ctx context.Context, req *quaycrewv1.SetProofCommandRequest) (
+	*quaycrewv1.SetProofCommandResponse, error) {
+	if req.GetProject() == "" {
+		return nil, status.Error(codes.InvalidArgument, "which project: say where with an address")
+	}
+	if command := req.GetCommand(); command != "" && !strings.Contains(command, scenarioToken) {
+		return nil, status.Errorf(codes.InvalidArgument,
+			"%q: this command runs everything, so it proves nothing about one step. "+
+				"Put %s where the scenario name goes", command, scenarioToken)
+	}
+	if err := checkProofPattern(req.GetCountPattern()); err != nil {
+		return nil, err
+	}
+	if seconds := req.GetTimeoutSeconds(); seconds != 0 &&
+		(seconds < leastProofTimeout || seconds > mostProofTimeout) {
+		return nil, status.Errorf(codes.InvalidArgument,
+			"a budget of %d seconds is outside the bounds: say between %d and %d",
+			seconds, leastProofTimeout, mostProofTimeout)
+	}
+	design, err := s.store.SetProofCommand(ctx, req.GetProject(), store.ProofSettings{
+		Command:        req.GetCommand(),
+		CountPattern:   req.GetCountPattern(),
+		TimeoutSeconds: req.GetTimeoutSeconds(),
+	})
+	if err != nil {
+		return nil, storeError(err, "project")
+	}
+	return &quaycrewv1.SetProofCommandResponse{Design: design}, nil
+}
+
+// checkProofPattern refuses a pattern the run could not read a count with, and says nothing about an
+// empty one: empty means the caller is not setting a pattern at all.
+//
+// The compile refusal carries what the regular expression parser said. That message names the part of
+// the expression at fault rather than a character position, which is what the parser reports, and it
+// is what a person needs to find the bracket they left open.
+//
+// A pattern that compiles and captures nothing is refused separately, because it fails later and
+// silently: the run matches, reads no number, and reports a run that proved nothing.
+func checkProofPattern(pattern string) error {
+	if pattern == "" {
+		return nil
+	}
+	compiled, err := regexp.Compile(pattern)
+	if err != nil {
+		return status.Errorf(codes.InvalidArgument,
+			"%q does not compile: %v. The pattern reads the number of scenarios out of the output",
+			pattern, err)
+	}
+	if compiled.NumSubexp() == 0 {
+		return status.Errorf(codes.InvalidArgument,
+			"%q captures nothing: the pattern needs one group around the number", pattern)
+	}
+	return nil
+}
+
 // overMark says how long the text is when it is past the mark, and says nothing at all when it is
 // not. It is a warning and never a refusal: the text is already kept.
 func overMark(what string, length, mark int, expected string) []string {

@@ -627,9 +627,25 @@ func (m *Memory) GetDesign(_ context.Context, project string) (*quaycrewv1.Desig
 	}
 	held, ok := m.designs[project]
 	if !ok {
-		return &quaycrewv1.Design{Project: project, StepsInFlightCap: DefaultStepsInFlightCap}, nil
+		return bornDesign(project), nil
 	}
 	return copyDesign(held), nil
+}
+
+// bornDesign is what a project with no design row answers with: its identifier, and every column
+// default the row would have carried.
+//
+// The defaults are answered rather than left at zero because each zero is a value a reader would act
+// on. A cap of zero refuses every take, an empty pattern reads no count out of any output, and a
+// budget of zero ends a run before it starts. The one field left empty is the command, and empty is
+// what it means there: this project proves nothing yet.
+func bornDesign(project string) *quaycrewv1.Design {
+	return &quaycrewv1.Design{
+		Project:             project,
+		StepsInFlightCap:    DefaultStepsInFlightCap,
+		ProofCountPattern:   DefaultProofCountPattern,
+		ProofTimeoutSeconds: DefaultProofTimeoutSeconds,
+	}
 }
 
 // SetProjectBrief records what a project is for, leaving the body and its writer alone.
@@ -698,9 +714,9 @@ func (m *Memory) writeDesign(project string, change func(*quaycrewv1.Design)) (*
 	}
 	held, ok := m.designs[project]
 	if !ok {
-		// The row is born carrying the column default, so a project that only ever set a brief reads
-		// the same cap as one that has no row at all.
-		held = &quaycrewv1.Design{Project: project, StepsInFlightCap: DefaultStepsInFlightCap}
+		// The row is born carrying the column defaults, so a project that only ever set a brief reads
+		// the same cap, pattern and budget as one that has no row at all.
+		held = bornDesign(project)
 		m.designs[project] = held
 	}
 	change(held)
@@ -937,6 +953,31 @@ func (m *Memory) SetStepsInFlightCap(_ context.Context, project string, atOnce i
 	*quaycrewv1.Design, error) {
 	return m.writeDesign(project, func(design *quaycrewv1.Design) {
 		design.StepsInFlightCap = atOnce
+	})
+}
+
+// SetProofCommand records what one scenario run looks like in this project, and creates the row on
+// first use the way every other design write does.
+//
+// An empty value leaves that setting where it is, which Postgres does in its own statement and this
+// has to agree with: a caller that set the command alone would otherwise lose the pattern here and
+// keep it there.
+//
+// The three values are kept as they are given, for the reason Postgres keeps them: the control plane
+// refuses a command that names no scenario, a pattern that does not compile and a budget outside the
+// bounds, and a second check here is a second place for those rules to drift.
+func (m *Memory) SetProofCommand(_ context.Context, project string, settings ProofSettings) (
+	*quaycrewv1.Design, error) {
+	return m.writeDesign(project, func(design *quaycrewv1.Design) {
+		if settings.Command != "" {
+			design.ProofCommand = settings.Command
+		}
+		if settings.CountPattern != "" {
+			design.ProofCountPattern = settings.CountPattern
+		}
+		if settings.TimeoutSeconds != 0 {
+			design.ProofTimeoutSeconds = settings.TimeoutSeconds
+		}
 	})
 }
 

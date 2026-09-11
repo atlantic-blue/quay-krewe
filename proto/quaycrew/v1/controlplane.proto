@@ -578,6 +578,20 @@ message Design {
   // caller claimed, never what the system authenticated, and it grants nothing.
   string written_by = 6;
   google.protobuf.Timestamp updated_at = 7;
+  // proof_command is what krewe runs inside a session's sandbox to prove one scenario. It carries the
+  // token {scenario}, which the run replaces with the name of the scenario the step names. Without
+  // that token the command runs the whole suite, which says nothing about one step.
+  //
+  // It is empty on a project nobody set one on, and that is the only meaning of empty here: a write
+  // that carries an empty command leaves the one the project already had.
+  string proof_command = 8;
+  // proof_count_pattern reads the number of scenarios that ran out of what the command printed. It is
+  // a regular expression with one group around the number, and it is never empty on a row that
+  // exists: the column carries the default the godog runner prints.
+  string proof_count_pattern = 9;
+  // proof_timeout_seconds is the budget for one proof run. It sits between 1 and 3600, and it is 900
+  // on a row nobody set it on.
+  int32 proof_timeout_seconds = 10;
   // steps_in_flight_cap is how many steps of this project may be in state taken at one time. It
   // counts across every feature rather than inside one, so three steps in flight is three steps
   // wherever they sit.
@@ -655,6 +669,26 @@ message SetStepsInFlightCapRequest {
   int32 steps_in_flight_cap = 2;
 }
 message SetStepsInFlightCapResponse {
+  Design design = 1;
+}
+
+// SetProofCommandRequest says what one scenario run looks like in this project.
+//
+// command carries the token {scenario}, and a command that carries no token is refused: it runs
+// everything, so it proves nothing about one step.
+//
+// An empty value leaves that setting where it is. An empty command, an empty count_pattern and a
+// timeout_seconds of zero each mean "do not change this one", so a caller sets the command alone
+// without losing the pattern the project already had.
+//
+// The driver is refused this call. The proof command is the operator's, never the session's.
+message SetProofCommandRequest {
+  string project = 1;
+  string command = 2;
+  string count_pattern = 3;
+  int32 timeout_seconds = 4;
+}
+message SetProofCommandResponse {
   Design design = 1;
 }
 
@@ -1544,6 +1578,13 @@ service ControlPlaneService {
   // operator reads at once, so a session that could raise its own would widen the fan out nobody
   // asked for.
   rpc SetStepsInFlightCap(SetStepsInFlightCapRequest) returns (SetStepsInFlightCapResponse);
+
+  // What one scenario run looks like in this project: the command, how to read the count of scenarios
+  // out of its output, and the budget for one run.
+  //
+  // The driver is refused it. A session that could set the command that proves its own work would
+  // choose what proves it, and the check would stop being a check.
+  rpc SetProofCommand(SetProofCommandRequest) returns (SetProofCommandResponse);
 
   // Recording what came of a step: done, or stopped, and what somebody wrote about it. It touches no
   // session, because the step and the session that took it are separate records.

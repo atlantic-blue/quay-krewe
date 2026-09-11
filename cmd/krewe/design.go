@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 
 	quaycrewv1 "github.com/atlantic-blue/quay-krewe/gen/quaycrew/v1"
@@ -21,12 +22,19 @@ import (
 // differently.
 const flagFile = "--file"
 
+// scenarioToken is what a proof command carries where the name of one scenario goes. The word is the
+// control plane's, which refuses a command without it, and it is named here because the tool
+// substitutes it to show what will actually run. A scenario in features/design.feature reads that
+// substituted line back, so the two copies cannot drift apart in silence.
+const scenarioToken = "{scenario}"
+
 const designUsage = "usage: krewe design [<address>]" +
 	"\n       krewe design brief [<address>] \"<text>\"" +
 	"\n       krewe design set [<address>] --file <path>" +
 	"\n       krewe design edit [<address>]" +
 	"\n       krewe design contracts [<address>] [--file <path>]" +
-	"\n       krewe design approve [<address>]"
+	"\n       krewe design approve [<address>]" +
+	"\n       krewe design proof [<address>] \"<command>\""
 
 func runDesign(ctx context.Context, client quaycrewv1.ControlPlaneServiceClient, args []string, out io.Writer) error {
 	if len(args) > 0 && args[0] == "brief" {
@@ -43,6 +51,9 @@ func runDesign(ctx context.Context, client quaycrewv1.ControlPlaneServiceClient,
 	}
 	if len(args) > 0 && args[0] == "approve" {
 		return runDesignApprove(ctx, client, args[1:], out)
+	}
+	if len(args) > 0 && args[0] == "proof" {
+		return runDesignProof(ctx, client, args[1:], out)
 	}
 	if len(args) > 1 {
 		return fmt.Errorf("%s", designUsage)
@@ -344,4 +355,152 @@ func sayWarnings(out io.Writer, warnings []string) {
 	for _, warning := range warnings {
 		fmt.Fprintf(out, "\n%s\n", warning)
 	}
+}
+
+// flagPattern and flagTimeout say how a proof run is read and how long it may take. They are flags
+// rather than positions because the command is the thing a person types, and two optional numbers
+// after it would be two positions nobody remembers the order of.
+const (
+	flagPattern = "--pattern"
+	flagTimeout = "--timeout"
+)
+
+const designProofUsage = "usage: krewe design proof [<address>] \"<command>\" " +
+	"[" + flagPattern + " <regexp>] [" + flagTimeout + " <seconds>]"
+
+// runDesignProof reads what one scenario run looks like in this project, and sets it.
+//
+// With no command it prints and writes nothing, which is what makes it safe to type when you are not
+// sure. A flag with no command is refused rather than ignored: a caller who meant to change the
+// pattern would otherwise read the old one back and believe the write landed.
+//
+// The one argument form is the command when it carries a space or the scenario token, and the address
+// otherwise. A shell command carries one or the other; an address is names joined by slashes and
+// carries neither.
+func runDesignProof(ctx context.Context, client quaycrewv1.ControlPlaneServiceClient, args []string, out io.Writer) error {
+	rest, pattern, timeout, err := proofFlagsOutOf(args)
+	if err != nil {
+		return err
+	}
+	if len(rest) > 2 {
+		return fmt.Errorf("%s", designProofUsage)
+	}
+	typed, command := "", ""
+	switch len(rest) {
+	case 1:
+		if strings.Contains(rest[0], " ") || strings.Contains(rest[0], scenarioToken) {
+			command = rest[0]
+		} else {
+			typed = rest[0]
+		}
+	case 2:
+		typed, command = rest[0], rest[1]
+	}
+	if command == "" && (pattern != "" || timeout != 0) {
+		return fmt.Errorf("a pattern or a budget is set with the command it belongs to\n\n%s", designProofUsage)
+	}
+	located, err := designProject(ctx, client, typed)
+	if err != nil {
+		return err
+	}
+	design := (*quaycrewv1.Design)(nil)
+	if command == "" {
+		read, err := client.GetDesign(ctx, &quaycrewv1.GetDesignRequest{Project: located.ProjectID})
+		if err != nil {
+			return err
+		}
+		design = read.GetDesign()
+	} else {
+		written, err := client.SetProofCommand(ctx, &quaycrewv1.SetProofCommandRequest{
+			Project: located.ProjectID, Command: command, CountPattern: pattern, TimeoutSeconds: timeout,
+		})
+		if err != nil {
+			return fmt.Errorf("%w\n\nnothing was written", err)
+		}
+		design = written.GetDesign()
+	}
+	if design.GetProofCommand() == "" {
+		fmt.Fprintf(out, "%s proves nothing yet: it has no proof command\n\n", located.Path.Project)
+		fmt.Fprintf(out, "set one: krewe design proof %s \"go test ./features/... -run '%s'\"\n",
+			typed, scenarioToken)
+		return nil
+	}
+	scenario, err := aScenarioOf(ctx, client, located.ProjectID)
+	if err != nil {
+		return err
+	}
+	sayProof(out, located.Path.Project, design, scenario)
+	return nil
+}
+
+// sayProof prints what one scenario run looks like: the command as it is stored, what reads the count
+// out of it, the budget, and the command with a real scenario name in place of the token.
+//
+// The substituted line is the point of the whole print. A template is not what runs, and an operator
+// reading the template cannot see that their quoting puts the scenario name somewhere the runner
+// never looks.
+func sayProof(out io.Writer, project string, design *quaycrewv1.Design, scenario string) {
+	fmt.Fprintf(out, "%s proves one scenario with:\n  %s\n", project, design.GetProofCommand())
+	fmt.Fprintf(out, "it reads the count with %s, and one run has %d seconds\n",
+		design.GetProofCountPattern(), design.GetProofTimeoutSeconds())
+	if scenario == "" {
+		fmt.Fprintf(out, "\nno step of this project names a scenario yet, so there is nothing to "+
+			"put where %s goes\n", scenarioToken)
+		return
+	}
+	fmt.Fprintf(out, "\nfor the scenario named %q that runs:\n  %s\n",
+		scenario, strings.ReplaceAll(design.GetProofCommand(), scenarioToken, scenario))
+}
+
+// aScenarioOf is the name of one scenario this project's path already names, or nothing when no step
+// names one. It is read in feature order and then in step order, so two runs of the command print the
+// same one.
+func aScenarioOf(ctx context.Context, client quaycrewv1.ControlPlaneServiceClient, project string) (string, error) {
+	features, err := featuresOf(ctx, client, project)
+	if err != nil {
+		return "", err
+	}
+	for _, feature := range features {
+		resp, err := client.ListSteps(ctx, &quaycrewv1.ListStepsRequest{Feature: feature.GetId()})
+		if err != nil {
+			return "", err
+		}
+		for _, step := range resp.GetSteps() {
+			if step.GetProofScenario() != "" {
+				return step.GetProofScenario(), nil
+			}
+		}
+	}
+	return "", nil
+}
+
+// proofFlagsOutOf takes the pattern and the budget out of the arguments, and hands back everything
+// else in the order it was typed. It is the shape fileOutOf has, for the reason that one has it: the
+// address and the command are positions, and a flag may sit anywhere among them.
+func proofFlagsOutOf(args []string) (rest []string, pattern string, timeout int32, err error) {
+	rest = make([]string, 0, len(args))
+	for at := 0; at < len(args); at++ {
+		switch args[at] {
+		case flagPattern:
+			if at+1 >= len(args) {
+				return nil, "", 0, fmt.Errorf("%s needs a regular expression\n\n%s", flagPattern, designProofUsage)
+			}
+			pattern = args[at+1]
+			at++
+		case flagTimeout:
+			if at+1 >= len(args) {
+				return nil, "", 0, fmt.Errorf("%s needs a number of seconds\n\n%s", flagTimeout, designProofUsage)
+			}
+			seconds, convErr := strconv.Atoi(args[at+1])
+			if convErr != nil {
+				return nil, "", 0, fmt.Errorf("%s takes a number of seconds, and %q is not one\n\n%s",
+					flagTimeout, args[at+1], designProofUsage)
+			}
+			timeout = int32(seconds)
+			at++
+		default:
+			rest = append(rest, args[at])
+		}
+	}
+	return rest, pattern, timeout, nil
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -277,6 +278,136 @@ func initializeDesignSteps(sc *godog.ScenarioContext) {
 
 	initializeContractsSteps(sc)
 	initializeDesignEditSteps(sc)
+	initializeProofSteps(sc)
+}
+
+// The steps about what one scenario run looks like in this project. The command is the operator's,
+// so these drive the control plane and the real tool, and the driver's own token gets its own step.
+func initializeProofSteps(sc *godog.ScenarioContext) {
+	sc.Step(`^the operator sets the project's proof command to "([^"]*)"$`,
+		func(ctx context.Context, command string) error {
+			return setProof(ctx, command, "", 0)
+		})
+
+	sc.Step(`^the project's proof command is "([^"]*)"$`, func(ctx context.Context, command string) error {
+		return setProof(ctx, command, "", 0)
+	})
+
+	sc.Step(`^the operator sets the project's proof command to "([^"]*)" counting with "([^"]*)"$`,
+		func(ctx context.Context, command, pattern string) error {
+			return setProof(ctx, command, pattern, 0)
+		})
+
+	sc.Step(`^the project's proof command is "([^"]*)" counting with "([^"]*)"$`,
+		func(ctx context.Context, command, pattern string) error {
+			return setProof(ctx, command, pattern, 0)
+		})
+
+	// The budget on its own, because the bounds are what these scenarios are about and a command
+	// beside them would be a second thing that could refuse the call.
+	sc.Step(`^the operator sets the project's proof budget to (-?\d+) seconds$`,
+		func(ctx context.Context, seconds int) error {
+			return setProof(ctx, "", "", int32(seconds))
+		})
+
+	// Read off the design rather than off what the write answered, so a refused write that wrote
+	// anyway is a failure here.
+	sc.Step(`^the project proves one scenario with "([^"]*)"$`, func(ctx context.Context, want string) error {
+		design, err := readDesign(ctx)
+		if err != nil {
+			return err
+		}
+		if got := design.GetProofCommand(); got != want {
+			return fmt.Errorf("the project proves one scenario with %q, want %q", got, want)
+		}
+		return nil
+	})
+
+	sc.Step(`^the project proves nothing$`, func(ctx context.Context) error {
+		design, err := readDesign(ctx)
+		if err != nil {
+			return err
+		}
+		if got := design.GetProofCommand(); got != "" {
+			return fmt.Errorf("the project proves one scenario with %q, and nothing was meant to be written", got)
+		}
+		return nil
+	})
+
+	sc.Step(`^the project reads the count with "([^"]*)"$`, func(ctx context.Context, want string) error {
+		design, err := readDesign(ctx)
+		if err != nil {
+			return err
+		}
+		if got := design.GetProofCountPattern(); got != want {
+			return fmt.Errorf("the project reads the count with %q, want %q", got, want)
+		}
+		return nil
+	})
+
+	// The call carries the driver's token, which is what a session inside a sandbox presents. The
+	// scenario reads the command back afterwards, because a refusal that still wrote the row would
+	// leave the gate looking closed and standing open.
+	sc.Step(`^the driver asks to set the project's proof command$`, func(ctx context.Context) error {
+		return asDriver(ctx, func(ctx context.Context, client quaycrewv1.ControlPlaneServiceClient) error {
+			_, err := client.SetProofCommand(ctx, &quaycrewv1.SetProofCommandRequest{
+				Project: worldFrom(ctx).projectID, Command: "true # {scenario}"})
+			return err
+		})
+	})
+
+	// The steps that drive the real command line tool, as a caller runs it.
+
+	sc.Step(`^the caller sets the project's proof command to "([^"]*)"$`,
+		func(ctx context.Context, command string) error {
+			return runTool(ctx, "design", "proof", whereTheProjectIs(ctx), command)
+		})
+
+	sc.Step(`^the caller reads the project's proof command$`, func(ctx context.Context) error {
+		return runTool(ctx, "design", "proof", whereTheProjectIs(ctx))
+	})
+
+	sc.Step(`^the caller sets the project's proof command to "([^"]*)" counting with "([^"]*)" inside (\d+) seconds$`,
+		func(ctx context.Context, command, pattern string, seconds int) error {
+			return runTool(ctx, "design", "proof", whereTheProjectIs(ctx), command,
+				"--pattern", pattern, "--timeout", strconv.Itoa(seconds))
+		})
+
+	sc.Step(`^the project gives one run (\d+) seconds$`, func(ctx context.Context, want int) error {
+		design, err := readDesign(ctx)
+		if err != nil {
+			return err
+		}
+		if got := design.GetProofTimeoutSeconds(); got != int32(want) {
+			return fmt.Errorf("the project gives one run %d seconds, want %d", got, want)
+		}
+		return nil
+	})
+}
+
+// setProof records what one scenario run looks like, keeping what came back so a Then step reads the
+// refusal as well as the design.
+func setProof(ctx context.Context, command, pattern string, seconds int32) error {
+	w := worldFrom(ctx)
+	resp, err := w.client.SetProofCommand(ctx, &quaycrewv1.SetProofCommandRequest{
+		Project: w.projectID, Command: command, CountPattern: pattern, TimeoutSeconds: seconds,
+	})
+	w.lastErr = err
+	if err == nil {
+		designFrom(ctx).design = resp.GetDesign()
+	}
+	return nil
+}
+
+// readDesign asks the control plane again rather than answering from the last write, so a refusal
+// that wrote the row anyway shows up here.
+func readDesign(ctx context.Context) (*quaycrewv1.Design, error) {
+	w := worldFrom(ctx)
+	resp, err := w.client.GetDesign(ctx, &quaycrewv1.GetDesignRequest{Project: w.projectID})
+	if err != nil {
+		return nil, err
+	}
+	return resp.GetDesign(), nil
 }
 
 // The editor a scenario gives the tool: a script krewe runs in place of the operator's own editor.

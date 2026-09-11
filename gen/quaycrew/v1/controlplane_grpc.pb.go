@@ -60,6 +60,7 @@ const (
 	ControlPlaneService_TakeStep_FullMethodName                 = "/quaycrew.v1.ControlPlaneService/TakeStep"
 	ControlPlaneService_ApproveRestatement_FullMethodName       = "/quaycrew.v1.ControlPlaneService/ApproveRestatement"
 	ControlPlaneService_SetStepsInFlightCap_FullMethodName      = "/quaycrew.v1.ControlPlaneService/SetStepsInFlightCap"
+	ControlPlaneService_SetProofCommand_FullMethodName          = "/quaycrew.v1.ControlPlaneService/SetProofCommand"
 	ControlPlaneService_FinishStep_FullMethodName               = "/quaycrew.v1.ControlPlaneService/FinishStep"
 	ControlPlaneService_ListFeatures_FullMethodName             = "/quaycrew.v1.ControlPlaneService/ListFeatures"
 	ControlPlaneService_AddFeature_FullMethodName               = "/quaycrew.v1.ControlPlaneService/AddFeature"
@@ -172,6 +173,12 @@ type ControlPlaneServiceClient interface {
 	// operator reads at once, so a session that could raise its own would widen the fan out nobody
 	// asked for.
 	SetStepsInFlightCap(ctx context.Context, in *SetStepsInFlightCapRequest, opts ...grpc.CallOption) (*SetStepsInFlightCapResponse, error)
+	// What one scenario run looks like in this project: the command, how to read the count of scenarios
+	// out of its output, and the budget for one run.
+	//
+	// The driver is refused it. A session that could set the command that proves its own work would
+	// choose what proves it, and the check would stop being a check.
+	SetProofCommand(ctx context.Context, in *SetProofCommandRequest, opts ...grpc.CallOption) (*SetProofCommandResponse, error)
 	// Recording what came of a step: done, or stopped, and what somebody wrote about it. It touches no
 	// session, because the step and the session that took it are separate records.
 	FinishStep(ctx context.Context, in *FinishStepRequest, opts ...grpc.CallOption) (*FinishStepResponse, error)
@@ -640,6 +647,16 @@ func (c *controlPlaneServiceClient) SetStepsInFlightCap(ctx context.Context, in 
 	return out, nil
 }
 
+func (c *controlPlaneServiceClient) SetProofCommand(ctx context.Context, in *SetProofCommandRequest, opts ...grpc.CallOption) (*SetProofCommandResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SetProofCommandResponse)
+	err := c.cc.Invoke(ctx, ControlPlaneService_SetProofCommand_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *controlPlaneServiceClient) FinishStep(ctx context.Context, in *FinishStepRequest, opts ...grpc.CallOption) (*FinishStepResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(FinishStepResponse)
@@ -969,6 +986,12 @@ type ControlPlaneServiceServer interface {
 	// operator reads at once, so a session that could raise its own would widen the fan out nobody
 	// asked for.
 	SetStepsInFlightCap(context.Context, *SetStepsInFlightCapRequest) (*SetStepsInFlightCapResponse, error)
+	// What one scenario run looks like in this project: the command, how to read the count of scenarios
+	// out of its output, and the budget for one run.
+	//
+	// The driver is refused it. A session that could set the command that proves its own work would
+	// choose what proves it, and the check would stop being a check.
+	SetProofCommand(context.Context, *SetProofCommandRequest) (*SetProofCommandResponse, error)
 	// Recording what came of a step: done, or stopped, and what somebody wrote about it. It touches no
 	// session, because the step and the session that took it are separate records.
 	FinishStep(context.Context, *FinishStepRequest) (*FinishStepResponse, error)
@@ -1149,6 +1172,9 @@ func (UnimplementedControlPlaneServiceServer) ApproveRestatement(context.Context
 }
 func (UnimplementedControlPlaneServiceServer) SetStepsInFlightCap(context.Context, *SetStepsInFlightCapRequest) (*SetStepsInFlightCapResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SetStepsInFlightCap not implemented")
+}
+func (UnimplementedControlPlaneServiceServer) SetProofCommand(context.Context, *SetProofCommandRequest) (*SetProofCommandResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetProofCommand not implemented")
 }
 func (UnimplementedControlPlaneServiceServer) FinishStep(context.Context, *FinishStepRequest) (*FinishStepResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method FinishStep not implemented")
@@ -1978,6 +2004,24 @@ func _ControlPlaneService_SetStepsInFlightCap_Handler(srv interface{}, ctx conte
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ControlPlaneService_SetProofCommand_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetProofCommandRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ControlPlaneServiceServer).SetProofCommand(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ControlPlaneService_SetProofCommand_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ControlPlaneServiceServer).SetProofCommand(ctx, req.(*SetProofCommandRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _ControlPlaneService_FinishStep_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(FinishStepRequest)
 	if err := dec(in); err != nil {
@@ -2544,6 +2588,10 @@ var ControlPlaneService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SetStepsInFlightCap",
 			Handler:    _ControlPlaneService_SetStepsInFlightCap_Handler,
+		},
+		{
+			MethodName: "SetProofCommand",
+			Handler:    _ControlPlaneService_SetProofCommand_Handler,
 		},
 		{
 			MethodName: "FinishStep",

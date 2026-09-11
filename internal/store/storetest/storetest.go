@@ -3101,6 +3101,199 @@ func runPathConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 		}
 	})
 
+	// What one scenario run looks like in this project. The store keeps what it is given, and every
+	// refusal about a command, a pattern or a budget lives at the control plane.
+
+	t.Run("a project nobody configured reads the proof defaults and no command", func(t *testing.T) {
+		s := newDataset(t)(t)
+		project := newProject(t, s, "acme", "house-bills")
+
+		design, err := s.GetDesign(context.Background(), project.GetId())
+		if err != nil {
+			t.Fatalf("GetDesign: %v", err)
+		}
+		if got := design.GetProofCommand(); got != "" {
+			t.Errorf("a project with no design row proves one scenario with %q, want nothing", got)
+		}
+		if got := design.GetProofCountPattern(); got != store.DefaultProofCountPattern {
+			t.Errorf("it reads the count with %q, want %q", got, store.DefaultProofCountPattern)
+		}
+		if got := design.GetProofTimeoutSeconds(); got != store.DefaultProofTimeoutSeconds {
+			t.Errorf("one run has %d seconds, want %d", got, store.DefaultProofTimeoutSeconds)
+		}
+	})
+
+	// The row is created on first use, the way every other design write creates it, and the two
+	// settings nobody named come from the column defaults rather than from zero.
+	t.Run("setting the proof command on a project with no design row reads back", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		project := newProject(t, s, "acme", "house-bills")
+
+		written, err := s.SetProofCommand(ctx, project.GetId(), store.ProofSettings{
+			Command: "go test ./features/... -run '{scenario}'"})
+		if err != nil {
+			t.Fatalf("SetProofCommand: %v", err)
+		}
+		if got := written.GetProofCommand(); got != "go test ./features/... -run '{scenario}'" {
+			t.Errorf("the write answered with the command %q", got)
+		}
+		if got := written.GetProofCountPattern(); got != store.DefaultProofCountPattern {
+			t.Errorf("the write answered with the pattern %q, want the default %q",
+				got, store.DefaultProofCountPattern)
+		}
+		if got := written.GetProofTimeoutSeconds(); got != store.DefaultProofTimeoutSeconds {
+			t.Errorf("the write answered with %d seconds, want the default %d",
+				got, store.DefaultProofTimeoutSeconds)
+		}
+		read, err := s.GetDesign(ctx, project.GetId())
+		if err != nil {
+			t.Fatalf("GetDesign: %v", err)
+		}
+		if got := read.GetProofCommand(); got != "go test ./features/... -run '{scenario}'" {
+			t.Fatalf("the design reads back the command %q", got)
+		}
+	})
+
+	t.Run("the three proof settings are written together and read back", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		project := newProject(t, s, "acme", "house-bills")
+
+		if _, err := s.SetProofCommand(ctx, project.GetId(), store.ProofSettings{
+			Command: "make one {scenario}", CountPattern: `ran ([0-9]+)`, TimeoutSeconds: 120,
+		}); err != nil {
+			t.Fatalf("SetProofCommand: %v", err)
+		}
+		read, err := s.GetDesign(ctx, project.GetId())
+		if err != nil {
+			t.Fatalf("GetDesign: %v", err)
+		}
+		if got := read.GetProofCommand(); got != "make one {scenario}" {
+			t.Errorf("the command reads %q", got)
+		}
+		if got := read.GetProofCountPattern(); got != `ran ([0-9]+)` {
+			t.Errorf("the pattern reads %q", got)
+		}
+		if got := read.GetProofTimeoutSeconds(); got != 120 {
+			t.Errorf("the budget reads %d seconds", got)
+		}
+	})
+
+	// The rule that lets a caller set the command alone. An empty value is a caller saying nothing
+	// about that setting, so the one on the row survives the write.
+	t.Run("an empty pattern and a zero budget leave the ones already set", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		project := newProject(t, s, "acme", "house-bills")
+
+		if _, err := s.SetProofCommand(ctx, project.GetId(), store.ProofSettings{
+			Command: "make one {scenario}", CountPattern: `ran ([0-9]+)`, TimeoutSeconds: 120,
+		}); err != nil {
+			t.Fatalf("SetProofCommand: %v", err)
+		}
+		written, err := s.SetProofCommand(ctx, project.GetId(), store.ProofSettings{
+			Command: "make only {scenario}"})
+		if err != nil {
+			t.Fatalf("SetProofCommand a second time: %v", err)
+		}
+		if got := written.GetProofCommand(); got != "make only {scenario}" {
+			t.Errorf("the command reads %q, and the second write named it", got)
+		}
+		if got := written.GetProofCountPattern(); got != `ran ([0-9]+)` {
+			t.Errorf("the pattern reads %q, and the second write said nothing about it", got)
+		}
+		if got := written.GetProofTimeoutSeconds(); got != 120 {
+			t.Errorf("the budget reads %d seconds, and the second write said nothing about it", got)
+		}
+	})
+
+	// An empty command is a caller saying nothing about the command, the way an empty pattern is.
+	// There is no way to clear one back to nothing, and none is needed: a proof command is replaced.
+	t.Run("an empty command leaves the one already set", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		project := newProject(t, s, "acme", "house-bills")
+
+		if _, err := s.SetProofCommand(ctx, project.GetId(), store.ProofSettings{
+			Command: "make one {scenario}"}); err != nil {
+			t.Fatalf("SetProofCommand: %v", err)
+		}
+		written, err := s.SetProofCommand(ctx, project.GetId(), store.ProofSettings{TimeoutSeconds: 60})
+		if err != nil {
+			t.Fatalf("SetProofCommand a second time: %v", err)
+		}
+		if got := written.GetProofCommand(); got != "make one {scenario}" {
+			t.Errorf("the command reads %q, and the second write said nothing about it", got)
+		}
+		if got := written.GetProofTimeoutSeconds(); got != 60 {
+			t.Errorf("the budget reads %d seconds, want 60", got)
+		}
+	})
+
+	// A proof command says how a step is run, and nothing about what the design body means, so the
+	// operator's word survives it.
+	t.Run("setting the proof command leaves the approval where it is", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		project := newProject(t, s, "acme", "house-bills")
+
+		if _, err := s.SetProjectDesign(ctx, project.GetId(), "# Bills\n", ""); err != nil {
+			t.Fatalf("SetProjectDesign: %v", err)
+		}
+		approved, err := s.ApproveProjectDesign(ctx, project.GetId())
+		if err != nil {
+			t.Fatalf("ApproveProjectDesign: %v", err)
+		}
+		design, err := s.SetProofCommand(ctx, project.GetId(), store.ProofSettings{
+			Command: "make one {scenario}"})
+		if err != nil {
+			t.Fatalf("SetProofCommand: %v", err)
+		}
+		if !design.GetApproved() {
+			t.Fatal("setting the proof command cleared the approval, and it says nothing about the design body")
+		}
+		if !design.GetApprovedAt().AsTime().Equal(approved.GetApprovedAt().AsTime()) {
+			t.Errorf("the approval moved to %v from %v",
+				design.GetApprovedAt().AsTime(), approved.GetApprovedAt().AsTime())
+		}
+	})
+
+	// The brief, the body and the cap are separate records on the same row, so a proof command must
+	// not write over any of them.
+	t.Run("setting the proof command leaves the rest of the design row alone", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		project := newProject(t, s, "acme", "house-bills")
+
+		if _, err := s.SetProjectBrief(ctx, project.GetId(), "keep the bills paid"); err != nil {
+			t.Fatalf("SetProjectBrief: %v", err)
+		}
+		if _, err := s.SetStepsInFlightCap(ctx, project.GetId(), 4); err != nil {
+			t.Fatalf("SetStepsInFlightCap: %v", err)
+		}
+		design, err := s.SetProofCommand(ctx, project.GetId(), store.ProofSettings{
+			Command: "make one {scenario}"})
+		if err != nil {
+			t.Fatalf("SetProofCommand: %v", err)
+		}
+		if got := design.GetBrief(); got != "keep the bills paid" {
+			t.Errorf("the brief reads %q", got)
+		}
+		if got := design.GetStepsInFlightCap(); got != 4 {
+			t.Errorf("the cap reads %d, want 4", got)
+		}
+	})
+
+	t.Run("setting the proof command on a project that does not exist is refused", func(t *testing.T) {
+		s := newDataset(t)(t)
+		_, err := s.SetProofCommand(context.Background(), "no-such-project",
+			store.ProofSettings{Command: "make one {scenario}"})
+		if !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("setting the proof command on a missing project answered %v, want ErrNotFound", err)
+		}
+	})
+
 	// The count the take answers with is the one its own write made, so a caller printing it prints
 	// what runs rather than what a second read a moment later says.
 	t.Run("the take says how many steps are in flight once it lands", func(t *testing.T) {

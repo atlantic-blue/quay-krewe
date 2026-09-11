@@ -206,7 +206,10 @@ var takenFlags = map[string]map[string]bool{
 	"volume": {flagReplace: true},
 	// A design body is a document, so it is named as a path rather than piped: the file is the thing
 	// being kept, and a path in the command is what makes the write repeatable.
-	"design": {flagFile: true},
+	//
+	// The pattern and the budget of a proof run are flags because the command is the thing a person
+	// types, and two optional values after it would be two positions nobody remembers the order of.
+	"design": {flagFile: true, flagPattern: true, flagTimeout: true},
 	// A path is a document too, and it is written the same way for the same reason.
 	"path": {flagFile: true},
 }

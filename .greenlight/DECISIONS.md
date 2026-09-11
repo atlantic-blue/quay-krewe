@@ -456,3 +456,49 @@ the problem is the ideation and discovery phases, once we know krewe understand 
 - S-25 to S-28 are the trust record and the ladder that relaxes the approval once agreement is
   earned.
 - None of these slices is built.
+
+## Settled on 2026-09-11, building S-19, where a contract and the code disagreed
+
+Four entries, each one a place the design document was written before the system reached the shape
+it has now. In every one the code on `main` wins and the sentence is recorded as stale.
+
+**The proof columns ship in migration 0073, not 0072 and not 0067.**
+- Status: settled, and the contract text is stale.
+- TABLE-1 says "the columns migration `0072` adds, for the proof command", and the graph's partial
+  contract note for S-19 says 0067. Both numbers are taken. 0067 creates the milestones, and 0072
+  adds the four restatement columns, which shipped in S-16 one slice before this one. The next free
+  number is 0073.
+- A migration number is the file name a system records in `schema_migrations`, so a second file
+  under a number already applied never runs at all.
+
+**The pattern refusal names the fault the way the regular expression parser reports it.**
+- Status: settled.
+- WIRE-13 asks the refusal to name "the position of the fault". Go's `regexp.Compile` reports a
+  fault by quoting the expression, or the fragment inside it, rather than by giving a character
+  index: `([0-9]+ scenarios` comes back as "error parsing regexp: missing closing ): `([0-9]+
+  scenarios`".
+- So the refusal carries the parser's own message beside the value. That is what a person needs to
+  find the bracket they left open, and inventing an index would mean re-parsing the expression to
+  compute a number the parser already decided not to give.
+
+**An empty command leaves the command where it is, the same rule the pattern and the budget follow.**
+- Status: settled, and the contracts say nothing either way.
+- WIRE-13 says "an empty pattern or a zero timeout leaves that setting as it stands" and is silent
+  on an empty command. One rule for all three is what shipped: an empty value on any of the three
+  means "do not change this one".
+- Why. The alternative is to refuse an empty command, and the refusal it would earn is the token
+  one, which reads as "this command runs everything" about a command that runs nothing.
+- What follows: there is no way to clear a proof command back to nothing. Nothing needs one. A proof
+  command is replaced rather than removed, and S-22 refuses a finish on a project that never set one.
+- The command line refuses `--pattern` or `--timeout` with no command, rather than ignoring them. A
+  caller who meant to change the pattern would otherwise read the old one back and believe the write
+  landed.
+
+**A project with no design row answers the column defaults, not an empty message.**
+- Status: settled, and the contract text is stale about a behaviour that shipped before this slice.
+- WIRE-1 says "a project with no design row answers with a `Design` carrying only `project`". The
+  code on `main` already answers `steps_in_flight_cap` as well, because a cap of zero refuses every
+  take and a project nobody configured refuses nothing.
+- This slice answers the proof pattern and the proof budget the same way, for the same reason: an
+  empty pattern reads no count out of any output, and a budget of zero ends a run before it starts.
+  The command stays empty, and empty is what it means there: this project proves nothing yet.

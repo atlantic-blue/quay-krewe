@@ -47,6 +47,12 @@ import (
 // be reading more sessions than they agreed to. Taking a step stays open, because a take is a
 // dispatch and the driver already has that: the cap is the number, not the act.
 //
+// The proof command is refused because it is what checks the session's own work. A session that
+// could set it could point it at a scenario that always passes, or at nothing at all, and every step
+// after that would report a check that checked nothing. The refusal is the whole reason the check is
+// worth running. Reading the design stays open, so a session still reads the command it will be run
+// under.
+//
 // Archiving is refused on both its calls. It is the operator's word about the record: a session that
 // could put sessions away could hide the evidence of what it did, and the sweep over a project could
 // do it to every finished session at once. Restoring stays open, because it hides nothing.
@@ -69,7 +75,8 @@ func DeniedToDriver(fullMethod string, request any) error {
 		quaycrewv1.ControlPlaneService_ArchiveProjectSessions_FullMethodName,
 		quaycrewv1.ControlPlaneService_ApproveDesign_FullMethodName,
 		quaycrewv1.ControlPlaneService_ApproveRestatement_FullMethodName,
-		quaycrewv1.ControlPlaneService_SetStepsInFlightCap_FullMethodName:
+		quaycrewv1.ControlPlaneService_SetStepsInFlightCap_FullMethodName,
+		quaycrewv1.ControlPlaneService_SetProofCommand_FullMethodName:
 		return refusedToDriver(fullMethod)
 	case quaycrewv1.ControlPlaneService_SetContext_FullMethodName:
 		if req, ok := request.(*quaycrewv1.SetContextRequest); ok && req.GetScope() == "system" {
