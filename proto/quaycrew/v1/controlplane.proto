@@ -782,6 +782,21 @@ message ListStepsResponse {
   repeated Milestone milestones = 3;
 }
 
+// GetStepRequest reads one step of a feature's path, whole.
+message GetStepRequest {
+  string feature = 1;
+  int32 number = 2;
+}
+// GetStepResponse is the step, after the session that holds it was read.
+//
+// The warnings are what the operator has to know about the answer rather than about the request: a
+// file that could not be read, and a restatement long enough to say so. Neither refuses the read, so
+// both travel beside the step rather than in place of it.
+message GetStepResponse {
+  Step step = 1;
+  repeated string warnings = 2;
+}
+
 // TakeStepRequest gives one step of a feature's path to a session that starts now.
 message TakeStepRequest {
   string feature = 1;
@@ -1483,6 +1498,13 @@ service ControlPlaneService {
   // nothing that dispatching would not.
   rpc SetPath(SetPathRequest) returns (SetPathResponse);
   rpc ListSteps(ListStepsRequest) returns (ListStepsResponse);
+  // One step, read after the session that holds it is asked what it wrote. The read costs a file
+  // read on this machine: no container starts, no model runs, and nothing is dispatched, which is
+  // what lets the operator read a restatement the moment it is written rather than at the next exec.
+  //
+  // The driver may call it. A session reading the step it holds reaches what its own file already
+  // says.
+  rpc GetStep(GetStepRequest) returns (GetStepResponse);
   // Taking a step starts a session on it. The driver may call it, because a take is a dispatch and
   // the driver already has that: it reaches nothing here it could not reach by dispatching itself.
   // The refusal an unapproved design earns is the gate, and it is on the operator's own command as

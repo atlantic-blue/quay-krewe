@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	quaycrewv1 "github.com/atlantic-blue/quay-krewe/gen/quaycrew/v1"
+	"github.com/atlantic-blue/quay-krewe/internal/workspace"
 )
 
 // The steps of a path, one at a time. Taking one starts a session on it.
@@ -16,12 +17,16 @@ import (
 // prints what came back, so the console and the command line ask for the same words.
 
 const stepUsage = "usage: krewe step take [<address>] <feature>.<number>" +
+	"\n       krewe step restatement [<address>] <feature>.<number>" +
 	"\n       krewe step done [<address>] <feature>.<number> \"<result>\"" +
 	"\n       krewe step stop [<address>] <feature>.<number> \"<reason>\""
 
 func runStep(ctx context.Context, client quaycrewv1.ControlPlaneServiceClient, args []string, out io.Writer) error {
 	if len(args) > 0 && args[0] == "take" {
 		return runStepTake(ctx, client, args[1:], out)
+	}
+	if len(args) > 0 && args[0] == "restatement" {
+		return runStepRestatement(ctx, client, args[1:], out)
 	}
 	if len(args) > 0 && (args[0] == "done" || args[0] == "stop") {
 		return runStepFinish(ctx, client, args[0], args[1:], out)
@@ -77,6 +82,81 @@ func runStepTake(ctx context.Context, client quaycrewv1.ControlPlaneServiceClien
 	// landed between this call and that one.
 	fmt.Fprintf(out, "\n%d of %d steps in flight\n", resp.GetInFlight(), resp.GetStepsInFlightCap())
 	return nil
+}
+
+// runStepRestatement prints what the session wrote about the step it holds.
+//
+// The read refreshes first, in the control plane: it reads the session's own file, so what prints is
+// what the session understands now rather than what it understood at its last exec. Nothing is
+// dispatched, so this costs no token and starts no container, and the operator reads the text the
+// moment the session writes it.
+//
+// The text prints last and whole, so the output can be piped. A warning prints under it and never in
+// place of it: a note about the length of a text is not a reason to withhold the text.
+func runStepRestatement(ctx context.Context, client quaycrewv1.ControlPlaneServiceClient, args []string, out io.Writer) error {
+	if len(args) == 0 || len(args) > 2 {
+		return fmt.Errorf("usage: krewe step restatement [<address>] <feature>.<number>")
+	}
+	typed, said := "", args[0]
+	if len(args) == 2 {
+		typed, said = args[0], args[1]
+	}
+	located, err := designProject(ctx, client, typed)
+	if err != nil {
+		return err
+	}
+	features, err := featuresOf(ctx, client, located.ProjectID)
+	if err != nil {
+		return err
+	}
+	held, number, err := stepAddressed(said, features, located.Path.Project)
+	if err != nil {
+		return err
+	}
+	resp, err := client.GetStep(ctx, &quaycrewv1.GetStepRequest{Feature: held.GetId(), Number: number})
+	if err != nil {
+		return err
+	}
+	step := resp.GetStep()
+	fmt.Fprintf(out, "step %d.%d of %s: %s\n",
+		held.GetNumber(), step.GetNumber(), located.Path.Project, step.GetTitle())
+	if step.GetRestatement() == "" {
+		fmt.Fprintf(out, "\nthis session wrote no restatement yet\n")
+		fmt.Fprintf(out, "%s\n", waitOrAskFor(located, step))
+		sayWarnings(out, resp.GetWarnings())
+		return nil
+	}
+	fmt.Fprintf(out, "written %s\n", step.GetRestatedAt().AsTime().Format(whenItWasWritten))
+	fmt.Fprintf(out, "approval: %s\n", restatementApproval(step))
+	fmt.Fprintf(out, "\n%s\n", strings.TrimRight(step.GetRestatement(), "\n"))
+	sayWarnings(out, resp.GetWarnings())
+	return nil
+}
+
+// whenItWasWritten is how a moment prints here, and it is the one krewe design already prints an
+// approval at: the operator reads the two on one screen.
+const whenItWasWritten = "2006-01-02 15:04"
+
+// waitOrAskFor is what to do about a step whose session has written nothing yet. A session may still
+// be reading, so waiting is the first answer, and the second names the session to ask.
+//
+// It is a sentence with a command in it rather than a refusal, because nothing went wrong: a step
+// taken a moment ago has no restatement yet, and that is the state every taken step starts in.
+func waitOrAskFor(located workspace.Location, step *quaycrewv1.Step) string {
+	if step.GetSession() == "" {
+		return "wait until somebody takes the step, and the session it starts writes one"
+	}
+	return fmt.Sprintf("wait for it, or ask that session with krewe exec %s/%s/%s \"restate the step\"",
+		located.Path.Workspace, located.Path.Project, step.GetSession())
+}
+
+// restatementApproval says where this exact text stands with the operator. It is a statement about
+// one text and never about the step, so a step whose restatement changed reads as unapproved again.
+func restatementApproval(step *quaycrewv1.Step) string {
+	if !step.GetRestatementApproved() {
+		return "not approved"
+	}
+	return "approved " + step.GetRestatementApprovedAt().AsTime().Format(whenItWasWritten)
 }
 
 // runStepFinish records what came of a step: done, or stopped, and what somebody wrote about it.

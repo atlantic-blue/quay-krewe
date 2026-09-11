@@ -215,6 +215,13 @@ commands:
                                           somebody already holds the step, and a refusal starts
                                           nothing. Several steps run at once, up to the project's
                                           cap, and the last line says how many are in flight
+  step restatement [<address>]            what the session wrote about the step it holds, before it
+    <feature>.<number>                    builds anything: the six parts it was asked for, when it
+                                          wrote them, and whether they are approved. It reads the
+                                          session's own file first, so it prints what the session
+                                          understands now, and it dispatches nothing. A step whose
+                                          session has written nothing yet says so, and names the
+                                          session to ask
   step done [<address>]                   record what came of a step, and close it. The result is
     <feature>.<number> "<result>"         required: nothing can see inside a container, so what you
                                           write is what the next session reads. It touches no
