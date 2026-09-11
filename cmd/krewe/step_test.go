@@ -67,7 +67,42 @@ func aStepToCheck(t *testing.T, answers sandbox.Reply) (quaycrewv1.ControlPlaneS
 	if _, err := held.ApproveRestatement(ctx, features[0].GetId(), 1); err != nil {
 		t.Fatalf("ApproveRestatement: %v", err)
 	}
+	theSandboxIsUp(t, held, provider, features[0].GetId())
 	return client, provider
+}
+
+// theSandboxIsUp gives the provider the sandbox of the session holding the step.
+//
+// The take dispatches and lets go, so the container that dispatch makes may not be there yet when
+// the check runs, and a check on a session with no container is refused rather than answered. That
+// refusal belongs to the slice that makes a container for a reclaimed session; what these tests are
+// about is a session whose container is already up.
+//
+// The provider adopts a sandbox it already holds, so the dispatch still in flight takes this one
+// rather than making a second, and the canned answers reach it either way.
+func theSandboxIsUp(t *testing.T, held store.Store, provider *sandbox.FakeProvider, feature string) {
+	t.Helper()
+	ctx := context.Background()
+	step, err := held.GetStep(ctx, feature, 1)
+	if err != nil {
+		t.Fatalf("GetStep: %v", err)
+	}
+	sessions, err := held.ListSessions(ctx, store.SessionFilter{Project: projectOf(t, held)})
+	if err != nil {
+		t.Fatalf("ListSessions: %v", err)
+	}
+	for _, session := range sessions {
+		if session.GetHandle() != step.GetSession() && session.GetId() != step.GetSession() {
+			continue
+		}
+		if _, err := provider.Create(ctx, sandbox.Config{
+			ID: session.GetId(), Workspace: session.GetWorkspace(), Project: session.GetProject(),
+		}); err != nil {
+			t.Fatalf("make the session a sandbox: %v", err)
+		}
+		return
+	}
+	t.Fatalf("no session holds step 1, which reads %q", step.GetSession())
 }
 
 // projectOf is the one project this system holds, which the tool made by name.
