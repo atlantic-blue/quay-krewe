@@ -119,6 +119,14 @@ var ErrRestatementNotApproved = errors.New("store: nobody approved this step's r
 // ErrNoScenarioNamed says the step names no scenario, so there is nothing for krewe to run.
 var ErrNoScenarioNamed = errors.New("store: this step names no scenario")
 
+// ErrNotChecked says nothing ran this step's scenario yet, so the word done is refused. This is gate
+// 3.
+//
+// It reads the moment of the last run and never the verdict. Nothing checked the step and the check
+// said no are two states, and only the first one is refused: the word done belongs to the operator,
+// so a step whose check failed still closes and the row records the disagreement.
+var ErrNotChecked = errors.New("store: nobody read a verdict on this step yet")
+
 // ErrNoProofCommand says the project carries no proof command, so krewe has nothing to run a scenario
 // with.
 var ErrNoProofCommand = errors.New("store: this project has no proof command")
@@ -755,6 +763,11 @@ type Store interface {
 	//
 	// The store writes the state it is given. Whether done and stopped are the only two words is the
 	// control plane's question, the way a permission mode already is.
+	//
+	// The word done is refused with ErrNotChecked while the step carries no moment of a run. This is
+	// gate 3, and it reads that moment rather than the verdict: a failing run is a record, and the
+	// row keeps the disagreement rather than refusing the word. A stop reads nothing at all, because
+	// a step nobody will finish has to be closable whatever ran on it.
 	//
 	// The session and the take stamp are untouched, so the record still says who took the step. The
 	// step and the session are separate records, and nothing here reads or writes a session.

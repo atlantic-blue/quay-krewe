@@ -574,3 +574,42 @@ as stale.
 - It creates under `boxOf(session)`, so the container carries the session's own name. That is the
   invariant PROOF-2 states, and it is what makes a second check adopt the first container rather than
   make a second.
+
+## Settled on 2026-09-11, building S-22, where a contract and the code disagreed
+
+Three entries. In each one the code on `main` wins and the sentence in the design document is
+recorded as stale.
+
+**`FinishStep` takes a feature and a number, not a project and a number.**
+- Status: settled, and the contract text is stale about a shape that moved before this slice.
+- STORE-9 writes `FinishStep(ctx, project string, number int32, finish store.Finish)` and WIRE-12
+  writes `FinishStepRequest { string project = 1; int32 number = 2; }`.
+- A path belongs to a feature, and step numbers restart in each feature, so a project and a number
+  name as many steps as the project has features. The store, the wire and the command line all take
+  the feature already, and the gate is added to the calls as they stand.
+- This is the same disagreement S-20 recorded about `RecordProof` and `CheckStep`, in the two
+  contracts this slice builds from. The command line still reads `<feature>.<number>` through
+  `stepAddressed`, so nothing about what a person types changes.
+
+**The refusal names the check in the form a person types, never with this step's own numbers.**
+- Status: settled, and the contract text is stale for the same reason the entry above is.
+- WIRE-12 gives the sentence as "nothing checked step 3 yet. Run `krewe step check [<address>] 3`,
+  read the verdict, then say done".
+- A bare number is not a step address. `stepAddressed` refuses one, and says so even where the
+  project holds exactly one feature, so a refusal that told somebody to type `krewe step check 3`
+  would send them into a second refusal.
+- So the sentence reads "nothing checked step 3 yet. Run `krewe step check [<address>]
+  <feature>.<number>`, read the verdict, then say done". It is the form `noRoomForIt` and
+  `somebodyElseWritesIt` already name a command in, both of which hold the numbers they could have
+  substituted and name the usage instead.
+
+**`FinishStep` answers the step alone, and the response carries no design, no next and no offer.**
+- Status: settled for this slice, and the fields belong to slices that have not shipped.
+- STORE-9 returns `(*quaycrewv1.Step, *quaycrewv1.Design, error)` because the counters move in the
+  same transaction, and WIRE-12 answers `FinishStepResponse { Step step = 1; Design design = 2;
+  int32 next = 3; string offer = 4; }`.
+- The trust record, the counters and `operator_agreed` are S-25, and the offer is S-26. The call
+  answers `FinishStepResponse { Step step = 1; }` as it does on `main`, and the command line reads
+  what is next through `ListSteps`, which is what prints the line today.
+- Nothing here forecloses those fields. They are added with the write that fills them, so no reader
+  ever sees a field that is always zero.

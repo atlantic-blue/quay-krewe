@@ -1642,10 +1642,28 @@ func (s *Server) FinishStep(ctx context.Context, req *quaycrewv1.FinishStepReque
 	written, err := s.store.FinishStep(ctx, req.GetFeature(), req.GetNumber(), store.Finish{
 		State: req.GetState(), Result: req.GetResult(), ClosedBy: closedByOperator,
 	})
+	if errors.Is(err, store.ErrNotChecked) {
+		return nil, status.Error(codes.FailedPrecondition, nothingCheckedItYet(req.GetNumber()))
+	}
 	if err != nil {
 		return nil, storeError(err, "step")
 	}
 	return &quaycrewv1.FinishStepResponse{Step: written}, nil
+}
+
+// nothingCheckedItYet is gate 3's refusal: the operator reads a verdict before speaking the word.
+//
+// It names the command that clears it, the way every refusal about a step names the next move, and it
+// names it in the form a person types rather than with this step's own numbers. A step is addressed
+// by its feature and its number, so a bare number is not something anybody can type.
+//
+// A failing verdict is not what this refuses. Nothing ran and the run said no are two states, and the
+// word done belongs to the operator: a step whose check failed closes, and the row records the
+// disagreement.
+func nothingCheckedItYet(number int32) string {
+	return fmt.Sprintf(
+		"nothing checked step %d yet. Run krewe step check [<address>] <feature>.<number>, "+
+			"read the verdict, then say done", number)
 }
 
 // stepNumbered is the step of that number, and nil when the path holds none.
