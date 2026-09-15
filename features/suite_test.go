@@ -730,6 +730,7 @@ func initializeScenario(sc *godog.ScenarioContext) {
 	initializeDetachSteps(sc)
 	initializeDispatchingSteps(sc)
 	initializeSandboxNameSteps(sc)
+	initializeContainerdRuntimeSteps(sc)
 	initializeSystemDirectorySteps(sc)
 	initializeWaitsSteps(sc)
 	initializeDegradedSteps(sc)

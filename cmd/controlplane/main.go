@@ -122,7 +122,7 @@ func main() {
 		os.Exit(1)
 	}
 	sandboxKind, _ := sandbox.ResolveKind(os.Getenv("QC_SANDBOX"))
-	if sandboxKind == sandbox.KindDocker && strings.TrimSpace(os.Getenv("QC_SANDBOX_MEMORY")) == "" {
+	if inAContainer(sandboxKind) && strings.TrimSpace(os.Getenv("QC_SANDBOX_MEMORY")) == "" {
 		logger.Warn("no QC_SANDBOX_MEMORY set: a session sizes node, Go, jest and webpack against the " +
 			"whole machine, and the kernel kills them against what the rest of it has left")
 	}
@@ -393,6 +393,13 @@ func renamedSetting(now string, read func(string) string) (value, notice string)
 	return value, ""
 }
 
+// inAContainer is a kind that runs each session in a container of a runtime, on a network of that
+// runtime. Docker and containerd both do, and they are given the same container by the same code, so
+// what is said about one is said about the other. A session on the host is in neither.
+func inAContainer(kind string) bool {
+	return kind == sandbox.KindDocker || kind == sandbox.KindContainerd
+}
+
 // unreachableSystem says what to tell an operator whose system hands out an address no session can
 // resolve, and whether there is anything to say.
 //
@@ -404,7 +411,7 @@ func renamedSetting(now string, read func(string) string) (value, notice string)
 // A system that tells a session nothing is not warned about. That system hands out no credential either,
 // so the two halves agree.
 func unreachableSystem(kind, reachable, sessionNetwork string) (string, bool) {
-	if kind != sandbox.KindDocker || reachable == "" || sessionNetwork != "" {
+	if !inAContainer(kind) || reachable == "" || sessionNetwork != "" {
 		return "", false
 	}
 	return "QC_SANDBOX_CONTROL_PLANE is set and QC_SESSION_NETWORK is not: a session running a job " +

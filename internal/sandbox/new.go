@@ -32,6 +32,9 @@ const (
 	KindDocker = "docker"
 	// KindLocal runs on the host with no isolation. A stopgap, not a sandbox.
 	KindLocal = "local"
+	// KindContainerd gives each session a container of its own on containerd, through nerdctl, so a
+	// machine runs sessions without the Docker daemon above it.
+	KindContainerd = "containerd"
 )
 
 // ResolveKind names the backend a kind selects, filling in the default for an empty one. Anything
@@ -43,13 +46,16 @@ func ResolveKind(kind string) (string, error) {
 		return KindDocker, nil
 	case KindLocal:
 		return KindLocal, nil
+	case KindContainerd:
+		return KindContainerd, nil
 	default:
 		return "", fmt.Errorf("sandbox: unknown provider %q", kind)
 	}
 }
 
 // NewProvider builds a Provider by kind. The default (empty or "docker") isolates each session in a
-// container; "local" is the short term host backend. Other kinds are an error.
+// container; "containerd" isolates it in one on containerd with no Docker daemon above it; "local" is
+// the short term host backend. Other kinds are an error.
 func NewProvider(kind string, opts Options) (Provider, error) {
 	resolved, err := ResolveKind(kind)
 	if err != nil {
@@ -57,6 +63,9 @@ func NewProvider(kind string, opts Options) (Provider, error) {
 	}
 	if resolved == KindLocal {
 		return LocalProvider{}, nil
+	}
+	if resolved == KindContainerd {
+		return ContainerdProvider{Options: opts}, nil
 	}
 	// The Docker backend is configured by exactly these options today, so it converts straight
 	// across. A backend that needs something else gets its own fields here.

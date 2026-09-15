@@ -3,6 +3,8 @@ package main
 import (
 	"strings"
 	"testing"
+
+	"github.com/atlantic-blue/quay-krewe/internal/sandbox"
 )
 
 func TestAConfiguredAllowlistIsSaidToBeIgnored(t *testing.T) {
@@ -47,6 +49,22 @@ func TestASystemThatHandsOutAnAddressNoSessionCanResolveSaysSo(t *testing.T) {
 	}
 }
 
+// TestTheNoticeCoversEveryRuntimeThatPutsASessionInAContainer. A session on containerd is created
+// with the same arguments the Docker one is, so it reaches the system through a network in exactly
+// the same way, and a system that warned about one runtime and not the other would leave the
+// operator of the quieter one reading "produced zero addresses" as the system being down.
+func TestTheNoticeCoversEveryRuntimeThatPutsASessionInAContainer(t *testing.T) {
+	for _, kind := range []string{sandbox.KindDocker, sandbox.KindContainerd} {
+		notice, mismatched := unreachableSystem(kind, "controlplane:50051", "")
+		if !mismatched {
+			t.Fatalf("a %s system handing out an address its sessions cannot resolve said nothing", kind)
+		}
+		if !strings.Contains(notice, "QC_SESSION_NETWORK") {
+			t.Errorf("the notice does not say what to set: %s", notice)
+		}
+	}
+}
+
 func TestNothingIsSaidWhenTheTwoHalvesAgree(t *testing.T) {
 	for _, tc := range []struct {
 		name                            string
@@ -68,6 +86,11 @@ func TestNothingIsSaidWhenTheTwoHalvesAgree(t *testing.T) {
 		{
 			name: "sessions on the host", kind: "local", reachable: "controlplane:50051",
 			because: "there is no container and no network to put one on",
+		},
+		{
+			name: "containerd with both set", kind: "containerd",
+			reachable: "controlplane:50051", sessionNetwork: "quaycrew_sessions",
+			because: "a containerd session joins the network the docker one joins",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
