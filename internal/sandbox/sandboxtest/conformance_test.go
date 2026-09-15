@@ -42,3 +42,29 @@ func TestEverySessionTheContractMakesLooksLikeASession(t *testing.T) {
 		}
 	}
 }
+
+// TestEveryConfigurationTheContractCreatesIsOneAProviderWithStorageAccepts.
+//
+// State is kept per workspace and per project, so a provider built with storage refuses a
+// configuration that carries an identifier and nothing else. A case that named neither would pass
+// against a provider with no storage, and fail against the one the control plane builds, and the
+// failure would land only where a runtime is.
+func TestEveryConfigurationTheContractCreatesIsOneAProviderWithStorageAccepts(t *testing.T) {
+	data := t.TempDir()
+	storage := sandbox.Storage{Dir: data, Host: data}
+
+	made := []sandbox.Config{
+		forSession(sessionID("a1")),
+		{ID: sessionID("a3"), Workspace: sharedWorkspace, Project: sharedProject},
+	}
+	for _, cfg := range made {
+		mounts, err := storage.Prepare(cfg)
+		if err != nil {
+			t.Errorf("a session the contract creates is refused before any container exists: %v", err)
+			continue
+		}
+		if len(mounts) == 0 {
+			t.Errorf("%+v is given no directories, so nothing it writes outlives its container", cfg)
+		}
+	}
+}

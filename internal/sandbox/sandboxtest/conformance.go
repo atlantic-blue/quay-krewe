@@ -76,6 +76,22 @@ func cases() map[string]func(*testing.T, Backend) {
 	}
 }
 
+// forSession is the whole configuration a session is created with. The workspace and the project are
+// named in every case, never only the identifier: state is kept per workspace and per project, so a
+// provider built with storage refuses a configuration that carries an identifier and nothing else. A
+// case that named neither would pass on a provider with no storage and fail on the one the control
+// plane builds.
+func forSession(id string) sandbox.Config {
+	return sandbox.Config{ID: id, Workspace: "ws-" + id, Project: "prj-" + id}
+}
+
+// The workspace and the project two sessions share, so the case about state can say what a sibling
+// session sees and what it does not.
+const (
+	sharedWorkspace = "ws-durable"
+	sharedProject   = "prj-durable"
+)
+
 // sessionID is a name of the exact shape a session identifier has. The listing that finds a stranded
 // sandbox matches that shape and nothing looser, because the system's own containers are containers
 // too and nobody stops one of them to make room for a session. An identifier of any other shape would
@@ -113,7 +129,7 @@ func aSessionRunsACommand(t *testing.T, backend Backend) {
 	provider := backend.New(sandbox.Options{Image: backend.Image})
 	id := sessionID("a1")
 
-	box, err := provider.Create(ctx, sandbox.Config{ID: id})
+	box, err := provider.Create(ctx, forSession(id))
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -135,7 +151,7 @@ func theEnvironmentTravels(t *testing.T, backend Backend) {
 	provider := backend.New(sandbox.Options{Image: backend.Image})
 	id := sessionID("a2")
 
-	box, err := provider.Create(ctx, sandbox.Config{ID: id})
+	box, err := provider.Create(ctx, forSession(id))
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -175,7 +191,7 @@ func stateOutlivesTheContainer(t *testing.T, backend Backend) {
 		Storage: sandbox.Storage{Dir: data, Host: data},
 	})
 	id, sibling := sessionID("a3"), sessionID("a4")
-	config := sandbox.Config{ID: id, Workspace: "ws-durable", Project: "prj-durable"}
+	config := sandbox.Config{ID: id, Workspace: sharedWorkspace, Project: sharedProject}
 	t.Cleanup(func() {
 		_ = provider.Remove(context.Background(), id)
 		_ = provider.Remove(context.Background(), sibling)
@@ -222,13 +238,13 @@ func anExistingContainerIsAdopted(t *testing.T, backend Backend) {
 	provider := backend.New(sandbox.Options{Image: backend.Image})
 	id := sessionID("a5")
 
-	first, err := provider.Create(ctx, sandbox.Config{ID: id})
+	first, err := provider.Create(ctx, forSession(id))
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 	t.Cleanup(func() { _ = provider.Remove(context.Background(), id) })
 
-	again, err := provider.Create(ctx, sandbox.Config{ID: id})
+	again, err := provider.Create(ctx, forSession(id))
 	if err != nil {
 		t.Fatalf("creating a second time for the same session: %v", err)
 	}
@@ -246,7 +262,7 @@ func anExistingContainerIsAdopted(t *testing.T, backend Backend) {
 	if err := backend.Stop(ctx, sandbox.ContainerName(id)); err != nil {
 		t.Fatalf("stopping the container: %v", err)
 	}
-	restarted, err := provider.Create(ctx, sandbox.Config{ID: id})
+	restarted, err := provider.Create(ctx, forSession(id))
 	if err != nil {
 		t.Fatalf("creating over a stopped container: %v", err)
 	}
@@ -275,7 +291,7 @@ func removalGoesByName(t *testing.T, backend Backend) {
 	provider := backend.New(sandbox.Options{Image: backend.Image})
 	id := sessionID("a6")
 
-	if _, err := provider.Create(ctx, sandbox.Config{ID: id}); err != nil {
+	if _, err := provider.Create(ctx, forSession(id)); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 	t.Cleanup(func() { _ = provider.Remove(context.Background(), id) })
@@ -358,7 +374,7 @@ func theRetiredNameIsStillReached(t *testing.T, backend Backend) {
 		t.Fatalf("the sandbox calls itself %v, and an attach opens that name", box)
 	}
 
-	again, err := provider.Create(ctx, sandbox.Config{ID: id})
+	again, err := provider.Create(ctx, forSession(id))
 	if err != nil {
 		t.Fatalf("Create over a sandbox from before the rename: %v", err)
 	}
@@ -387,7 +403,7 @@ func anEmptySandboxIsQuiet(t *testing.T, backend Backend) {
 	provider := backend.New(sandbox.Options{Image: backend.Image})
 	id := sessionID("a9")
 
-	if _, err := provider.Create(ctx, sandbox.Config{ID: id}); err != nil {
+	if _, err := provider.Create(ctx, forSession(id)); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 	t.Cleanup(func() { _ = provider.Remove(context.Background(), id) })
