@@ -14,18 +14,15 @@ import (
 	"github.com/cucumber/godog"
 )
 
-// Steps for the macOS backend.
+// Steps for the scarcity of a macOS guest.
 //
-// They ask the sandbox package the two questions an operator's configuration asks it: which backend
-// a kind selects, and how many guests one host hands out. The guests are driven through a stand in
-// for tart rather than through Apple's Virtualization framework, which needs an Apple machine, so
-// these scenarios prove the queue and the choice of backend and they do not prove that macOS boots.
+// They ask the sandbox package how many guests one host hands out, and what a session that already
+// holds one is given. The guests are driven through a stand in for tart rather than through Apple's
+// Virtualization framework, which needs an Apple machine, so these scenarios prove the queue and they
+// do not prove that macOS boots. Which backend a word selects is sandboxbackends.feature.
 
-// macOSWorld is the configuration a scenario set, and what the backend answered.
+// macOSWorld is the host a scenario stood up, and what it answered.
 type macOSWorld struct {
-	kind     string
-	built    sandbox.Provider
-	err      error
 	provider *sandbox.MacOSProvider
 	home     string
 	held     []string
@@ -57,53 +54,6 @@ func initializeMacOSSandboxSteps(sc *godog.ScenarioContext) {
 		}
 		_ = os.RemoveAll(w.home)
 		return ctx, os.Unsetenv(fakeTartHome)
-	})
-
-	sc.Step(`^a system configured with the sandbox kind "([^"]*)"$`, func(ctx context.Context, kind string) error {
-		w := macOSFrom(ctx)
-		w.kind = kind
-		w.built, w.err = sandbox.NewProvider(kind, sandbox.Options{Image: "an-image"})
-		return nil
-	})
-
-	sc.Step(`^a system configured with no sandbox kind$`, func(ctx context.Context) error {
-		w := macOSFrom(ctx)
-		w.built, w.err = sandbox.NewProvider("", sandbox.Options{Image: "an-image"})
-		return nil
-	})
-
-	sc.Step(`^a session is isolated in a macOS virtual machine$`, func(ctx context.Context) error {
-		w := macOSFrom(ctx)
-		if w.err != nil {
-			return w.err
-		}
-		if _, isMacOS := w.built.(*sandbox.MacOSProvider); !isMacOS {
-			return fmt.Errorf("a session is isolated in a %T, and Xcode does not run in one", w.built)
-		}
-		return nil
-	})
-
-	sc.Step(`^a session is isolated in a container$`, func(ctx context.Context) error {
-		w := macOSFrom(ctx)
-		if w.err != nil {
-			return w.err
-		}
-		if _, isDocker := w.built.(sandbox.DockerProvider); !isDocker {
-			return fmt.Errorf("a session is isolated in a %T, and the default is a container", w.built)
-		}
-		return nil
-	})
-
-	sc.Step(`^the system refuses to start and names the kind it was given$`, func(ctx context.Context) error {
-		w := macOSFrom(ctx)
-		if w.err == nil {
-			return fmt.Errorf("the kind %q was accepted and built a %T, so a typo silently gets something else",
-				w.kind, w.built)
-		}
-		if !strings.Contains(w.err.Error(), w.kind) {
-			return fmt.Errorf("the refusal is %q, and it has to name the kind %q that was given", w.err, w.kind)
-		}
-		return nil
 	})
 
 	sc.Step(`^a host running the macOS sandbox$`, func(ctx context.Context) error {
@@ -144,8 +94,8 @@ func initializeMacOSSandboxSteps(sc *godog.ScenarioContext) {
 
 	sc.Step(`^a third session asks for one$`, func(ctx context.Context) error {
 		w := macOSFrom(ctx)
-		// Bounded, because the point is that it waits: a session that is refused at once is a
-		// session that was never queued.
+		// Bounded, because the point is that it waits: a session refused at once is a session that
+		// was never queued.
 		waiting, stop := context.WithTimeout(ctx, 2*time.Second)
 		defer stop()
 		started := time.Now()

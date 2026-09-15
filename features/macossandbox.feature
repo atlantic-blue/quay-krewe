@@ -1,39 +1,22 @@
-Feature: A session can be given a macOS virtual machine
+Feature: A macOS guest is scarce, so a session queues for one
 
   A session runs in a Linux container, so it can lint an iOS application, typecheck it and run its
-  tests, and it can never build it. Xcode does not run on Linux. The pipeline is Linux too, so a
-  native build is only ever proved by hand on one machine, after the work has already merged. On 15
-  September 2026 a crash that stopped an application from starting shipped through eleven green pull
-  requests that way.
+  tests. It can never build it, because Xcode does not run on Linux. The pipeline is Linux too. So a
+  person proves a native build by hand on one machine, after the work merges. On 15 September 2026 a
+  crash that stopped an application from starting went through eleven green pull requests that way.
 
-  So a session can ask for a macOS guest instead of a container. The container stays the default and
-  nothing else changes: a session that does not ask for one is not affected.
+  A session can ask for a macOS guest instead of a container. Which runtime a session gets is
+  sandboxbackends.feature. This one is about what makes that runtime different from every other one:
+  the operator cannot have as many as they want.
 
-  The number two in these scenarios is Apple's, not a choice. Section 2B(iii) of the macOS Tahoe 26
-  Software License Agreement permits two instances of macOS in virtual environments on one
-  Apple computer you own, for software development and for testing during it. The Virtualization
-  framework refuses the third. A guest is therefore scarce in a way a container never was, so a
-  session queues for one rather than being handed one that cannot start.
+  The number two is Apple's, not a choice. Section 2B(iii) of the macOS Tahoe 26 Software License
+  Agreement permits two instances of macOS in virtual environments. The computer must be an Apple one
+  the operator owns, and the purpose must be software development or testing during it. The
+  Virtualization framework refuses the third guest as well. So a third session waits for a guest,
+  rather than taking one that cannot start.
 
-  Scenario: The system is told to isolate a session in a macOS virtual machine
-    Given a system configured with the sandbox kind "macos"
-    Then a session is isolated in a macOS virtual machine
-
-  Scenario: A container is still what a session gets by default
-    Given a system configured with no sandbox kind
-    Then a session is isolated in a container
-
-  # A typo must not quietly become the default. An operator who asked for a macOS guest and got a
-  # Linux container would read the failure as Xcode being missing from the image.
-  Scenario Outline: A kind the system does not know is refused
-    Given a system configured with the sandbox kind "<kind>"
-    Then the system refuses to start and names the kind it was given
-
-    Examples:
-      | kind   |
-      | macosx |
-      | mac    |
-      | apple  |
+  These scenarios drive a stand in for tart, so they prove the queue and they prove nothing about
+  Apple's framework. The contract in internal/sandbox/sandboxtest is what a real guest is held to.
 
   Scenario: Two macOS guests run at once, and the third session waits for one
     Given a host running the macOS sandbox

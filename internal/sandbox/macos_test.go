@@ -2,6 +2,7 @@ package sandbox_test
 
 import (
 	"context"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,27 +14,135 @@ import (
 
 	"github.com/atlantic-blue/quay-krewe/internal/capacity"
 	"github.com/atlantic-blue/quay-krewe/internal/sandbox"
-	"github.com/atlantic-blue/quay-krewe/internal/sandbox/sandboxtest"
 )
 
-// The macOS backend, driven end to end against a fake tart.
+// The macOS backend, driven end to end against a stand in for tart.
 //
 // What this proves: the backend asks tart the right questions, reads its listing, tells a machine
-// that is not there from one that is stopped, carries a working directory and an environment into a
-// command, and hands out no more guests than Apple's licence permits.
+// that is not there from one that is stopped, adopts the guest a session already has, carries a
+// working directory and an environment into a command, and hands out no more guests than Apple's
+// licence permits.
 //
 // What it does not prove: that any of it works on an Apple machine. Nothing boots here, no image is
-// pulled, and a command runs on this host rather than in a guest. The same suite runs against a real
-// tart in macos_integration_test.go, which needs an Apple machine to run at all.
+// pulled, and a command runs on this host rather than in a guest. The contract in
+// internal/sandbox/sandboxtest is what holds this backend beside the container one, and it runs
+// against a real guest in macos_conformance_integration_test.go, which needs an Apple machine.
 
-// TestMacOSProviderConformance holds the macOS backend to the same contract the container backend
-// keeps, so the two cannot drift.
-func TestMacOSProviderConformance(t *testing.T) {
-	tart := tartBinary(t)
-	sandboxtest.RunConformance(t, func(t *testing.T) sandbox.Provider {
-		tartHome(t)
-		return &sandbox.MacOSProvider{Image: "macos-base", Tart: tart, Guests: 2}
-	})
+// TestAMacOSGuestRunsACommandAndGivesBackWhatItSaid.
+func TestAMacOSGuestRunsACommandAndGivesBackWhatItSaid(t *testing.T) {
+	provider, ctx := aMacOSBackend(t), patient(t)
+	session := "c0cf0f0a4ce0000000000001"
+	box, err := provider.Create(ctx, sandbox.Config{ID: session, Env: []string{"QC_CARRIED=yes"}})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	defer func() { _ = provider.Remove(context.Background(), session) }()
+
+	if said := guestSaid(t, ctx, box, []string{"echo", "hi from the guest"}, sandbox.Spec{}); said != "hi from the guest" {
+		t.Fatalf("the guest said %q", said)
+	}
+	// The subscription token rides on the sandbox own environment. A guest that drops it runs every
+	// command logged out.
+	if said := guestSaid(t, ctx, box, []string{"sh", "-c", `printf '%s' "$QC_CARRIED"`}, sandbox.Spec{}); said != "yes" {
+		t.Fatalf("the guest read %q from the environment it was created with, want yes", said)
+	}
+	// And a working directory, which tart exec has no flag for.
+	if said := guestSaid(t, ctx, box, []string{"pwd"}, sandbox.Spec{Workdir: "/tmp"}); said != "/tmp" {
+		t.Fatalf("the command ran in %q, want /tmp", said)
+	}
+	if _, err := box.Exec(ctx, sandbox.Spec{}); err == nil {
+		t.Fatal("a command with no words ran, and the backend has nothing to run")
+	}
+}
+
+// TestAMacOSGuestIsRemovedByNameAndTwiceIsStillSuccess. Stopping a session has to work from a process
+// that never made the guest, so removal goes by name. A guest that is not there is a removal that
+// already happened.
+func TestAMacOSGuestIsRemovedByNameAndTwiceIsStillSuccess(t *testing.T) {
+	provider, ctx := aMacOSBackend(t), patient(t)
+	session := "c0cf0f0a4ce0000000000002"
+	if _, err := provider.Create(ctx, sandbox.Config{ID: session}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if held, err := provider.Stranded(ctx); err != nil || !slices.Contains(held, session) {
+		t.Fatalf("Stranded = %v, %v, want the session in it", held, err)
+	}
+	if err := provider.Remove(ctx, session); err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+	if held, err := provider.Stranded(ctx); err != nil || slices.Contains(held, session) {
+		t.Fatalf("Stranded = %v, %v after a remove", held, err)
+	}
+	if err := provider.Remove(ctx, session); err != nil {
+		t.Fatalf("Remove of a guest that is gone: %v, want success", err)
+	}
+	if _, found, err := provider.Existing(ctx, session); err != nil || found {
+		t.Fatalf("Existing after a remove = %v, %v, want nothing and no error", found, err)
+	}
+}
+
+// TestAnEmptyMacOSSandboxHoldsNobodyAndRunsNothing. A failure to reach the runtime is the system
+// being unable to tell, and a session with no guest is nobody attached and nothing running. A caller
+// that read the first as the second would reclaim a conversation somebody is typing into.
+func TestAnEmptyMacOSSandboxHoldsNobodyAndRunsNothing(t *testing.T) {
+	provider, ctx := aMacOSBackend(t), patient(t)
+	session := "c0cf0f0a4ce0000000000003"
+
+	attached, err := provider.Attached(ctx, session)
+	if err != nil {
+		t.Fatalf("Attached for a session with no guest: %v, want no error", err)
+	}
+	if attached {
+		t.Fatal("a session with no guest reads as attached, so nothing reclaims it")
+	}
+	running, err := provider.RuntimeRunning(ctx, session)
+	if err != nil {
+		t.Fatalf("RuntimeRunning for a session with no guest: %v, want no error", err)
+	}
+	if running {
+		t.Fatal("a session with no guest reads as running a model")
+	}
+	if box, found, err := provider.Existing(ctx, session); err != nil || found || box != nil {
+		t.Fatalf("Existing made or found %v for a session with no guest: %v", box, err)
+	}
+}
+
+// TestAMacOSGuestThatIsAlreadyThereIsAdoptedNotRefused is what a control plane that forgot its
+// sandboxes runs into. The guest name is derived from the session, so the runtime refuses a second
+// clone under it, and that session would be undispatchable until somebody deleted the guest by hand.
+func TestAMacOSGuestThatIsAlreadyThereIsAdoptedNotRefused(t *testing.T) {
+	provider, ctx := aMacOSBackend(t), patient(t)
+	session := "c0cf0f0a4ce0000000000004"
+	first, err := provider.Create(ctx, sandbox.Config{ID: session})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	defer func() { _ = provider.Remove(context.Background(), session) }()
+
+	again, err := provider.Create(ctx, sandbox.Config{ID: session})
+	if err != nil {
+		t.Fatalf("create for a session that already has a guest: %v", err)
+	}
+	if guestName(t, first) != guestName(t, again) {
+		t.Fatalf("a second guest was made: %q beside %q", guestName(t, again), guestName(t, first))
+	}
+	held, err := provider.Stranded(ctx)
+	if err != nil {
+		t.Fatalf("Stranded: %v", err)
+	}
+	guests := 0
+	for _, one := range held {
+		if one == session {
+			guests++
+		}
+	}
+	if guests != 1 {
+		t.Fatalf("session %s holds %d guests (%v), want 1: a second one costs tens of gigabytes and one of two places",
+			session, guests, held)
+	}
+	if said := guestSaid(t, ctx, again, []string{"echo", "adopted"}, sandbox.Spec{}); said != "adopted" {
+		t.Fatalf("the adopted guest said %q, want it usable", said)
+	}
 }
 
 // TestAMacOSGuestIsClonedFromTheImageAndBootedWithoutAScreen reads the command the runtime is
@@ -297,6 +406,49 @@ func buildFakeTart(t *testing.T) string {
 	path := tartBinary(t)
 	tartHome(t)
 	return path
+}
+
+// aMacOSBackend is the backend over a stand in for tart, with machines of this test own.
+func aMacOSBackend(t *testing.T) *sandbox.MacOSProvider {
+	t.Helper()
+	return &sandbox.MacOSProvider{Image: "macos-base", Tart: buildFakeTart(t)}
+}
+
+// patient is a context ended with the test, long enough for a stand in and nowhere near long enough
+// for a real guest, which the integration tier handles.
+func patient(t *testing.T) context.Context {
+	t.Helper()
+	ctx, done := context.WithTimeout(context.Background(), time.Minute)
+	t.Cleanup(done)
+	return ctx
+}
+
+// guestSaid runs one command in the guest and answers with what it wrote, trimmed.
+func guestSaid(t *testing.T, ctx context.Context, box sandbox.Sandbox, argv []string, spec sandbox.Spec) string {
+	t.Helper()
+	spec.Argv = argv
+	proc, err := box.Exec(ctx, spec)
+	if err != nil {
+		t.Fatalf("run %v: %v", argv, err)
+	}
+	said, err := io.ReadAll(proc.Stdout())
+	if err != nil {
+		t.Fatalf("read what the guest said: %v", err)
+	}
+	if err := proc.Wait(); err != nil {
+		t.Fatalf("the command failed: %v: %s", err, proc.Stderr())
+	}
+	return strings.TrimSpace(string(said))
+}
+
+// guestName is what the runtime calls this sandbox, which an attach and an operator own command need.
+func guestName(t *testing.T, box sandbox.Sandbox) string {
+	t.Helper()
+	named, says := box.(sandbox.Named)
+	if !says {
+		t.Fatalf("%T does not say what the runtime calls it", box)
+	}
+	return named.Name()
 }
 
 // tartLog makes the stand in write down every command it is given, and answers with them. It is how

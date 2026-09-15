@@ -404,7 +404,10 @@ func renamedSetting(now string, read func(string) string) (value, notice string)
 // A system that tells a session nothing is not warned about. That system hands out no credential either,
 // so the two halves agree.
 func unreachableSystem(kind, reachable, sessionNetwork string) (string, bool) {
-	if kind != sandbox.KindDocker || reachable == "" || sessionNetwork != "" {
+	// Every kind but the host one puts a session in a container, and a container reaches the address
+	// through a network or not at all. So the question is asked of the backend that does not isolate
+	// rather than of each backend that does, and a runtime added later is covered the day it lands.
+	if kind == sandbox.KindLocal || reachable == "" || sessionNetwork != "" {
 		return "", false
 	}
 	return "QC_SANDBOX_CONTROL_PLANE is set and QC_SESSION_NETWORK is not: a session running a job " +
