@@ -3,6 +3,8 @@ package main
 import (
 	"strings"
 	"testing"
+
+	"github.com/atlantic-blue/quay-krewe/internal/sandbox"
 )
 
 func TestAConfiguredAllowlistIsSaidToBeIgnored(t *testing.T) {
@@ -35,14 +37,19 @@ func TestNothingIsSaidWhenTheAllowlistWasNeverSet(t *testing.T) {
 // reaches that address; and the session reports "produced zero addresses", which reads as the system
 // being down. Only this process can see both halves at once.
 func TestASystemThatHandsOutAnAddressNoSessionCanResolveSaysSo(t *testing.T) {
-	notice, mismatched := unreachableSystem("docker", "controlplane:50051", "")
+	// Every backend that puts a session in a container, because the fault is the container joining no
+	// network rather than anything Docker does. A backend added later and left out here would ship the
+	// same silence this notice exists to end.
+	for _, kind := range []string{sandbox.KindDocker, sandbox.KindApple} {
+		notice, mismatched := unreachableSystem(kind, "controlplane:50051", "")
 
-	if !mismatched {
-		t.Fatal("a system handing out an address its sessions cannot resolve said nothing about it")
-	}
-	for _, want := range []string{"QC_SANDBOX_CONTROL_PLANE", "QC_SESSION_NETWORK", "resolve"} {
-		if !strings.Contains(notice, want) {
-			t.Errorf("the notice does not mention %q: %s", want, notice)
+		if !mismatched {
+			t.Fatalf("a %s system handing out an address its sessions cannot resolve said nothing about it", kind)
+		}
+		for _, want := range []string{"QC_SANDBOX_CONTROL_PLANE", "QC_SESSION_NETWORK", "resolve"} {
+			if !strings.Contains(notice, want) {
+				t.Errorf("the notice does not mention %q: %s", want, notice)
+			}
 		}
 	}
 }
@@ -68,6 +75,11 @@ func TestNothingIsSaidWhenTheTwoHalvesAgree(t *testing.T) {
 		{
 			name: "sessions on the host", kind: "local", reachable: "controlplane:50051",
 			because: "there is no container and no network to put one on",
+		},
+		{
+			name: "apple with both set", kind: "apple", reachable: "controlplane:50051",
+			sessionNetwork: "quaycrew_sessions",
+			because:        "the address is handed out and the sandbox can reach it",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
