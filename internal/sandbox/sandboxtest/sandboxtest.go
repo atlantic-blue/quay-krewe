@@ -31,6 +31,12 @@ type Open func(t *testing.T, storage sandbox.Storage) sandbox.Provider
 // would prove nothing about Stranded.
 func sessionID(n int) string { return fmt.Sprintf("%024x", 0xc0ffee00+n) }
 
+// config is the session one case runs as. A session always belongs to a workspace and to a project,
+// and a provider keeping state per level needs both told to it, so no case leaves them out.
+func config(id string) sandbox.Config {
+	return sandbox.Config{ID: id, Workspace: "ws" + id, Project: "prj" + id}
+}
+
 // RunConformance runs the whole provider contract against one backend.
 func RunConformance(t *testing.T, open Open) {
 	t.Helper()
@@ -88,7 +94,7 @@ func say(ctx context.Context, t *testing.T, box sandbox.Sandbox, argv ...string)
 
 func runsACommand(t *testing.T, provider sandbox.Provider, id string) {
 	ctx := deadline(t)
-	box, err := provider.Create(ctx, sandbox.Config{ID: id})
+	box, err := provider.Create(ctx, config(id))
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -105,7 +111,7 @@ func runsACommand(t *testing.T, provider sandbox.Provider, id string) {
 // the container was replaced.
 func keepsStateAcrossContainers(t *testing.T, provider sandbox.Provider, id string) {
 	ctx := deadline(t)
-	cfg := sandbox.Config{ID: id, Workspace: "ws" + id, Project: "prj" + id}
+	cfg := config(id)
 
 	first, err := provider.Create(ctx, cfg)
 	if err != nil {
@@ -133,7 +139,7 @@ func keepsStateAcrossContainers(t *testing.T, provider sandbox.Provider, id stri
 // and the containers are not, so after a restart the map is empty while every container runs on.
 func isFoundAgain(t *testing.T, provider sandbox.Provider, id string) {
 	ctx := deadline(t)
-	if _, err := provider.Create(ctx, sandbox.Config{ID: id}); err != nil {
+	if _, err := provider.Create(ctx, config(id)); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 
@@ -160,7 +166,7 @@ func isFoundAgain(t *testing.T, provider sandbox.Provider, id string) {
 
 func listsWhatItHolds(t *testing.T, provider sandbox.Provider, id string) {
 	ctx := deadline(t)
-	if _, err := provider.Create(ctx, sandbox.Config{ID: id}); err != nil {
+	if _, err := provider.Create(ctx, config(id)); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 
@@ -197,7 +203,7 @@ func removingWhatIsGoneIsSuccess(t *testing.T, provider sandbox.Provider, id str
 // rather than guessed.
 func nobodyIsInAFreshSandbox(t *testing.T, provider sandbox.Provider, id string) {
 	ctx := deadline(t)
-	if _, err := provider.Create(ctx, sandbox.Config{ID: id}); err != nil {
+	if _, err := provider.Create(ctx, config(id)); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 
