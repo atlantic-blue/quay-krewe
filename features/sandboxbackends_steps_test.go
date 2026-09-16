@@ -77,6 +77,7 @@ func initializeSandboxBackendSteps(sc *godog.ScenarioContext) {
 		wanted := map[string]string{
 			"Docker":                "sandbox.DockerProvider",
 			"Apple container":       "sandbox.AppleProvider",
+			"containerd":            "sandbox.ContainerdProvider",
 			"macOS virtual machine": "*sandbox.MacOSProvider",
 			"host":                  "sandbox.LocalProvider",
 		}[named]

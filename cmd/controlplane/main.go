@@ -122,7 +122,9 @@ func main() {
 		os.Exit(1)
 	}
 	sandboxKind, _ := sandbox.ResolveKind(os.Getenv("QC_SANDBOX"))
-	if sandboxKind == sandbox.KindDocker && strings.TrimSpace(os.Getenv("QC_SANDBOX_MEMORY")) == "" {
+	// Every kind but the host one holds a session in a container, and a container with no limit
+	// advertises the whole machine to what runs in it, so the warning is about all of them.
+	if sandboxKind != sandbox.KindLocal && strings.TrimSpace(os.Getenv("QC_SANDBOX_MEMORY")) == "" {
 		logger.Warn("no QC_SANDBOX_MEMORY set: a session sizes node, Go, jest and webpack against the " +
 			"whole machine, and the kernel kills them against what the rest of it has left")
 	}

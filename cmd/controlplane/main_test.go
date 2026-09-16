@@ -40,7 +40,7 @@ func TestASystemThatHandsOutAnAddressNoSessionCanResolveSaysSo(t *testing.T) {
 	// Every backend that puts a session in a container, because the fault is the container joining no
 	// network rather than anything Docker does. A backend added later and left out here would ship the
 	// same silence this notice exists to end.
-	for _, kind := range []string{sandbox.KindDocker, sandbox.KindApple} {
+	for _, kind := range []string{sandbox.KindDocker, sandbox.KindApple, sandbox.KindContainerd} {
 		notice, mismatched := unreachableSystem(kind, "controlplane:50051", "")
 
 		if !mismatched {
@@ -80,6 +80,11 @@ func TestNothingIsSaidWhenTheTwoHalvesAgree(t *testing.T) {
 			name: "apple with both set", kind: "apple", reachable: "controlplane:50051",
 			sessionNetwork: "quaycrew_sessions",
 			because:        "the address is handed out and the sandbox can reach it",
+		},
+		{
+			name: "containerd with both set", kind: "containerd",
+			reachable: "controlplane:50051", sessionNetwork: "quaycrew_sessions",
+			because: "a containerd session joins the network the docker one joins",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

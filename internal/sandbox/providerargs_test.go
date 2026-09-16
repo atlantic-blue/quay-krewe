@@ -19,6 +19,10 @@ func runUnderEveryBackend(opts Options) map[string]func(string, Config, []Mount)
 	return map[string]func(string, Config, []Mount) []string{
 		KindDocker: DockerProvider(opts).runArgs,
 		KindApple:  AppleProvider(opts).runArgs,
+		// containerd is given the Docker backend's own arguments, because nerdctl takes Docker's
+		// flags. The rules below are asked of it anyway, so the day that stops being true they fail
+		// here rather than on somebody's machine.
+		KindContainerd: ContainerdProvider{Options: opts}.compatible().runArgs,
 	}
 }
 
