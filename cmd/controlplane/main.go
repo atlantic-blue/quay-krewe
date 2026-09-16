@@ -122,7 +122,9 @@ func main() {
 		os.Exit(1)
 	}
 	sandboxKind, _ := sandbox.ResolveKind(os.Getenv("QC_SANDBOX"))
-	if inAContainer(sandboxKind) && strings.TrimSpace(os.Getenv("QC_SANDBOX_MEMORY")) == "" {
+	// Every kind but the host one holds a session in a container, and a container with no limit
+	// advertises the whole machine to what runs in it, so the warning is about all of them.
+	if sandboxKind != sandbox.KindLocal && strings.TrimSpace(os.Getenv("QC_SANDBOX_MEMORY")) == "" {
 		logger.Warn("no QC_SANDBOX_MEMORY set: a session sizes node, Go, jest and webpack against the " +
 			"whole machine, and the kernel kills them against what the rest of it has left")
 	}
@@ -393,13 +395,6 @@ func renamedSetting(now string, read func(string) string) (value, notice string)
 	return value, ""
 }
 
-// inAContainer is a kind that runs each session in a container of a runtime, on a network of that
-// runtime. Docker and containerd both do, and they are given the same container by the same code, so
-// what is said about one is said about the other. A session on the host is in neither.
-func inAContainer(kind string) bool {
-	return kind == sandbox.KindDocker || kind == sandbox.KindContainerd
-}
-
 // unreachableSystem says what to tell an operator whose system hands out an address no session can
 // resolve, and whether there is anything to say.
 //
@@ -411,7 +406,10 @@ func inAContainer(kind string) bool {
 // A system that tells a session nothing is not warned about. That system hands out no credential either,
 // so the two halves agree.
 func unreachableSystem(kind, reachable, sessionNetwork string) (string, bool) {
-	if !inAContainer(kind) || reachable == "" || sessionNetwork != "" {
+	// Every kind but the host one puts a session in a container, and a container reaches the address
+	// through a network or not at all. So the question is asked of the backend that does not isolate
+	// rather than of each backend that does, and a runtime added later is covered the day it lands.
+	if kind == sandbox.KindLocal || reachable == "" || sessionNetwork != "" {
 		return "", false
 	}
 	return "QC_SANDBOX_CONTROL_PLANE is set and QC_SESSION_NETWORK is not: a session running a job " +

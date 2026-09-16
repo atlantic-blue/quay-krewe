@@ -140,3 +140,96 @@ func TestOptionsCarryBothNetworksThroughToTheBackend(t *testing.T) {
 		t.Fatalf("a session joins %q, want the network it was configured with", docker.SessionNetwork)
 	}
 }
+
+// TestResolveKindNamesTheBackendAndRefusesAnythingElse.
+//
+// Anything that reports the configuration reads the answer from here, so what an operator is told
+// cannot drift from what the system built. A kind nobody knows is refused rather than filled in: a
+// system that fell back to the default would isolate every session in something the operator did not
+// choose, and would report that choice as theirs.
+func TestResolveKindNamesTheBackendAndRefusesAnythingElse(t *testing.T) {
+	for kind, want := range map[string]string{
+		"":                     sandbox.KindDocker,
+		sandbox.KindDocker:     sandbox.KindDocker,
+		sandbox.KindLocal:      sandbox.KindLocal,
+		sandbox.KindApple:      sandbox.KindApple,
+		sandbox.KindContainerd: sandbox.KindContainerd,
+	} {
+		got, err := sandbox.ResolveKind(kind)
+		if err != nil {
+			t.Errorf("ResolveKind(%q): %v", kind, err)
+			continue
+		}
+		if got != want {
+			t.Errorf("ResolveKind(%q) = %q, want %q", kind, got, want)
+		}
+	}
+
+	got, err := sandbox.ResolveKind("podman")
+	if err == nil {
+		t.Fatal("a kind the system cannot build was accepted")
+	}
+	if got != "" {
+		t.Errorf("an unknown kind resolved to %q, so a system would run a backend nobody asked for", got)
+	}
+	if !strings.Contains(err.Error(), "podman") {
+		t.Errorf("the refusal does not name the word it refused: %v", err)
+	}
+}
+
+// TestNewProviderBuildsTheAppleBackendWithWhatItWasConfiguredWith. The provider is built by converting
+// the options across, so a field added to one backend and not the other silently does nothing. The two
+// networks and the memory are here because a session that reaches nothing, or that is given a figure
+// nobody set, looks exactly like a working session until it runs.
+func TestNewProviderBuildsTheAppleBackendWithWhatItWasConfiguredWith(t *testing.T) {
+	provider, err := sandbox.NewProvider(sandbox.KindApple, sandbox.Options{
+		Image: "img", Network: "quaycrew_default", SessionNetwork: "quaycrew_sessions", Memory: "4g",
+	})
+	if err != nil {
+		t.Fatalf("NewProvider: %v", err)
+	}
+	apple, isApple := provider.(sandbox.AppleProvider)
+	if !isApple {
+		t.Fatalf("NewProvider gave %T, want the Apple container backend", provider)
+	}
+	if apple.Image != "img" {
+		t.Errorf("the backend runs %q, want the image it was configured with", apple.Image)
+	}
+	if apple.Network != "quaycrew_default" {
+		t.Errorf("the driver joins %q, want the network it was configured with", apple.Network)
+	}
+	if apple.SessionNetwork != "quaycrew_sessions" {
+		t.Errorf("a session joins %q, want the network it was configured with", apple.SessionNetwork)
+	}
+	if apple.Memory != "4g" {
+		t.Errorf("a session may take %q, want the figure it was configured with", apple.Memory)
+	}
+}
+
+// TestNewProviderBuildsTheContainerdBackendWithWhatItWasConfiguredWith. The containerd backend takes
+// the options as a field rather than by conversion, so a field that arrived empty is a session on no
+// network, or a session with no memory limit, and neither says anything at the time.
+func TestNewProviderBuildsTheContainerdBackendWithWhatItWasConfiguredWith(t *testing.T) {
+	provider, err := sandbox.NewProvider(sandbox.KindContainerd, sandbox.Options{
+		Image: "img", Network: "quaycrew_default", SessionNetwork: "quaycrew_sessions", Memory: "4g",
+	})
+	if err != nil {
+		t.Fatalf("NewProvider: %v", err)
+	}
+	backend, isContainerd := provider.(sandbox.ContainerdProvider)
+	if !isContainerd {
+		t.Fatalf("NewProvider gave %T, want the containerd backend", provider)
+	}
+	if backend.Image != "img" {
+		t.Errorf("the backend runs %q, want the image it was configured with", backend.Image)
+	}
+	if backend.Network != "quaycrew_default" {
+		t.Errorf("the driver joins %q, want the network it was configured with", backend.Network)
+	}
+	if backend.SessionNetwork != "quaycrew_sessions" {
+		t.Errorf("a session joins %q, want the network it was configured with", backend.SessionNetwork)
+	}
+	if backend.Memory != "4g" {
+		t.Errorf("a session may take %q, want the figure it was configured with", backend.Memory)
+	}
+}

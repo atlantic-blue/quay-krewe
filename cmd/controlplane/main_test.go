@@ -37,30 +37,19 @@ func TestNothingIsSaidWhenTheAllowlistWasNeverSet(t *testing.T) {
 // reaches that address; and the session reports "produced zero addresses", which reads as the system
 // being down. Only this process can see both halves at once.
 func TestASystemThatHandsOutAnAddressNoSessionCanResolveSaysSo(t *testing.T) {
-	notice, mismatched := unreachableSystem("docker", "controlplane:50051", "")
-
-	if !mismatched {
-		t.Fatal("a system handing out an address its sessions cannot resolve said nothing about it")
-	}
-	for _, want := range []string{"QC_SANDBOX_CONTROL_PLANE", "QC_SESSION_NETWORK", "resolve"} {
-		if !strings.Contains(notice, want) {
-			t.Errorf("the notice does not mention %q: %s", want, notice)
-		}
-	}
-}
-
-// TestTheNoticeCoversEveryRuntimeThatPutsASessionInAContainer. A session on containerd is created
-// with the same arguments the Docker one is, so it reaches the system through a network in exactly
-// the same way, and a system that warned about one runtime and not the other would leave the
-// operator of the quieter one reading "produced zero addresses" as the system being down.
-func TestTheNoticeCoversEveryRuntimeThatPutsASessionInAContainer(t *testing.T) {
-	for _, kind := range []string{sandbox.KindDocker, sandbox.KindContainerd} {
+	// Every backend that puts a session in a container, because the fault is the container joining no
+	// network rather than anything Docker does. A backend added later and left out here would ship the
+	// same silence this notice exists to end.
+	for _, kind := range []string{sandbox.KindDocker, sandbox.KindApple, sandbox.KindContainerd} {
 		notice, mismatched := unreachableSystem(kind, "controlplane:50051", "")
+
 		if !mismatched {
-			t.Fatalf("a %s system handing out an address its sessions cannot resolve said nothing", kind)
+			t.Fatalf("a %s system handing out an address its sessions cannot resolve said nothing about it", kind)
 		}
-		if !strings.Contains(notice, "QC_SESSION_NETWORK") {
-			t.Errorf("the notice does not say what to set: %s", notice)
+		for _, want := range []string{"QC_SANDBOX_CONTROL_PLANE", "QC_SESSION_NETWORK", "resolve"} {
+			if !strings.Contains(notice, want) {
+				t.Errorf("the notice does not mention %q: %s", want, notice)
+			}
 		}
 	}
 }
@@ -86,6 +75,11 @@ func TestNothingIsSaidWhenTheTwoHalvesAgree(t *testing.T) {
 		{
 			name: "sessions on the host", kind: "local", reachable: "controlplane:50051",
 			because: "there is no container and no network to put one on",
+		},
+		{
+			name: "apple with both set", kind: "apple", reachable: "controlplane:50051",
+			sessionNetwork: "quaycrew_sessions",
+			because:        "the address is handed out and the sandbox can reach it",
 		},
 		{
 			name: "containerd with both set", kind: "containerd",
