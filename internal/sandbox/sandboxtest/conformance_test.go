@@ -68,3 +68,19 @@ func TestEveryConfigurationTheContractCreatesIsOneAProviderWithStorageAccepts(t 
 		}
 	}
 }
+
+// TestAnExceptionNamesACaseTheContractHolds.
+//
+// An exception is how a backend says a case belongs to a difference in its runtime rather than to a
+// defect. A word that names no case would except nothing, silently, and a case renamed underneath one
+// would take the exception with it. So the run fails on a word the contract does not know.
+func TestAnExceptionNamesACaseTheContractHolds(t *testing.T) {
+	contract := cases()
+	for named := range map[string]bool{
+		"what a session wrote outlives its container": true,
+	} {
+		if _, isCase := contract[named]; !isCase {
+			t.Errorf("a backend excepts %q, and the contract holds no case by that name", named)
+		}
+	}
+}

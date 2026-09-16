@@ -75,9 +75,10 @@ func initializeSandboxBackendSteps(sc *godog.ScenarioContext) {
 			return fmt.Errorf("the system built nothing: %w", b.err)
 		}
 		wanted := map[string]string{
-			"Docker":          "sandbox.DockerProvider",
-			"Apple container": "sandbox.AppleProvider",
-			"host":            "sandbox.LocalProvider",
+			"Docker":                "sandbox.DockerProvider",
+			"Apple container":       "sandbox.AppleProvider",
+			"macOS virtual machine": "*sandbox.MacOSProvider",
+			"host":                  "sandbox.LocalProvider",
 		}[named]
 		if got := fmt.Sprintf("%T", b.built); got != wanted {
 			return fmt.Errorf("the system built %s, want the %s backend", got, named)

@@ -153,6 +153,7 @@ func TestResolveKindNamesTheBackendAndRefusesAnythingElse(t *testing.T) {
 		sandbox.KindDocker: sandbox.KindDocker,
 		sandbox.KindLocal:  sandbox.KindLocal,
 		sandbox.KindApple:  sandbox.KindApple,
+		sandbox.KindMacOS:  sandbox.KindMacOS,
 	} {
 		got, err := sandbox.ResolveKind(kind)
 		if err != nil {

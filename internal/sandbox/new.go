@@ -36,6 +36,8 @@ const (
 	// machine per session and needs no Docker Desktop. It runs Linux guests, so it is a different
 	// runtime for the same sandbox rather than a macOS one.
 	KindApple = "apple"
+	// KindMacOS gives each session a macOS virtual machine, so it can build a darwin application.
+	KindMacOS = "macos"
 )
 
 // ResolveKind names the backend a kind selects, filling in the default for an empty one. Anything
@@ -49,14 +51,16 @@ func ResolveKind(kind string) (string, error) {
 		return KindLocal, nil
 	case KindApple:
 		return KindApple, nil
+	case KindMacOS:
+		return KindMacOS, nil
 	default:
 		return "", fmt.Errorf("sandbox: unknown provider %q", kind)
 	}
 }
 
 // NewProvider builds a Provider by kind. The default (empty or "docker") isolates each session in a
-// container; "apple" isolates it in a container under Apple container; "local" is the short term host
-// backend. Other kinds are an error.
+// container; "apple" isolates it in a container under Apple container; "macos" gives it a macOS
+// virtual machine; "local" is the short term host backend. Other kinds are an error.
 func NewProvider(kind string, opts Options) (Provider, error) {
 	resolved, err := ResolveKind(kind)
 	if err != nil {
@@ -67,6 +71,9 @@ func NewProvider(kind string, opts Options) (Provider, error) {
 	}
 	if resolved == KindApple {
 		return AppleProvider(opts), nil
+	}
+	if resolved == KindMacOS {
+		return NewMacOSProvider(opts), nil
 	}
 	// The Docker backend is configured by exactly these options today, so it converts straight
 	// across. A backend that needs something else gets its own fields here.
