@@ -43,6 +43,14 @@ type Backend struct {
 	// Start starts a container under a name the provider can no longer write, which is how the case
 	// for a sandbox from before the rename sets its state up.
 	Start func(ctx context.Context, name string) error
+	// Except names a case this runtime cannot keep, against the reason it cannot. It is for a
+	// difference in the runtime itself and never for a defect: a backend whose guest mounts a host
+	// directory somewhere of its own choosing cannot be held to where a bind mount puts it.
+	//
+	// The reason is read out loud when the suite runs, so a case nobody ran is a line in the log
+	// rather than a silence. A word here that names no case fails the run, because a case renamed
+	// underneath an exception would take the exception with it and nobody would see it go.
+	Except map[string]string
 }
 
 // RunConformance holds one backend to the whole contract.
@@ -58,8 +66,23 @@ func RunConformance(t *testing.T, backend Backend) {
 	if len(contract) == 0 {
 		t.Fatalf("the %s backend was held to no cases at all, so this run proved nothing", backend.Kind)
 	}
+	for excepted := range backend.Except {
+		if _, isCase := contract[excepted]; !isCase {
+			t.Fatalf("the %s backend excepts %q, and the contract holds no case by that name",
+				backend.Kind, excepted)
+		}
+	}
+	if len(backend.Except) >= len(contract) {
+		t.Fatalf("the %s backend excepts every case it was given, so this run proved nothing",
+			backend.Kind)
+	}
 	for name, run := range contract {
-		t.Run(name, func(t *testing.T) { run(t, backend) })
+		t.Run(name, func(t *testing.T) {
+			if why, excepted := backend.Except[name]; excepted {
+				t.Skipf("the %s runtime cannot keep this one: %s", backend.Kind, why)
+			}
+			run(t, backend)
+		})
 	}
 }
 

@@ -103,7 +103,7 @@ against the other (per the package doc comment in `store.go`).
 
 ## Sandbox execution
 
-Two `sandbox.Provider` implementations, selected by `QC_SANDBOX` (`internal/sandbox/new.go`):
+The `sandbox.Provider` implementations, selected by `QC_SANDBOX` (`internal/sandbox/new.go`):
 - **`docker`** (default) - `internal/sandbox/docker.go`. Each session gets its own long lived
   container, created with `docker run --detach`, execs run with `docker exec`. The control plane talks
   to the host's Docker daemon by shelling out to the `docker` command line client (not the Docker API
@@ -111,6 +111,13 @@ Two `sandbox.Provider` implementations, selected by `QC_SANDBOX` (`internal/sand
   from `docker:28-cli` and mounts `/var/run/docker.sock`.
 - **`local`** - `internal/sandbox/local.go`. Runs directly on the host with no isolation, documented
   in its own package comment as "a stopgap, not a sandbox."
+- **`macos`**: `internal/sandbox/macos.go`. Each session gets its own macOS virtual machine, so a
+  session can build a darwin application. It shells out to `tart`, which wraps Apple's Virtualization
+  framework, and it needs Apple hardware. Apple licenses two macOS instances per host, so guests are
+  pooled rather than handed out per session (`internal/sandbox/macospool.go`).
+
+The backends that isolate a session are held to one contract by the conformance suite in
+`internal/sandbox/sandboxtest/`, the same arrangement the two stores have.
 
 ## Build and task running
 
