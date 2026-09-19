@@ -115,10 +115,17 @@ func initializeWizardSteps(sc *godog.ScenarioContext) {
 	})
 
 	// The wizard is finished the moment the system answers, and the refreshed list is what says so.
-	// The console opens on the workspaces, so what the operator sees on that list is the workspace the
-	// wizard made; the session under it is proved from the control plane.
+	// The console opens on the panel, which says nothing about one workspace, so the listing read here
+	// is the workspaces view, typed into the same console the wizard was answered on rather than a
+	// fresh one. The session under it is proved from the control plane.
 	sc.Step(`^the console lists what the wizard made$`, func(ctx context.Context) error {
 		w, c := worldFrom(ctx), consoleFrom(ctx)
+		if err := pressKeys(c, ":workspaces"); err != nil {
+			return err
+		}
+		if err := c.press(tea.KeyMsg{Type: tea.KeyEnter}); err != nil {
+			return err
+		}
 		// Asked of the control plane rather than of the world, because this exec was dispatched by
 		// the console rather than by a step.
 		listed, err := w.client.ListSessions(ctx, &quaycrewv1.ListSessionsRequest{})

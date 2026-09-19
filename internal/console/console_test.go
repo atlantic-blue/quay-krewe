@@ -107,6 +107,14 @@ func (f *fakeClient) ListProjects(_ context.Context, req *quaycrewv1.ListProject
 // The three calls the projects view makes to count a project's path, its trust and its flight. This
 // double is a system nobody has designed: no feature, no step, and the design every project that
 // exists answers with before anybody writes one.
+// GetUsage is what the system has cost. The header reads it, and so does the panel the console opens
+// on, once a draw.
+func (f *fakeClient) GetUsage(context.Context, *quaycrewv1.GetUsageRequest, ...grpc.CallOption) (*quaycrewv1.GetUsageResponse, error) {
+	return &quaycrewv1.GetUsageResponse{
+		Total: &quaycrewv1.Usage{Input: 10, Output: 5}, Sessions: int64(len(f.sessions)),
+	}, nil
+}
+
 func (f *fakeClient) ListFeatures(context.Context, *quaycrewv1.ListFeaturesRequest, ...grpc.CallOption) (*quaycrewv1.ListFeaturesResponse, error) {
 	if f.listErr != nil {
 		return nil, f.listErr

@@ -49,6 +49,12 @@ func (t *treeClient) ListSteps(context.Context, *quaycrewv1.ListStepsRequest, ..
 	return &quaycrewv1.ListStepsResponse{}, nil
 }
 
+// GetUsage is what the system has cost, which the panel the console opens on reads once a draw. A
+// double that leaves it out is a nil call on an embedded interface, which panics the whole package.
+func (t *treeClient) GetUsage(context.Context, *quaycrewv1.GetUsageRequest, ...grpc.CallOption) (*quaycrewv1.GetUsageResponse, error) {
+	return &quaycrewv1.GetUsageResponse{Total: &quaycrewv1.Usage{}}, nil
+}
+
 func (t *treeClient) GetDesign(_ context.Context, req *quaycrewv1.GetDesignRequest, _ ...grpc.CallOption) (*quaycrewv1.GetDesignResponse, error) {
 	return &quaycrewv1.GetDesignResponse{Design: bornDesign(req.GetProject())}, nil
 }
@@ -99,15 +105,19 @@ func aSystemWithOneOfEverything() *treeClient {
 	}
 }
 
-// openedOnTheTree is the console as an operator meets it: the resources the tree is made of, opened
-// on whichever one the tool opens on, with the first listing already landed.
+// openedOnTheTree is the console standing at the top of the tree: every resource registered, opened
+// on the workspaces, with the first listing already landed.
+//
+// The tool opens on the panel now, which is a view with nothing under it, so the walk down starts
+// where the walk down can start. Reaching this view is one word in the command bar and is covered in
+// dashboard_test.go.
 func openedOnTheTree(t *testing.T, client quaycrewv1.ControlPlaneServiceClient) Model {
 	t.Helper()
 	registry, err := NewDefaultRegistry(client)
 	if err != nil {
 		t.Fatalf("NewDefaultRegistry: %v", err)
 	}
-	model, err := New(registry, Default, nil)
+	model, err := New(registry, "workspaces", nil)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

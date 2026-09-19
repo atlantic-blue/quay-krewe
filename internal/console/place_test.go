@@ -70,14 +70,27 @@ func step(t *testing.T, model Model, key tea.KeyMsg) Model {
 }
 
 // openedRemembering is the console with somewhere to keep its address, opened the way the runtime
-// opens it: the first listing landed, and anything it was told to resume to walked back down.
+// opens it: on the view the tool opens on, the first listing landed, and anything it was told to
+// resume to walked back down.
 func openedRemembering(t *testing.T, client *treeClient, held *heldPlace, resume Place) Model {
+	t.Helper()
+	return openedRememberingOn(t, client, held, resume, Default)
+}
+
+// openedAtTheTreeRemembering is the same console standing on the workspaces, which is where a walk
+// down the tree starts: the tool opens on the panel, and a panel has nothing under it to drill into.
+func openedAtTheTreeRemembering(t *testing.T, client *treeClient, held *heldPlace, resume Place) Model {
+	t.Helper()
+	return openedRememberingOn(t, client, held, resume, "workspaces")
+}
+
+func openedRememberingOn(t *testing.T, client *treeClient, held *heldPlace, resume Place, view string) Model {
 	t.Helper()
 	registry, err := NewDefaultRegistry(client)
 	if err != nil {
 		t.Fatalf("NewDefaultRegistry: %v", err)
 	}
-	model, err := New(registry, Default, nil)
+	model, err := New(registry, view, nil)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -93,7 +106,7 @@ func TestTheConsoleOpensWhereItWasLeft(t *testing.T) {
 	client := aSystemWithOneOfEverything()
 	held := &heldPlace{}
 
-	first := openedRemembering(t, client, held, Place{})
+	first := openedAtTheTreeRemembering(t, client, held, Place{})
 	first = step(t, first, enter())
 	first = step(t, first, enter())
 	if got := first.Position(); got != "acme/house-bills" {
@@ -108,14 +121,14 @@ func TestTheConsoleOpensWhereItWasLeft(t *testing.T) {
 }
 
 // Opening at the top is the default, so a console that has never been opened is not a console that
-// refuses to open.
+// refuses to open. The top is the panel, which is scoped to nothing and has nothing above it.
 func TestAConsoleWithNothingRememberedOpensAtTheTop(t *testing.T) {
 	model := openedRemembering(t, aSystemWithOneOfEverything(), &heldPlace{}, Place{})
 
 	if got := model.Position(); got != "" {
 		t.Fatalf("a console with nothing remembered opened at %q", got)
 	}
-	screenSays(t, model, "<workspaces>", "acme")
+	screenSays(t, model, "<dashboard>", "what needs you")
 	// Nothing to go back to, so nothing is offered.
 	if strings.Contains(model.View(), "esc to go back") {
 		t.Fatalf("the top of the tree offers a way back:\n%s", model.View())
@@ -128,7 +141,7 @@ func TestTheWayBackWorksFromAPlaceTheConsoleResumedInto(t *testing.T) {
 	client := aSystemWithOneOfEverything()
 	held := &heldPlace{}
 
-	deep := openedRemembering(t, client, held, Place{})
+	deep := openedAtTheTreeRemembering(t, client, held, Place{})
 	deep = step(t, step(t, deep, enter()), enter())
 	if got := deep.Position(); got != "acme/house-bills" {
 		t.Fatalf("the first console ended at %q", got)
@@ -152,7 +165,7 @@ func TestAPlaceWhoseLevelIsGoneStopsAtTheLastOneStillThere(t *testing.T) {
 	client := aSystemWithOneOfEverything()
 	held := &heldPlace{}
 
-	deep := openedRemembering(t, client, held, Place{})
+	deep := openedAtTheTreeRemembering(t, client, held, Place{})
 	deep = step(t, deep, enter())
 	// The second drill is what puts the project on the place, which is the level this removes.
 	if deep = step(t, deep, enter()); deep.Position() != "acme/house-bills" {
@@ -178,7 +191,7 @@ func TestAPlaceNamingAViewThatIsGoneOpensAtTheTop(t *testing.T) {
 	if got := model.ViewName(); got != Default {
 		t.Fatalf("the console opened on %q, want %q", got, Default)
 	}
-	screenSays(t, model, "<workspaces>")
+	screenSays(t, model, "<dashboard>")
 }
 
 // Drilling from one workspace into another's projects leaves the view alone and moves the operator, so
@@ -194,7 +207,7 @@ func TestMovingWithinOneViewIsStillWrittenDown(t *testing.T) {
 	})
 	held := &heldPlace{}
 
-	model := openedRemembering(t, client, held, Place{})
+	model := openedAtTheTreeRemembering(t, client, held, Place{})
 	model = step(t, model, enter())
 	first := held.where
 
@@ -214,7 +227,7 @@ func TestMovingWithinOneViewIsStillWrittenDown(t *testing.T) {
 // over a console that works is worse than losing where somebody was.
 func TestAConsoleThatCannotWriteItsPlaceStillWorks(t *testing.T) {
 	held := &heldPlace{refuses: true}
-	model := openedRemembering(t, aSystemWithOneOfEverything(), held, Place{})
+	model := openedAtTheTreeRemembering(t, aSystemWithOneOfEverything(), held, Place{})
 
 	model = step(t, model, enter())
 	if held.writes == 0 {
