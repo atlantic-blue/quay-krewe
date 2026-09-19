@@ -34,6 +34,9 @@ type consoleWorld struct {
 	terminalErr error
 	// contextFile is a file a scenario wrote for the guided setup.s context stage to read.
 	contextFile string
+	// panelLine is the line of the panel a scenario last found, so the step that reads its address
+	// reads the one the step before it named.
+	panelLine string
 	// panes is the panel the console is in, and besideEach is the conversation that was open beside it
 	// after each key, which is what the operator was looking at each time.
 	panes      *panelPanes
@@ -428,6 +431,62 @@ func initializeConsoleSteps(sc *godog.ScenarioContext) {
 		}
 		if resource, found := registry.Resolve(typed); found {
 			return fmt.Errorf("typing %q still opens %q, and that word is gone", typed, resource.Name)
+		}
+		return nil
+	})
+
+	// The panel's frames are drawn one after another, so the frame a line belongs to is the title
+	// above it. A scenario names the frame by that title rather than by a row number, because the
+	// frames above it grow as each widget is built.
+	sc.Step(`^the panel says (\d+) "([^"]*)" under "([^"]*)"$`,
+		func(ctx context.Context, count int, noun, frame string) error {
+			c := consoleFrom(ctx)
+			counted := fmt.Sprintf("%d %s", count, noun)
+			for _, line := range c.panelBody(frame) {
+				if line == counted || strings.HasPrefix(line, counted+" ") {
+					c.panelLine = line
+					return nil
+				}
+			}
+			return fmt.Errorf("the %q frame says %q, and none of it counts %q",
+				frame, c.panelBody(frame), counted)
+		})
+
+	// The address is the thing the operator types next, so the scenario builds the one they would type
+	// and holds the line to it. A shortened identifier, which is what every other listing prints,
+	// fails here.
+	sc.Step(`^that line carries the address of the session$`, func(ctx context.Context) error {
+		w, c := worldFrom(ctx), consoleFrom(ctx)
+		failed, err := w.theSessionThatFailed(ctx)
+		if err != nil {
+			return err
+		}
+		want := strings.Join([]string{w.workspaceName, w.projectName, failed.GetHandle()}, "/")
+		if got := addressOnPanelLine(c.panelLine); got != want {
+			return fmt.Errorf("the line %q carries the address %q, want %q", c.panelLine, got, want)
+		}
+		return nil
+	})
+
+	sc.Step(`^that line carries the address of the project and step "([^"]*)"$`,
+		func(ctx context.Context, step string) error {
+			w, c := worldFrom(ctx), consoleFrom(ctx)
+			want := w.workspaceName + "/" + w.projectName + " " + step
+			if got := addressOnPanelLine(c.panelLine); got != want {
+				return fmt.Errorf("the line %q carries %q, want %q", c.panelLine, got, want)
+			}
+			return nil
+		})
+
+	// One line, and it says nothing waits. Three counts of zero would be three lines, so a frame that
+	// drew them fails on the count before anything reads the words.
+	sc.Step(`^the panel says nothing waits on the operator$`, func(ctx context.Context) error {
+		said := consoleFrom(ctx).panelBody("what needs you")
+		if len(said) != 1 {
+			return fmt.Errorf("the what needs you frame says %q, want one line", said)
+		}
+		if !strings.Contains(said[0], "nothing waits") {
+			return fmt.Errorf("the what needs you frame says %q, want it to say nothing waits", said[0])
 		}
 		return nil
 	})
@@ -1034,4 +1093,58 @@ func projectCell(c *consoleWorld, column string) (string, error) {
 			column, at, len(row.Cells))
 	}
 	return row.Cells[at], nil
+}
+
+// panelBody is what one frame of the panel says: every row from that frame's title down to the next
+// one. The title sits in the widget column and a body row leaves that column empty.
+func (c *consoleWorld) panelBody(title string) []string {
+	said := make([]string, 0, len(c.rows))
+	inside := false
+	for _, row := range c.rows {
+		if len(row.Cells) < 2 {
+			continue
+		}
+		if row.Cells[0] != "" {
+			inside = row.Cells[0] == title
+			continue
+		}
+		if inside {
+			said = append(said, row.Cells[1])
+		}
+	}
+	return said
+}
+
+// addressOnPanelLine is the address a panel line carries: everything after the gap that follows the
+// count. The gap is two spaces, and an address holds none.
+func addressOnPanelLine(line string) string {
+	gap := strings.LastIndex(line, "  ")
+	if gap < 0 {
+		return ""
+	}
+	return strings.TrimSpace(line[gap:])
+}
+
+// theSessionThatFailed is the one session whose last exec did not land, which is the session the
+// panel's first line is about. It reads the control plane rather than remembering what a step did.
+func (w *world) theSessionThatFailed(ctx context.Context) (*quaycrewv1.Session, error) {
+	listed, err := w.client.ListSessions(ctx, &quaycrewv1.ListSessionsRequest{})
+	if err != nil {
+		return nil, fmt.Errorf("list sessions: %w", err)
+	}
+	var found *quaycrewv1.Session
+	for _, session := range listed.GetSessions() {
+		if session.GetStatus() != "failed" {
+			continue
+		}
+		if found != nil {
+			return nil, fmt.Errorf("%d sessions failed, and the scenario is about one",
+				len(listed.GetSessions()))
+		}
+		found = session
+	}
+	if found == nil {
+		return nil, fmt.Errorf("no session failed, so there is nothing for the panel to name")
+	}
+	return found, nil
 }
