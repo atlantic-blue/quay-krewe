@@ -1206,3 +1206,31 @@ is.**
 - A scenario that drove a model would prove the model and not the file, and it would be the first
   one in this repository to need one. The level itself is proved where it is written: TRUST-2 and
   the store tests hold the raise, and the control plane refuses a raise no offer stands behind.
+
+**The system sweep is written in `internal/controlplane/server.go`, not in a new
+`internal/controlplane/session.go`.**
+- Status: settled, and the code on `main` refused what the contract asks for.
+- Step 3.2 of feature 3 names `internal/controlplane/session.go` in its file list. No file of that
+  name exists. `ArchiveProjectSessions`, the call this step widens, is in
+  `internal/controlplane/server.go`, beside `ArchiveSession`, `RestoreSession` and every other
+  session call the server answers.
+- So `ArchiveSystemSessions` is written there, next to the project form it shares its sweep with.
+  The two now call one `sweepProject`, which is the reason they cannot drift into counting different
+  things. A new file for one method would put half of archiving in one place and half in another,
+  and moving the rest is a refactor this step did not ask for.
+- The same reading put two other edits outside the named list.
+  `internal/controlplane/server_test.go` gains the test for a workspace the sweep cannot read, which
+  no scenario covers because the features suite has no way to make a store refuse one workspace.
+  `cmd/krewe/archive_test.go` gains the word `system` in the refusal a workspace address gets, and
+  its usage test now names the three forms rather than two, because the manual line it reads is the
+  line this step changed.
+
+**The refusal an age of zero gives names what the sweep reaches, through the one function step 1
+built.**
+- Status: settled.
+- Step 3.2 asks that the flag read exactly as it does on the project form, through `ageToSweepBy`.
+  That function's refusal reads "would archive every session in the project", which is not true of a
+  sweep over every workspace, and an untrue refusal on the widest form of the word is the one worth
+  reading.
+- So `ageToSweepBy` takes what the sweep reaches and puts that word in the sentence. One parser, one
+  refusal, and the project form's text is unchanged to the character.

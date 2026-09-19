@@ -2298,19 +2298,122 @@ func (s *Server) ArchiveProjectSessions(ctx context.Context, req *quaycrewv1.Arc
 	if strings.TrimSpace(req.GetProject()) == "" {
 		return nil, status.Error(codes.InvalidArgument, "a project is required")
 	}
+	swept, err := s.sweepProject(ctx, req.GetProject(), cutoffFrom(req.GetLastMovedBefore()))
+	if err != nil {
+		return nil, err
+	}
+	s.SweepNames(ctx)
+	return &quaycrewv1.ArchiveProjectSessionsResponse{
+		Archived:          swept.archived,
+		Skipped:           swept.skipped,
+		HoldingAContainer: swept.holding,
+		YoungerThanTheAge: swept.young,
+	}, nil
+}
+
+// ArchiveSystemSessions runs that same sweep over every project of every workspace.
+//
+// The form that cuts a listing of 465 in one command. It is a separate call rather than a project
+// left empty: the project sweep refuses an empty project, and a call that archives the whole system
+// when a field is missing is the slip that refusal exists to stop.
+//
+// A workspace it cannot read is named in the answer rather than dropped from it. The counts then
+// describe what the sweep reached, and the operator can tell a listing that fell by 259 from one that
+// fell by 259 with a workspace missing.
+func (s *Server) ArchiveSystemSessions(ctx context.Context, req *quaycrewv1.ArchiveSystemSessionsRequest) (
+	*quaycrewv1.ArchiveSystemSessionsResponse, error) {
+	workspaces, err := s.store.ListWorkspaces(ctx)
+	if err != nil {
+		return nil, storeError(err, "list workspaces")
+	}
+	cutoff := cutoffFrom(req.GetLastMovedBefore())
+	answer := &quaycrewv1.ArchiveSystemSessionsResponse{}
+	for _, one := range workspaces {
+		swept, err := s.sweepWorkspace(ctx, one.GetId(), cutoff)
+		// Counted whether the workspace finished or not. A session this call put away and did not name
+		// is a row the operator cannot find again, which is worse than a count that stops short.
+		answer.Archived = append(answer.Archived, swept.archived...)
+		answer.Skipped += swept.skipped
+		answer.HoldingAContainer += swept.holding
+		answer.YoungerThanTheAge += swept.young
+		if err != nil {
+			answer.Unswept = append(answer.Unswept, &quaycrewv1.UnsweptWorkspace{
+				Workspace: one.GetId(), Name: one.GetName(), Reason: whyItFailed(err),
+			})
+			continue
+		}
+		answer.WorkspacesRead++
+	}
+	s.SweepNames(ctx)
+	return answer, nil
+}
+
+// swept is what one sweep took and what it left, whatever level asked for it. The system form adds
+// these up across every workspace, so the two forms cannot drift into counting different things.
+type swept struct {
+	archived []string
+	skipped  int32
+	holding  int32
+	young    int32
+}
+
+// add folds one sweep into another.
+func (s *swept) add(other swept) {
+	s.archived = append(s.archived, other.archived...)
+	s.skipped += other.skipped
+	s.holding += other.holding
+	s.young += other.young
+}
+
+// cutoffFrom reads the instant a sweep runs to. The zero instant takes every session that holds no
+// container, whatever its age, which is what this call did before an age existed.
+func cutoffFrom(stamp *timestamppb.Timestamp) time.Time {
+	if stamp == nil {
+		return time.Time{}
+	}
+	return stamp.AsTime()
+}
+
+// whyItFailed is the reason a workspace was not swept, in the words the store used. A status error
+// renders as "rpc error: code = ..." when it is printed, and a reason on an operator's screen has to
+// read as a sentence about their system rather than as a wire failure.
+func whyItFailed(err error) string {
+	if reported, ok := status.FromError(err); ok {
+		return reported.Message()
+	}
+	return err.Error()
+}
+
+// sweepWorkspace sweeps every project of one workspace. It stops at the first project it cannot read
+// and hands back what it took so far, because a workspace reported as read whole when half of it
+// failed is exactly the silent shrink the answer exists to stop.
+func (s *Server) sweepWorkspace(ctx context.Context, workspace string, cutoff time.Time) (swept, error) {
+	projects, err := s.store.ListProjects(ctx, workspace)
+	if err != nil {
+		return swept{}, storeError(err, "list projects")
+	}
+	var all swept
+	for _, project := range projects {
+		one, err := s.sweepProject(ctx, project.GetId(), cutoff)
+		if err != nil {
+			return all, err
+		}
+		all.add(one)
+	}
+	return all, nil
+}
+
+// sweepProject is the sweep itself, under both forms of the word.
+func (s *Server) sweepProject(ctx context.Context, project string, cutoff time.Time) (swept, error) {
 	// Counted before the sweep, because what it leaves is what it did not take, and after the write
 	// every session it took has left the listing it was counted in.
-	before, err := s.store.ListSessions(ctx, store.SessionFilter{Project: req.GetProject()})
+	before, err := s.store.ListSessions(ctx, store.SessionFilter{Project: project})
 	if err != nil {
-		return nil, storeError(err, "list sessions")
+		return swept{}, storeError(err, "list sessions")
 	}
-	cutoff := time.Time{}
-	if stamp := req.GetLastMovedBefore(); stamp != nil {
-		cutoff = stamp.AsTime()
-	}
-	archived, err := s.store.ArchiveProjectSessions(ctx, req.GetProject(), cutoff)
+	archived, err := s.store.ArchiveProjectSessions(ctx, project, cutoff)
 	if err != nil {
-		return nil, storeError(err, "project")
+		return swept{}, storeError(err, "project")
 	}
 	taken := make(map[string]bool, len(archived))
 	for _, id := range archived {
@@ -2323,24 +2426,18 @@ func (s *Server) ArchiveProjectSessions(ctx context.Context, req *quaycrewv1.Arc
 	// The two reasons a session is still in the listing. The sweep takes a session that holds no
 	// container and is past the age, so a session it left either still holds one or is not past it,
 	// and never both: the container is asked about first because it is the answer that outranks an age.
-	var holding, young int32
+	took := swept{archived: archived, skipped: int32(len(before) - len(archived))}
 	for _, one := range before {
 		if taken[one.GetId()] {
 			continue
 		}
 		if store.HoldsNoContainer(one.GetStatus()) {
-			young++
+			took.young++
 			continue
 		}
-		holding++
+		took.holding++
 	}
-	s.SweepNames(ctx)
-	return &quaycrewv1.ArchiveProjectSessionsResponse{
-		Archived:          archived,
-		Skipped:           int32(len(before) - len(archived)),
-		HoldingAContainer: holding,
-		YoungerThanTheAge: young,
-	}, nil
+	return took, nil
 }
 
 // RestoreSession brings an archived session back into the default listing. It comes back stopped,

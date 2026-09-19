@@ -95,25 +95,30 @@ commands:
                                           the session's own words, and told is what it was given.
                                           Last moved first, so the session you were last working in
                                           is at the top and the age column reads down the list
-  archive [<address>] [<session>]         put a session away, so the finished ones stop burying the
+  archive [<address>|system] [<session>]  put a session away, so the finished ones stop burying the
     [--older-than <days>d]                live ones. A session is put away on its own; an address
                                           naming a workspace and a project puts away every session
                                           in it that holds no container and has not been touched for
                                           14d, and says how many it left and why: how many hold a
-                                          container, and how many are younger than the age.
-                                          --older-than moves that age, and it takes a whole number
-                                          of days written the way the age column prints one, 30d and
-                                          nothing else. It reads a project rather than a session,
-                                          and an age of 0d is refused rather than taking the whole
-                                          project. 14d is where the default sits today, read off a
-                                          listing of 465 sessions rather than off what anybody said
-                                          they wanted to keep, so say a number when you have one.
-                                          A session holding an exec that is still running is
-                                          refused, because archiving takes the container away and
-                                          the answer with it: end the exec with krewe stop first.
-                                          Nothing is deleted. The conversation, the exec history and
-                                          the files all stay, and krewe volume list still answers
-                                          for it
+                                          container, and how many are younger than the age. The word
+                                          system does the same across every workspace, which is the
+                                          form that cuts a listing of 465 in one command: it says
+                                          how many workspaces the counts cover, and names any it
+                                          could not read rather than leaving the listing short by a
+                                          number nobody can account for. --older-than moves that
+                                          age, and it takes a whole number of days written the way
+                                          the age column prints one, 30d and nothing else. It reads
+                                          a project or the system rather than a session, and an age
+                                          of 0d is refused before anything moves rather than taking
+                                          every session there is. 14d is where the default sits
+                                          today, read off a listing of 465 sessions rather than off
+                                          what anybody said they wanted to keep, so say a number
+                                          when you have one. A session holding an exec that is
+                                          still running is refused, because archiving takes the
+                                          container away and the answer with it: end the exec with
+                                          krewe stop first. Nothing is deleted. The conversation,
+                                          the exec history and the files all stay, and krewe volume
+                                          list still answers for it
   unarchive <session>                     put a session back in the listing. It reads stopped and
                                           holds no container: the next exec builds a fresh one over
                                           the same conversation and the same files

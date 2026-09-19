@@ -284,10 +284,12 @@ func TestArchivingAnArchivedSessionNamesTheWayBack(t *testing.T) {
 	}
 }
 
-// A tool with a command its own help does not name is a tool nobody finds the command in.
-func TestTheUsageNamesBothHalvesOfArchiving(t *testing.T) {
-	for _, word := range []string{"archive [<address>] [<session>]", "unarchive <session>", "--archived",
-		"--older-than <days>d"} {
+// A tool with a command its own help does not name is a tool nobody finds the command in. The word
+// system is named beside the address, because it is the only form here nobody can guess from the
+// others: an operator reading "<address>" tries a workspace, which this word refuses.
+func TestTheUsageNamesEveryFormOfArchiving(t *testing.T) {
+	for _, word := range []string{"archive [<address>|system] [<session>]", "unarchive <session>",
+		"--archived", "--older-than <days>d"} {
 		if !strings.Contains(manual.Commands, word) {
 			t.Errorf("the usage does not name %q", word)
 		}
@@ -321,9 +323,12 @@ func TestArchivingAProjectWhereEverySessionIsLiveSaysItTookNothing(t *testing.T)
 	}
 }
 
-// An address that stops at a workspace names neither of the two forms, and archiving a whole
-// workspace is not a thing this word does.
-func TestArchivingAWorkspaceIsRefusedAndNamesTheTwoForms(t *testing.T) {
+// An address that stops at a workspace names none of the three forms, and archiving a whole
+// workspace is not a thing this word does: a workspace holds projects that have nothing to do with
+// each other, so a sweep across them is not one decision. The system is one decision, and it is
+// spelled system, so the refusal sends the operator to that word rather than leaving a workspace
+// looking like a way to reach it.
+func TestArchivingAWorkspaceIsRefusedAndNamesTheThreeForms(t *testing.T) {
 	client, _ := aSystemWithASession(t)
 
 	_, err := asked(t, client, "archive", "me")
@@ -335,5 +340,12 @@ func TestArchivingAWorkspaceIsRefusedAndNamesTheTwoForms(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "krewe archive") {
 		t.Errorf("the refusal does not show the forms it takes: %s", err)
+	}
+	if !strings.Contains(err.Error(), "system") {
+		t.Errorf("the refusal does not name the word that sweeps every workspace: %s", err)
+	}
+	// The session is still in the listing, because a refused command archives nothing at all.
+	if theOnlySessionIn(t, client, false).GetArchivedAt() != nil {
+		t.Error("the refused command archived the session anyway")
 	}
 }

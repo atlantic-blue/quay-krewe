@@ -22,7 +22,17 @@ import (
 // ageKey holds the moment one scenario swept by, which two steps apart have to agree on.
 type ageKey struct{}
 
-type sweepAge struct{ moment time.Time }
+type sweepAge struct {
+	moment time.Time
+	// otherWorkspaces are the workspaces a scenario made beside the one the background makes, so the
+	// system form can be asked whether it reached past the first.
+	otherWorkspaces []string
+	// livingElsewhere is the session left holding a container in one of those, which is the session
+	// a sweep across every workspace must not take.
+	livingElsewhere string
+	// systemSweep is what the last sweep over every workspace answered.
+	systemSweep *quaycrewv1.ArchiveSystemSessionsResponse
+}
 
 func ageFrom(ctx context.Context) *sweepAge {
 	a, _ := ctx.Value(ageKey{}).(*sweepAge)
@@ -131,15 +141,214 @@ func initializeSessionAgeSteps(sc *godog.ScenarioContext) {
 	sc.Step(`^the tool says the way to reach further back$`, func(ctx context.Context) error {
 		return toolSaid(ctx, "--older-than")
 	})
-	sc.Step(`^the refusal says an age of (\S+) would take the whole project$`,
-		func(ctx context.Context, age string) error {
-			for _, want := range []string{"an age of " + age, "every session in the project"} {
+	// One step for both sweeps. The refusal names what the age would have taken, and the two forms
+	// differ in nothing else, so a second step here would be the same assertion written twice.
+	sc.Step(`^the refusal says an age of (\S+) would take the whole (project|system)$`,
+		func(ctx context.Context, age, reach string) error {
+			for _, want := range []string{"an age of " + age, "every session in the " + reach} {
 				if !strings.Contains(toolFrom(ctx).stderr, want) {
 					return fmt.Errorf("the refusal does not say %q:\n%s", want, toolFrom(ctx).stderr)
 				}
 			}
 			return nil
 		})
+
+	initializeSystemSweepSteps(sc)
+}
+
+// initializeSystemSweepSteps registers the steps for the sweep that reaches every workspace.
+func initializeSystemSweepSteps(sc *godog.ScenarioContext) {
+	sc.Step(`^another workspace holding a project with (\d+) stopped sessions$`,
+		func(ctx context.Context, stopped int) error {
+			return aWorkspaceBeside(ctx, stopped, false)
+		})
+	sc.Step(`^another workspace holding a project with (\d+) stopped sessions and a session that holds a container$`,
+		func(ctx context.Context, stopped int) error {
+			return aWorkspaceBeside(ctx, stopped, true)
+		})
+	// Three workspaces rather than two, because two cannot tell a sweep that reaches every workspace
+	// from one that reaches the first and the last.
+	sc.Step(`^(\d+) more workspaces, each holding a project with (\d+) stopped sessions$`,
+		func(ctx context.Context, workspaces, stopped int) error {
+			for i := 0; i < workspaces; i++ {
+				if err := aWorkspaceBeside(ctx, stopped, false); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+
+	sc.Step(`^the operator archives the system's sessions older than that moment$`, func(ctx context.Context) error {
+		moment := ageFrom(ctx).moment
+		if moment.IsZero() {
+			return fmt.Errorf("no moment was taken, so this sweep would read every session as old")
+		}
+		age := ageFrom(ctx)
+		w := worldFrom(ctx)
+		swept, err := w.client.ArchiveSystemSessions(ctx, &quaycrewv1.ArchiveSystemSessionsRequest{
+			LastMovedBefore: timestamppb.New(moment),
+		})
+		age.systemSweep, w.lastErr = swept, err
+		return err
+	})
+
+	sc.Step(`^the system sweep archived (\d+) sessions and left (\d+)$`,
+		func(ctx context.Context, took, left int) error {
+			swept := ageFrom(ctx).systemSweep
+			if got := len(swept.GetArchived()); got != took {
+				return fmt.Errorf("the sweep archived %d sessions, want %d", got, took)
+			}
+			if got := int(swept.GetSkipped()); got != left {
+				return fmt.Errorf("the sweep says it left %d sessions, want %d", got, left)
+			}
+			return nil
+		})
+
+	// What the counts cover. A sweep that read one workspace and a sweep that read three answer with
+	// the same two numbers when the other two workspaces were empty, so this is the only line that
+	// says the sweep reached them at all.
+	sc.Step(`^the system sweep read (\d+) workspaces$`, func(ctx context.Context, want int) error {
+		swept := ageFrom(ctx).systemSweep
+		if got := int(swept.GetWorkspacesRead()); got != want {
+			return fmt.Errorf("the sweep read %d workspaces, want %d", got, want)
+		}
+		// A workspace it could not read is named rather than dropped, so a scenario that expects a
+		// whole system must find nothing named here.
+		if left := swept.GetUnswept(); len(left) > 0 {
+			return fmt.Errorf("the sweep could not read %d workspaces, the first being %q: %s",
+				len(left), left[0].GetName(), left[0].GetReason())
+		}
+		return nil
+	})
+
+	sc.Step(`^the sessions the system sweep left are (\d+) holding a container and (\d+) younger than the age$`,
+		func(ctx context.Context, holding, young int) error {
+			swept := ageFrom(ctx).systemSweep
+			if got := int(swept.GetHoldingAContainer()); got != holding {
+				return fmt.Errorf("the sweep says %d sessions hold a container, want %d", got, holding)
+			}
+			if got := int(swept.GetYoungerThanTheAge()); got != young {
+				return fmt.Errorf("the sweep says %d sessions are younger than the age, want %d", got, young)
+			}
+			if got := int(swept.GetSkipped()); got != holding+young {
+				return fmt.Errorf("the sweep left %d sessions and gives a reason for %d of them",
+					got, holding+young)
+			}
+			return nil
+		})
+
+	// Read off the listing rather than off the answer, because the answer is the thing being tested.
+	sc.Step(`^the other workspaces hold (\d+) sessions$`, func(ctx context.Context, want int) error {
+		w, age := worldFrom(ctx), ageFrom(ctx)
+		if len(age.otherWorkspaces) == 0 {
+			return fmt.Errorf("this scenario made no workspace beside the first one")
+		}
+		live := 0
+		for _, workspace := range age.otherWorkspaces {
+			listed, err := w.client.ListSessions(ctx, &quaycrewv1.ListSessionsRequest{Workspace: workspace})
+			if err != nil {
+				return err
+			}
+			live += len(listed.GetSessions())
+		}
+		if live != want {
+			return fmt.Errorf("%d sessions are still in the listing of the other workspaces, want %d",
+				live, want)
+		}
+		return nil
+	})
+
+	// The rule that stops this command taking somebody's running work away, asked of the workspace a
+	// sweep written as one project's loop never reaches.
+	sc.Step(`^the session holding a container in another workspace is still live$`, func(ctx context.Context) error {
+		w, age := worldFrom(ctx), ageFrom(ctx)
+		if age.livingElsewhere == "" {
+			return fmt.Errorf("no session was left holding a container in another workspace")
+		}
+		got, err := w.client.GetSession(ctx, &quaycrewv1.GetSessionRequest{Id: age.livingElsewhere})
+		if err != nil {
+			return err
+		}
+		if got.GetSession().GetArchivedAt() != nil {
+			return fmt.Errorf("the sweep archived %s, which was holding a container", age.livingElsewhere)
+		}
+		return nil
+	})
+
+	sc.Step(`^the driver asks to archive the system's sessions$`, func(ctx context.Context) error {
+		return asDriver(ctx, func(ctx context.Context, client quaycrewv1.ControlPlaneServiceClient) error {
+			_, err := client.ArchiveSystemSessions(ctx, &quaycrewv1.ArchiveSystemSessionsRequest{})
+			return err
+		})
+	})
+
+	sc.Step(`^the caller archives the system's sessions$`, func(ctx context.Context) error {
+		return runTool(ctx, "archive", "system")
+	})
+	sc.Step(`^the caller archives the system's sessions older than "([^"]*)"$`,
+		func(ctx context.Context, age string) error {
+			return runTool(ctx, "archive", "system", "--older-than", age)
+		})
+	sc.Step(`^the tool says it read "([^"]*)"$`, func(ctx context.Context, what string) error {
+		return toolSaid(ctx, "read "+what)
+	})
+}
+
+// aWorkspaceBeside makes a workspace the background never made, holding one project, so the system
+// form can be asked to reach past the workspace every other scenario stands in.
+//
+// The names are numbered rather than fixed, because a scenario asking for three of them would
+// otherwise ask for one name three times.
+func aWorkspaceBeside(ctx context.Context, stopped int, alsoHoldingAContainer bool) error {
+	w, age := worldFrom(ctx), ageFrom(ctx)
+	named := fmt.Sprintf("beside-%d", len(age.otherWorkspaces)+1)
+	made, err := w.client.CreateWorkspace(ctx, &quaycrewv1.CreateWorkspaceRequest{Name: named})
+	if err != nil {
+		return err
+	}
+	workspace := made.GetWorkspace().GetId()
+	age.otherWorkspaces = append(age.otherWorkspaces, workspace)
+	project, err := w.client.CreateProject(ctx, &quaycrewv1.CreateProjectRequest{
+		Workspace: workspace, Name: "work",
+	})
+	if err != nil {
+		return err
+	}
+	for i := 0; i < stopped; i++ {
+		session, err := aSessionIn(ctx, project.GetProject().GetId(),
+			fmt.Sprintf("a finished subject in %s %d", named, i))
+		if err != nil {
+			return err
+		}
+		if _, err := w.client.StopSession(ctx, &quaycrewv1.StopSessionRequest{Id: session}); err != nil {
+			return err
+		}
+	}
+	if !alsoHoldingAContainer {
+		return nil
+	}
+	session, err := aSessionIn(ctx, project.GetProject().GetId(), "still working in "+named)
+	if err != nil {
+		return err
+	}
+	age.livingElsewhere = session
+	return nil
+}
+
+// aSessionIn starts one session in a project the world is not standing in, and answers with its id.
+func aSessionIn(ctx context.Context, project, text string) (string, error) {
+	w := worldFrom(ctx)
+	if err := w.dispatch(ctx, project, "", text); err != nil {
+		return "", err
+	}
+	if w.lastErr != nil {
+		return "", w.lastErr
+	}
+	current, err := w.lastExec()
+	if err != nil {
+		return "", err
+	}
+	return current.sessionID, nil
 }
 
 // sweepTheProject is the call all three of the age scenarios make, kept in one place so they cannot
