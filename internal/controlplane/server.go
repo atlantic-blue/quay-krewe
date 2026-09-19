@@ -2283,11 +2283,16 @@ func (s *Server) openExecOf(ctx context.Context, sessionID string) *quaycrewv1.E
 	return nil
 }
 
-// ArchiveProjectSessions puts away every session of one project that holds no container.
+// ArchiveProjectSessions puts away every session of one project that holds no container and has not
+// moved since the instant the caller named.
 //
 // A sweep rather than a refusal. The single form refuses one live session because the operator named
 // that session; this one names a project, so it takes what it can and says how many it left. A sweep
 // that stops at the first live session finishes nothing.
+//
+// It says why each session it left is still there, because a sweep over 276 sessions that answers
+// with one number is a sweep nobody can check. A session that holds a container and a session that is
+// simply recent are two different answers, and only one of them is the operator's to act on.
 func (s *Server) ArchiveProjectSessions(ctx context.Context, req *quaycrewv1.ArchiveProjectSessionsRequest) (
 	*quaycrewv1.ArchiveProjectSessionsResponse, error) {
 	if strings.TrimSpace(req.GetProject()) == "" {
@@ -2299,19 +2304,42 @@ func (s *Server) ArchiveProjectSessions(ctx context.Context, req *quaycrewv1.Arc
 	if err != nil {
 		return nil, storeError(err, "list sessions")
 	}
-	archived, err := s.store.ArchiveProjectSessions(ctx, req.GetProject())
+	cutoff := time.Time{}
+	if stamp := req.GetLastMovedBefore(); stamp != nil {
+		cutoff = stamp.AsTime()
+	}
+	archived, err := s.store.ArchiveProjectSessions(ctx, req.GetProject(), cutoff)
 	if err != nil {
 		return nil, storeError(err, "project")
 	}
+	taken := make(map[string]bool, len(archived))
 	for _, id := range archived {
+		taken[id] = true
 		// The sandbox goes with the session, for the reason the single form closes one: a container
 		// running for a session nobody can see is the leak archiving exists to close.
 		s.closeSandbox(ctx, id)
 		s.emit(ctx, s.reread(ctx, id), KindSessionArchived, "")
 	}
+	// The two reasons a session is still in the listing. The sweep takes a session that holds no
+	// container and is past the age, so a session it left either still holds one or is not past it,
+	// and never both: the container is asked about first because it is the answer that outranks an age.
+	var holding, young int32
+	for _, one := range before {
+		if taken[one.GetId()] {
+			continue
+		}
+		if store.HoldsNoContainer(one.GetStatus()) {
+			young++
+			continue
+		}
+		holding++
+	}
 	s.SweepNames(ctx)
 	return &quaycrewv1.ArchiveProjectSessionsResponse{
-		Archived: archived, Skipped: int32(len(before) - len(archived)),
+		Archived:          archived,
+		Skipped:           int32(len(before) - len(archived)),
+		HoldingAContainer: holding,
+		YoungerThanTheAge: young,
 	}, nil
 }
 

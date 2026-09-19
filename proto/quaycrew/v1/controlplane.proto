@@ -477,6 +477,17 @@ message ArchiveSessionResponse {
 // that stops at the first live session finishes nothing.
 message ArchiveProjectSessionsRequest {
   string project = 1;
+  // last_moved_before narrows the sweep to the sessions that have not moved since this instant. It is
+  // how an age reaches this call: the caller works out what fourteen days ago was and says it, rather
+  // than saying a length and leaving each end to read its own clock. An instant is also the only shape
+  // a test can pin, because two clocks and a call between them cannot agree on where an hour ends.
+  //
+  // The stamp read is the one the listing's age column shows, so what this takes and what an operator
+  // reads are the same measurement.
+  //
+  // Unset takes every session that holds no container, whatever its age, which is what this call did
+  // before an age existed.
+  google.protobuf.Timestamp last_moved_before = 2;
 }
 message ArchiveProjectSessionsResponse {
   // archived is what this call put away, so the count and the list cannot disagree.
@@ -484,6 +495,12 @@ message ArchiveProjectSessionsResponse {
   // skipped is how many sessions it left in the listing, because a sweep that reports only what it
   // took reads as a sweep that took everything.
   int32 skipped = 2;
+  // holding_a_container and younger_than_the_age are why each of the skipped ones stayed, and they
+  // add up to skipped. One number is a number nobody can check: a sweep over 276 sessions that leaves
+  // 17 has to say which rule left them, or the operator cannot tell a working session from a recent
+  // one.
+  int32 holding_a_container = 3;
+  int32 younger_than_the_age = 4;
 }
 
 // ReclaimSessionRequest takes a settled session's container back and leaves everything else.

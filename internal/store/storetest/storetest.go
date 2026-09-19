@@ -655,6 +655,9 @@ func RunConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 
 	// The sweep takes the finished sessions of one project and leaves the rest. It reports what it
 	// took, so the caller can say what it did and what it did not do.
+	//
+	// No age rule here, which is a caller that said nothing about how old a session has to be. The
+	// case below is the same sweep with one.
 	t.Run("archiving a project takes every session that holds no container", func(t *testing.T) {
 		s := newDataset(t)(t)
 		ctx := context.Background()
@@ -675,7 +678,7 @@ func RunConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 			t.Fatalf("StopSession: %v", err)
 		}
 
-		archived, err := s.ArchiveProjectSessions(ctx, project.GetId())
+		archived, err := s.ArchiveProjectSessions(ctx, project.GetId(), noAgeRule)
 		if err != nil {
 			t.Fatalf("ArchiveProjectSessions: %v", err)
 		}
@@ -698,15 +701,80 @@ func RunConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 
 		// Run twice and the second run takes nothing: a session already put away is not stamped again
 		// and is not returned, so a caller cannot count the same session in two sweeps.
-		again, err := s.ArchiveProjectSessions(ctx, project.GetId())
+		again, err := s.ArchiveProjectSessions(ctx, project.GetId(), noAgeRule)
 		if err != nil {
 			t.Fatalf("ArchiveProjectSessions again: %v", err)
 		}
 		if len(again) != 0 {
 			t.Fatalf("the second sweep took %v, want nothing", again)
 		}
-		if _, err := s.ArchiveProjectSessions(ctx, "ghost"); !errors.Is(err, store.ErrNotFound) {
+		if _, err := s.ArchiveProjectSessions(ctx, "ghost", noAgeRule); !errors.Is(err, store.ErrNotFound) {
 			t.Fatalf("sweeping a project that does not exist returned %v, want ErrNotFound", err)
+		}
+	})
+
+	// The age rule, which is what stops a sweep taking the session somebody finished this morning.
+	//
+	// The cutoff is read out of the stamps the store itself wrote, rather than from this process's
+	// clock, so nothing here depends on two clocks agreeing. It is the newer session's own stamp: the
+	// rule takes a session that moved strictly before the cutoff, so that session is the first one
+	// left and the case sits exactly on the edge of the rule rather than near it.
+	t.Run("a sweep by age leaves a session that moved since the cutoff", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		project := newProject(t, s, "acme", "house bills")
+
+		old, _, _ := s.FindOrCreateSession(ctx, project.GetId(), "session-old", store.Birth{})
+		if err := s.StopSession(ctx, old.GetId()); err != nil {
+			t.Fatalf("StopSession: %v", err)
+		}
+		// Idle, so it holds a container. It is older than the cutoff and must still be left, because an
+		// age is not a reason to take somebody's running work away.
+		holding, _, _ := s.FindOrCreateSession(ctx, project.GetId(), "session-holding", store.Birth{})
+
+		// The store writes its own stamps and takes none, so a real wait is the only way to put the two
+		// groups genuinely apart. See orderingGap.
+		time.Sleep(orderingGap)
+		recent, _, _ := s.FindOrCreateSession(ctx, project.GetId(), "session-recent", store.Birth{})
+		if err := s.StopSession(ctx, recent.GetId()); err != nil {
+			t.Fatalf("StopSession: %v", err)
+		}
+
+		wasOld, _ := s.GetSession(ctx, old.GetId())
+		wasRecent, _ := s.GetSession(ctx, recent.GetId())
+		cutoff := wasRecent.GetUpdatedAt().AsTime()
+		// Asserted rather than assumed: two stamps the wait failed to separate would leave this case
+		// passing whatever the rule did.
+		if !wasOld.GetUpdatedAt().AsTime().Before(cutoff) {
+			t.Fatalf("the two sessions carry stamps %s and %s, so there is no age between them",
+				wasOld.GetUpdatedAt().AsTime(), cutoff)
+		}
+
+		archived, err := s.ArchiveProjectSessions(ctx, project.GetId(), cutoff)
+		if err != nil {
+			t.Fatalf("ArchiveProjectSessions: %v", err)
+		}
+		if !slices.Equal(archived, []string{old.GetId()}) {
+			t.Fatalf("the sweep took %v, want only the session older than the cutoff %s", archived, old.GetId())
+		}
+		listed, _ := s.ListSessions(ctx, store.SessionFilter{Project: project.GetId()})
+		left := ids(listed)
+		sort.Strings(left)
+		want := []string{holding.GetId(), recent.GetId()}
+		sort.Strings(want)
+		if !slices.Equal(left, want) {
+			t.Fatalf("the listing holds %v, want the session holding a container and the recent one %v",
+				left, want)
+		}
+
+		// The same sweep with no age rule takes both of the settled ones, which is what says the case
+		// above turned on the age and not on something else about those rows.
+		rest, err := s.ArchiveProjectSessions(ctx, project.GetId(), noAgeRule)
+		if err != nil {
+			t.Fatalf("ArchiveProjectSessions with no age: %v", err)
+		}
+		if !slices.Equal(rest, []string{recent.GetId()}) {
+			t.Fatalf("the sweep with no age took %v, want the recent session %s", rest, recent.GetId())
 		}
 	})
 
@@ -721,7 +789,7 @@ func RunConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 			t.Fatalf("RecordExec: %v", err)
 		}
 
-		archived, err := s.ArchiveProjectSessions(ctx, project.GetId())
+		archived, err := s.ArchiveProjectSessions(ctx, project.GetId(), noAgeRule)
 		if err != nil {
 			t.Fatalf("ArchiveProjectSessions: %v", err)
 		}
@@ -3176,6 +3244,11 @@ func ids(sessions []*quaycrewv1.Session) []string {
 // gap between them. Ten milliseconds is far above what either store's clock resolves and is paid four
 // times in the whole suite.
 const orderingGap = 10 * time.Millisecond
+
+// noAgeRule is the instant a caller passes to a sweep when it has nothing to say about how old a
+// session must be. Named rather than written as a bare zero value at each call, because what the zero
+// instant means there is the whole difference between taking every settled session and taking none.
+var noAgeRule = time.Time{}
 
 // assertTarget says a project ships where it was told to, naming the read that disagreed.
 func assertTarget(t *testing.T, where string, got *quaycrewv1.DeployTarget, want deploy.Target) {

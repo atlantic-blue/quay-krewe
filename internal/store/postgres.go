@@ -600,22 +600,35 @@ func (p *Postgres) whyNotArchived(ctx context.Context, id string) error {
 	return ErrNotFound
 }
 
-// ArchiveProjectSessions puts away every session of one project that holds no container.
+// ArchiveProjectSessions puts away every session of one project that holds no container and has not
+// moved since lastMovedBefore.
 //
 // One statement, so a dispatch landing during the sweep either runs before it and keeps its session
 // out, or runs after it. The stamps it writes are all the same instant, so ordering what came back by
 // the stamp and then by the identifier is the order the archived listing draws them in.
-func (p *Postgres) ArchiveProjectSessions(ctx context.Context, project string) ([]string, error) {
+//
+// The age reads updated_at rather than coalesce(archived_at, updated_at), which is the rule the
+// listing orders on, because the clause above takes only the rows whose archived stamp is null and
+// the two are the same column for those.
+func (p *Postgres) ArchiveProjectSessions(ctx context.Context, project string, lastMovedBefore time.Time) (
+	[]string, error) {
 	if _, err := p.GetProject(ctx, project); err != nil {
 		return nil, err
+	}
+	// Sent as a value rather than as the zero instant, so the clause is skipped on a caller that said
+	// nothing about age instead of comparing against the year one.
+	var before *time.Time
+	if !lastMovedBefore.IsZero() {
+		before = &lastMovedBefore
 	}
 	rows, err := p.pool.Query(ctx, `
 		with put_away as (
 			update sessions set archived_at = now(), skills_fingerprint = '', updated_at = now()
 			where project = $1 and archived_at is null and status = any($2)
+			  and ($3::timestamptz is null or updated_at < $3::timestamptz)
 			returning id, archived_at
 		)
-		select id from put_away order by archived_at desc, id`, project, settledStatuses())
+		select id from put_away order by archived_at desc, id`, project, settledStatuses(), before)
 	if err != nil {
 		return nil, fmt.Errorf("archive project sessions: %w", err)
 	}
