@@ -11,11 +11,19 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-// Default is the resource the console opens on. It is the top of the tree: a first screen of every
-// session in the system is a list with no relation between its rows, and one operator command makes
-// eleven of them. A workspace opens its projects, a project opens its jobs, and a job opens the work
-// running under it. The flat listings stay one word away in the command bar.
-const Default = "workspaces"
+// Default is the resource the console opens on. It is the panel, because the question an operator
+// opens the console with is "what needs me", and every other view answers about the rows under one
+// thing: finding the one session waiting on an answer meant drilling into each workspace, each
+// project and each session in turn.
+//
+// The tree it used to open on is one word away, and so is every flat listing. A workspace opens its
+// projects, a project opens its sessions, and a session opens the work running under it.
+const Default = "dashboard"
+
+// Piped is what the console prints when nothing is attached to read it. The panel is drawn rather
+// than listed: its rows are frames on a screen, and six titles down a pipe are no use to anybody. So
+// a pipe gets the top of the tree, which is what it got before the panel existed.
+const Piped = "workspaces"
 
 // Registry builds the console's resources against a control plane client. Adding a view to the
 // console means adding a Resource here.
@@ -23,9 +31,9 @@ func NewDefaultRegistry(client quaycrewv1.ControlPlaneServiceClient) (*Registry,
 	if client == nil {
 		return nil, fmt.Errorf("console: nil control plane client")
 	}
-	registry, err := NewRegistry(Sessions(client), Archived(client), Projects(client),
-		Path(client), Workspaces(client), Contexts(client), Secrets(client), Skills(client),
-		Hooks(client), Stats(client))
+	registry, err := NewRegistry(Dashboard(client), Sessions(client), Archived(client),
+		Projects(client), Path(client), Workspaces(client), Contexts(client), Secrets(client),
+		Skills(client), Hooks(client), Stats(client))
 	if err != nil {
 		return nil, err
 	}
@@ -140,9 +148,9 @@ func Plain(ctx context.Context, client quaycrewv1.ControlPlaneServiceClient, out
 	if err != nil {
 		return err
 	}
-	resource, found := registry.Get(Default)
+	resource, found := registry.Get(Piped)
 	if !found {
-		return fmt.Errorf("console: no resource named %q", Default)
+		return fmt.Errorf("console: no resource named %q", Piped)
 	}
 	rows, err := resource.List(ctx, "")
 	if err != nil {
