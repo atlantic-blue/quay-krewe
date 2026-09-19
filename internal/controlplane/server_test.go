@@ -2,7 +2,9 @@ package controlplane_test
 
 import (
 	"context"
+	"errors"
 	"net"
+	"strings"
 	"testing"
 
 	quaycrewv1 "github.com/atlantic-blue/quay-krewe/gen/quaycrew/v1"
@@ -372,5 +374,71 @@ func TestAWorkspaceWithNoSubscriptionTokenCarriesNeitherName(t *testing.T) {
 
 	if got, set := runner.LastReq.Env[model.ModelTokenEnv]; set {
 		t.Fatalf("exec env carries %s=%q, and nobody set a token", model.ModelTokenEnv, got)
+	}
+}
+
+// refusesOneWorkspace reads every workspace and refuses to list the projects of one of them, which
+// is the failure a sweep over every workspace has to survive without quietly shrinking its counts.
+type refusesOneWorkspace struct {
+	store.Store
+	refused string
+}
+
+func (s refusesOneWorkspace) ListProjects(ctx context.Context, workspace string) ([]*quaycrewv1.Project, error) {
+	if workspace == s.refused {
+		return nil, errors.New("the projects table is not readable")
+	}
+	return s.Store.ListProjects(ctx, workspace)
+}
+
+// A sweep over the system that cannot read one workspace names it rather than dropping it. Without
+// this the listing falls by a number the operator cannot account for, and a workspace missing from a
+// sweep reads exactly like a workspace that had nothing in it.
+func TestASystemSweepNamesTheWorkspaceItCouldNotRead(t *testing.T) {
+	ctx := context.Background()
+	held := store.NewMemory()
+	reachable, err := held.CreateWorkspace(ctx, "acme")
+	if err != nil {
+		t.Fatalf("CreateWorkspace: %v", err)
+	}
+	unreadable, err := held.CreateWorkspace(ctx, "beside")
+	if err != nil {
+		t.Fatalf("CreateWorkspace: %v", err)
+	}
+	s := controlplane.NewServer(controlplane.Config{
+		Store:    refusesOneWorkspace{Store: held, refused: unreadable.GetId()},
+		Runner:   &model.FakeRunner{},
+		Provider: &sandbox.FakeProvider{},
+		Secrets:  secrets.NewMemory(),
+	})
+
+	swept, err := s.ArchiveSystemSessions(ctx, &quaycrewv1.ArchiveSystemSessionsRequest{})
+	if err != nil {
+		t.Fatalf("ArchiveSystemSessions: %v", err)
+	}
+	// The one it did read is counted, so a single failure does not throw the whole answer away.
+	if got := swept.GetWorkspacesRead(); got != 1 {
+		t.Errorf("the sweep says it read %d workspaces, want 1 of the 2 it was given", got)
+	}
+	if len(swept.GetUnswept()) != 1 {
+		t.Fatalf("the sweep names %d workspaces it could not read, want 1", len(swept.GetUnswept()))
+	}
+	named := swept.GetUnswept()[0]
+	if named.GetWorkspace() != unreadable.GetId() {
+		t.Errorf("the sweep names workspace %q, want %q", named.GetWorkspace(), unreadable.GetId())
+	}
+	// The name, because an identifier alone names nothing an operator can go and look at.
+	if named.GetName() != "beside" {
+		t.Errorf("the sweep calls it %q, want %q", named.GetName(), "beside")
+	}
+	if !strings.Contains(named.GetReason(), "the projects table is not readable") {
+		t.Errorf("the sweep gives the reason %q, which does not carry what the store said", named.GetReason())
+	}
+	// The reason reads as a sentence about the system rather than as a wire failure.
+	if strings.Contains(named.GetReason(), "rpc error") {
+		t.Errorf("the reason is a wire failure rather than a sentence: %q", named.GetReason())
+	}
+	if reachable.GetId() == unreadable.GetId() {
+		t.Fatal("both workspaces have one id, so this test proves nothing")
 	}
 }

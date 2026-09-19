@@ -69,9 +69,10 @@ import (
 // Raising the number grants nothing, and the call is refused whole rather than by the direction of
 // the change, because a guard that reads which way a number moved is a guard nobody can check.
 //
-// Archiving is refused on both its calls. It is the operator's word about the record: a session that
-// could put sessions away could hide the evidence of what it did, and the sweep over a project could
-// do it to every finished session at once. Restoring stays open, because it hides nothing.
+// Archiving is refused on all three of its calls. It is the operator's word about the record: a
+// session that could put sessions away could hide the evidence of what it did, and the sweep could
+// do it to every finished session of a project, or of the whole system, at once. Restoring stays
+// open, because it hides nothing.
 //
 // Installing the operator's own slash commands is refused, and it is the one entry here that is not a
 // call. A slash command is a markdown file the operator's agent reads and runs on their word, in
@@ -97,6 +98,7 @@ func DeniedToDriver(fullMethod string, request any) error {
 		quaycrewv1.ControlPlaneService_SetSessionPermissionMode_FullMethodName,
 		quaycrewv1.ControlPlaneService_ArchiveSession_FullMethodName,
 		quaycrewv1.ControlPlaneService_ArchiveProjectSessions_FullMethodName,
+		quaycrewv1.ControlPlaneService_ArchiveSystemSessions_FullMethodName,
 		quaycrewv1.ControlPlaneService_ApproveDesign_FullMethodName,
 		quaycrewv1.ControlPlaneService_ApproveRestatement_FullMethodName,
 		quaycrewv1.ControlPlaneService_SetStepsInFlightCap_FullMethodName,
