@@ -778,6 +778,111 @@ func RunConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 		}
 	})
 
+	// Which decision put a session away. A sweep nobody can tell apart from a person's own decision
+	// is one nobody can audit, and the two calls are the two decisions: a person names one session,
+	// the age rule reaches a project.
+	//
+	// The live session is read as well as the two archived ones. The word is written by the archive
+	// and by nothing else, so a store that stamped every row on creation would pass on the two
+	// archived sessions alone.
+	t.Run("an archived session says whether a person or the age rule put it away", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		project := newProject(t, s, "acme", "house bills")
+		named, _, _ := s.FindOrCreateSession(ctx, project.GetId(), "session-named", store.Birth{})
+		swept, _, _ := s.FindOrCreateSession(ctx, project.GetId(), "session-swept", store.Birth{})
+		live, _, _ := s.FindOrCreateSession(ctx, project.GetId(), "session-live", store.Birth{})
+		for _, one := range []string{named.GetId(), swept.GetId()} {
+			if err := s.StopSession(ctx, one); err != nil {
+				t.Fatalf("StopSession: %v", err)
+			}
+		}
+
+		if got, _ := s.GetSession(ctx, named.GetId()); got.GetArchivedReason() != store.ArchivedByNobodyRecorded {
+			t.Fatalf("a session nobody archived reads %q, want nothing at all", got.GetArchivedReason())
+		}
+		if err := s.ArchiveSession(ctx, named.GetId()); err != nil {
+			t.Fatalf("ArchiveSession: %v", err)
+		}
+		archived, err := s.ArchiveProjectSessions(ctx, project.GetId(), noAgeRule)
+		if err != nil {
+			t.Fatalf("ArchiveProjectSessions: %v", err)
+		}
+		if !slices.Equal(archived, []string{swept.GetId()}) {
+			t.Fatalf("the sweep took %v, want only the session it could reach %s", archived, swept.GetId())
+		}
+
+		byHand, _ := s.GetSession(ctx, named.GetId())
+		if got := byHand.GetArchivedReason(); got != store.ArchivedByHand {
+			t.Errorf("the session a person archived reads %q, want %q", got, store.ArchivedByHand)
+		}
+		byAge, _ := s.GetSession(ctx, swept.GetId())
+		if got := byAge.GetArchivedReason(); got != store.ArchivedByTheAgeRule {
+			t.Errorf("the session the sweep took reads %q, want %q", got, store.ArchivedByTheAgeRule)
+		}
+		// The sweep leaves a session holding a container, so this one was never archived and has no
+		// reason to carry.
+		stillHere, _ := s.GetSession(ctx, live.GetId())
+		if got := stillHere.GetArchivedReason(); got != store.ArchivedByNobodyRecorded {
+			t.Errorf("the live session reads %q, and nothing put it away", got)
+		}
+		// The listing carries it too, because the archived listing is where a person reads it and a
+		// field that only survives a fetch by identifier reaches nobody.
+		listed, _ := s.ListSessions(ctx, store.SessionFilter{Project: project.GetId(), Archived: true})
+		reasons := map[string]string{}
+		for _, one := range listed {
+			reasons[one.GetId()] = one.GetArchivedReason()
+		}
+		if reasons[named.GetId()] != store.ArchivedByHand || reasons[swept.GetId()] != store.ArchivedByTheAgeRule {
+			t.Errorf("the archived listing reads %v, want %s by hand and %s by the age rule",
+				reasons, named.GetId(), swept.GetId())
+		}
+	})
+
+	// The case a default value hides. A session brought back is live, and a live session that still
+	// carried the word would have the next archive read as the first one: the reason a sweep wrote
+	// would outlive the sweep and stand there describing a decision a person made.
+	t.Run("a session brought back and put away again reads the second reason", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		project := newProject(t, s, "acme", "house bills")
+		session, _, _ := s.FindOrCreateSession(ctx, project.GetId(), "session-a", store.Birth{})
+		if err := s.StopSession(ctx, session.GetId()); err != nil {
+			t.Fatalf("StopSession: %v", err)
+		}
+
+		// Away by the age rule first, so the second archive is the other route and the word has to
+		// change rather than merely be written again.
+		if _, err := s.ArchiveProjectSessions(ctx, project.GetId(), noAgeRule); err != nil {
+			t.Fatalf("ArchiveProjectSessions: %v", err)
+		}
+		swept, _ := s.GetSession(ctx, session.GetId())
+		if got := swept.GetArchivedReason(); got != store.ArchivedByTheAgeRule {
+			t.Fatalf("the swept session reads %q, want %q", got, store.ArchivedByTheAgeRule)
+		}
+
+		if err := s.RestoreSession(ctx, session.GetId()); err != nil {
+			t.Fatalf("RestoreSession: %v", err)
+		}
+		back, _ := s.GetSession(ctx, session.GetId())
+		if got := back.GetArchivedReason(); got != store.ArchivedByNobodyRecorded {
+			t.Fatalf("the restored session still reads %q, and nothing has it put away", got)
+		}
+		if got, _ := s.ListSessions(ctx, store.SessionFilter{Project: project.GetId()}); len(got) != 1 ||
+			got[0].GetArchivedReason() != store.ArchivedByNobodyRecorded {
+			t.Fatalf("the default listing reads %v, want the session back carrying no reason", ids(got))
+		}
+
+		if err := s.ArchiveSession(ctx, session.GetId()); err != nil {
+			t.Fatalf("ArchiveSession after the restore: %v", err)
+		}
+		again, _ := s.GetSession(ctx, session.GetId())
+		if got := again.GetArchivedReason(); got != store.ArchivedByHand {
+			t.Errorf("the session a person archived reads %q, want %q rather than the sweep's word",
+				got, store.ArchivedByHand)
+		}
+	})
+
 	// The stamp is not a state word. A reader still wants to know how the session finished, so a
 	// session that failed reads failed after it is put away rather than being flattened to one word.
 	t.Run("a session put away keeps the status word it ended on", func(t *testing.T) {

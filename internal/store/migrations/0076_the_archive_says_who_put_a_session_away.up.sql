@@ -1,0 +1,11 @@
+-- Why a session left the listing: the word hand when a person archived it, the word age when the age
+-- rule did, and the empty string while the session is live.
+--
+-- A sweep on a clock is a later piece of work, and a sweep nobody can tell apart from a person's own
+-- decision is one nobody can audit. Restoring a session clears this beside archived_at, so a session
+-- brought back and put away again by the other route reads the second reason and never the first.
+--
+-- Nothing is backfilled. Every session archived before today was archived by a person or by the
+-- project sweep, and the row does not say which, so a backfill would put a made up fact in the record
+-- for ever. Those rows read the empty string, which is the honest answer: nobody wrote one down.
+alter table sessions add column if not exists archived_reason text not null default '';

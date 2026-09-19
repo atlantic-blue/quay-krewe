@@ -1234,3 +1234,39 @@ built.**
   reading.
 - So `ageToSweepBy` takes what the sweep reaches and puts that word in the sentence. One parser, one
   refusal, and the project form's text is unchanged to the character.
+
+**The archive reason needed no control plane change at all, so nothing was written in
+`internal/controlplane/session.go`.**
+- Status: settled, and the code on `main` refused what the contract asks for.
+- Step 3.3 of feature 3 names `internal/controlplane/session.go` in its file list, as step 3.2 did.
+  No file of that name exists, and the session calls live in `internal/controlplane/server.go`.
+- This time the answer is that neither file changes. `ArchiveSession`, `ArchiveProjectSessions`,
+  `ArchiveSystemSessions` and `RestoreSession` all read the session back out of the store after the
+  write, so the new word travels to the caller without one line in the control plane. A field the
+  server copied by hand would be a second place for the two to disagree.
+- The record is written by the store call rather than passed to it. `ArchiveSession` is a person
+  naming one session, whether they typed it or pressed a key in the console, and
+  `ArchiveProjectSessions` is the age rule under both forms of the word, so no caller can pass the
+  other's word and no caller can forget to pass one.
+
+**The rule about a session archived before this step shipped is proved in a tagged Postgres test,
+outside the step's file list.**
+- Status: settled.
+- Step 3.3 asks for the rule as a scenario, and the godog suite builds its world with
+  `store.NewMemory()`. A memory store has no schema and no old rows, so a scenario named for a
+  migration would prove nothing and its name would say it had.
+- So the rule is proved in `internal/store/migration0076_integration_test.go`, beside the other
+  migration tests: the column is dropped with the shipped down migration, two archived sessions are
+  seeded in the old shape, and the migration runs again over them. They read the empty string.
+  Mutation checked by backfilling `'hand'` in the up migration, which fails the test on four lines.
+- The four scenarios in `features/sessions.feature` carry the rest: the two words, the sweep over
+  every workspace, the clearing on unarchive, and the second archive by the other route.
+
+**Restoring a session now moves one more column than TABLE-5 says it does.**
+- Status: settled.
+- TABLE-5 reads "Restoring sets `archived_at` back to null. Nothing else on the row moves." That
+  contract was written when the stamp was the whole record.
+- Restoring now clears `archived_reason` beside the stamp. A live session still carrying the word
+  would have the next archive read as the first one: a reason the sweep wrote would outlive the
+  sweep and sit there describing a decision a person made. That is the case a default value hides,
+  and it is what the second archive in the conformance suite exists to catch.

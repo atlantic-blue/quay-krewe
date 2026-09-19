@@ -661,6 +661,20 @@ func settledStatuses() []string { return []string{"stopped", "failed", StatusRec
 // rather than keeping a second copy of it is what stops the two answers disagreeing.
 func HoldsNoContainer(status string) bool { return slices.Contains(settledStatuses(), status) }
 
+// ArchivedByHand and ArchivedByTheAgeRule are the two words the archive record takes, and an archived
+// session reads one of them or nothing at all.
+//
+// The word is chosen by the call rather than passed to it. ArchiveSession is a person naming one
+// session, on the command line or on a key in the console, and a sweep is the age rule reading a
+// clock, so neither caller can pass the other's word and no caller can forget to pass one. A session
+// put away before this record existed reads ArchivedByNobodyRecorded, which is the empty string: the
+// row cannot say which decision it was, and a guess written in its place would never be corrected.
+const (
+	ArchivedByHand           = "hand"
+	ArchivedByTheAgeRule     = "age"
+	ArchivedByNobodyRecorded = ""
+)
+
 // ErrSkillChanged is returned when a version of a skill is imported again carrying a different skill.
 //
 // It is a refusal rather than an overwrite because a workspace pins the version it holds. Overwriting
@@ -798,6 +812,9 @@ type Store interface {
 	//
 	// The write clears the skills fingerprint. The sandbox goes with the archive, so the fingerprint
 	// of the skills that sandbox was born with describes nothing.
+	//
+	// It records ArchivedByHand. This call is a person naming one session, whether they typed it or
+	// pressed a key for it, and the sweep below is the only other way a session is put away.
 	ArchiveSession(ctx context.Context, id string) error
 	// ArchiveProjectSessions puts away every session of one project that holds no container, and
 	// returns what it stamped, in the order the archived listing draws them.
@@ -817,8 +834,15 @@ type Store interface {
 	// The zero instant takes every session that holds no container, whatever its age. It is a caller
 	// saying nothing about age rather than a caller asking for everything, and the two read the same
 	// here, so a caller that means an age passes one rather than leaving it out.
+	//
+	// It records ArchivedByTheAgeRule on every session it takes, under both forms of the word: the
+	// project sweep and the sweep over every workspace run the same statement.
 	ArchiveProjectSessions(ctx context.Context, project string, lastMovedBefore time.Time) ([]string, error)
 	// RestoreSession brings an archived session back into the default listing.
+	//
+	// It clears the archive reason beside the stamp. A session brought back is a live session, and a
+	// live session that still said why it was archived would have the next archive read as the first
+	// one: the reason a sweep wrote would outlive the sweep and describe a decision a person made.
 	RestoreSession(ctx context.Context, id string) error
 	// SetPermissionMode records what a session's execs may do without asking. Whether the mode is one
 	// the model understands is the control plane's question, not the store's.
