@@ -653,6 +653,14 @@ const StatusRunning = "running"
 // names a project, not a session, so it takes what it can and reports what it left.
 func settledStatuses() []string { return []string{"stopped", "failed", StatusReclaimed} }
 
+// HoldsNoContainer reports whether a session in this state has already lost its container, which is
+// what the project sweep takes.
+//
+// Exported because the sweep now leaves a session for one of two reasons, and its caller has to say
+// which: a session that holds a container, or a session younger than the age. Reading the list here
+// rather than keeping a second copy of it is what stops the two answers disagreeing.
+func HoldsNoContainer(status string) bool { return slices.Contains(settledStatuses(), status) }
+
 // ErrSkillChanged is returned when a version of a skill is imported again carrying a different skill.
 //
 // It is a refusal rather than an overwrite because a workspace pins the version it holds. Overwriting
@@ -800,7 +808,16 @@ type Store interface {
 	//
 	// It is one statement, for the reason ArchiveSession is: a dispatch that lands during the sweep
 	// either runs before the statement and keeps its session out of it, or runs after it.
-	ArchiveProjectSessions(ctx context.Context, project string) ([]string, error)
+	//
+	// lastMovedBefore leaves out a session that moved at or after that instant, which is how an age
+	// reaches the sweep. The stamp compared is the one sortByLastMoved orders on and the age column
+	// shows, so a row the operator reads as 20d old is a row this takes at fourteen days. Every
+	// candidate is a live row, whose archived stamp is unset, so that stamp is the touched one.
+	//
+	// The zero instant takes every session that holds no container, whatever its age. It is a caller
+	// saying nothing about age rather than a caller asking for everything, and the two read the same
+	// here, so a caller that means an age passes one rather than leaving it out.
+	ArchiveProjectSessions(ctx context.Context, project string, lastMovedBefore time.Time) ([]string, error)
 	// RestoreSession brings an archived session back into the default listing.
 	RestoreSession(ctx context.Context, id string) error
 	// SetPermissionMode records what a session's execs may do without asking. Whether the mode is one
