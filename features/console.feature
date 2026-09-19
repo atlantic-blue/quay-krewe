@@ -16,6 +16,30 @@ Feature: The operator sees the system from the console
     And a workspace named "acme"
     And a project named "house-bills"
 
+  # The panel is scoped to nothing and says what the whole system needs, so it is what the console
+  # opens on. Every other view answers about the rows under one thing, and finding the one session
+  # waiting on an answer meant drilling into each workspace and each project in turn.
+  Scenario: the console opens on the dashboard
+    When the operator is at the console
+    Then the console is on the "dashboard" view
+
+  # The word and the two letters an operator's fingers reach for. Each one lands on the same panel.
+  Scenario Outline: The dashboard is reachable by its name and by both aliases
+    When the operator types "<typed>" into the command bar
+    Then the console is on the "dashboard" view
+
+    Examples:
+      | typed     |
+      | dashboard |
+      | d         |
+      | home      |
+
+  # Moving the default takes nothing away. The tree the console used to open on is one word away, and
+  # so is every other view.
+  Scenario: Typing the workspaces view still reaches it
+    When the operator types "workspaces" into the command bar
+    Then the console is on the "workspaces" view
+
   Scenario: The flat listing of every session is still one word away
     When the operator dispatches "hello" to the project
     And the operator dispatches "a different subject" to a new session
@@ -33,11 +57,11 @@ Feature: The operator sees the system from the console
     And the operator drills into workspace "acme"
     Then the console lists 1 project
 
-  # The whole tree, driven one key at a time against the real control plane. The console opens on the
+  # The whole tree, driven one key at a time against the real control plane. The walk starts on the
   # workspaces, and each enter goes one level down: projects, then the sessions in the project.
-  Scenario: The console opens at the top and each key goes one level down
+  Scenario: The console walks down the tree one key at a time
     Given a session started by dispatching "read the electricity bill"
-    When the operator is at the console
+    When the operator is at the console on the "workspaces" view
     Then the console is on the "workspaces" view
     When the operator presses "enter" in the console
     Then the console is on the "projects" view
@@ -48,7 +72,7 @@ Feature: The operator sees the system from the console
   # to go and must not take the console with it.
   Scenario: Escape comes back up one level at a time
     Given a session started by dispatching "read the electricity bill"
-    When the operator is at the console
+    When the operator is at the console on the "workspaces" view
     And the operator presses "enter" in the console
     And the operator presses "enter" in the console
     Then the console is on the "sessions" view
@@ -63,7 +87,7 @@ Feature: The operator sees the system from the console
   # again, and the key is kept because it is in fingers.
   Scenario: A project still reaches its own sessions in one key
     Given a session started by dispatching "hello"
-    When the operator is at the console
+    When the operator is at the console on the "workspaces" view
     And the operator presses "enter" in the console
     Then the console is on the "projects" view
     When the operator presses "s" in the console
@@ -313,7 +337,8 @@ Feature: The operator sees the system from the console
   # These drive the console's own reducer against the real control plane, so what is asserted is what
   # the operator would be looking at.
   Scenario: The footer says where you are, how to leave, and what this build is
-    When the operator drills into a workspace
+    When the operator is at the console on the "workspaces" view
+    And the operator presses "enter" in the console
     Then the footer says where the operator is standing
     And the footer says how to go back
     And the footer says which build this is
