@@ -189,6 +189,46 @@ Feature: Sessions run in isolated sandboxes
     And the workspace has 1 sessions
     And the workspace has 1 archived sessions
 
+  # The age, which is what stops the sweep above taking the session somebody finished an hour ago.
+  # Read on 19 September 2026 from the live listing: 465 sessions, 310 of them stopped, and 276 of
+  # them fourteen days or older. The sweep with no age reached all 310, so cutting the listing meant
+  # taking work that was still current with it.
+  #
+  # The age is sent as an instant rather than as a length. A length is read against a clock at each
+  # end, and the two readings are exactly what a scenario cannot pin, so the moment below is taken
+  # once and every session is either side of it for good.
+  Scenario: archiving a project by age leaves the sessions that hold a container
+    Given a session started by dispatching "hello"
+    And the operator stops the session
+    And a session started by dispatching "and another"
+    And a moment every session so far is older than
+    When the operator archives the project's sessions older than that moment
+    Then 1 session was archived and 1 was left
+    And the sessions left are 1 holding a container and 0 younger than the age
+    And the workspace has 1 archived sessions
+
+  # The shape of the real sweep: most of the project is past the age, one of those is still working,
+  # and the recent ones are nobody's to take yet.
+  Scenario: A project of ten sessions with four past the age archives the three that hold no container
+    Given 3 stopped sessions in the project
+    And a session started by dispatching "still working"
+    And a moment every session so far is older than
+    And 6 stopped sessions in the project
+    When the operator archives the project's sessions older than that moment
+    Then 3 sessions were archived and 7 were left
+    And the sessions left are 1 holding a container and 6 younger than the age
+    And the workspace has 3 archived sessions
+
+  # The other half of the rule. A session finished this morning holds no container either, and taking
+  # it is the failure the age exists to stop.
+  Scenario: A session younger than the age is left alone
+    Given a session started by dispatching "hello"
+    And the operator stops the session
+    When the operator archives the project's sessions older than a day
+    Then 0 sessions were archived and 1 was left
+    And the sessions left are 0 holding a container and 1 younger than the age
+    And the workspace has 0 archived sessions
+
   # Archiving is the operator's word about the record. A session that could put sessions away could
   # hide the evidence of what it did.
   Scenario: The driver cannot archive a session
@@ -199,6 +239,14 @@ Feature: Sessions run in isolated sandboxes
   Scenario: The driver cannot archive a project's sessions
     Given a session started by dispatching "hello"
     When the driver asks to archive the project's sessions
+    Then the driver is refused, told the call is the operator's to make
+
+  # The age is an argument to the call the driver is already refused, and an argument is not a door.
+  # The refusal is proved with one rather than assumed, because the refusal is what stops a session
+  # hiding the evidence of what it did.
+  Scenario: A driver session cannot archive a project's sessions by age either
+    Given a session started by dispatching "hello"
+    When the driver asks to archive the project's sessions older than a day
     Then the driver is refused, told the call is the operator's to make
 
   # A handle is matched whether the session is put away or not, so this used to start a container for
@@ -257,6 +305,41 @@ Feature: Sessions run in isolated sandboxes
     Then the listing names the session started first
     And the listing does not name the session started last
     And the listing says 1 live and hidden, naming krewe sessions system
+
+  # The default is the whole of what most people will ever type, so it is the part that has to be
+  # proved rather than the flag. 14d is where it sits today: it was read off a listing of 465 sessions
+  # and not off anything anybody said they wanted to keep, and the tool says so where a person
+  # choosing a number would read it.
+  Scenario: Running it with no flag uses 14 days
+    Given the system listens on an address the tool can dial
+    And a session started by dispatching "hello"
+    And the operator stops the session
+    When the caller archives the project's sessions
+    Then the tool names 14d as the age it swept by
+    And the workspace has 0 archived sessions
+
+  # A command that puts 259 sessions away and prints one number is a command nobody can check. So the
+  # sweep says what went, what stayed, and which of the two rules left each one there.
+  Scenario: The output says how many went and how many stayed
+    Given the system listens on an address the tool can dial
+    And a session started by dispatching "hello"
+    And the operator stops the session
+    And a session started by dispatching "and another"
+    When the caller archives the project's sessions
+    Then the tool says nothing was archived
+    And the tool says 2 sessions were left, 1 holding a container and 1 younger than the age
+    And the tool says the way to reach further back
+
+  # The slip this refusal exists to stop: an age of nothing is every session in the project, and the
+  # keystroke that says it is one character.
+  Scenario: An age of zero is refused by name
+    Given the system listens on an address the tool can dial
+    And a session started by dispatching "hello"
+    And the operator stops the session
+    When the caller archives the project's sessions older than "0d"
+    Then the command fails
+    And the refusal says an age of 0d would take the whole project
+    And the workspace has 0 archived sessions
 
   # Archiving deletes nothing and it hides the session. Hiding it means hiding its volume too, so the
   # address stops answering until the session comes back, and the files sit where the session left

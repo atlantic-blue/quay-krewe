@@ -204,6 +204,9 @@ var takenFlags = map[string]map[string]bool{
 	// Whether a copy means to write over a name that is already there. It says what the word does
 	// rather than where anything is, and the address still carries the where.
 	"volume": {flagReplace: true},
+	// How far back a project sweep reaches. It says how much of the project the word takes rather
+	// than where the project is, and the address still carries the where.
+	"archive": {flagOlderThan: true},
 	// A design body is a document, so it is named as a path rather than piped: the file is the thing
 	// being kept, and a path in the command is what makes the write repeatable.
 	//

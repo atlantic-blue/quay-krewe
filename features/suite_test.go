@@ -692,6 +692,7 @@ func initializeScenario(sc *godog.ScenarioContext) {
 	initializeInfoSteps(sc)
 	initializeSandboxBackendSteps(sc)
 	initializeSessionEventsSteps(sc)
+	initializeSessionAgeSteps(sc)
 	initializeObservabilitySteps(sc)
 	initializeMetricsSteps(sc)
 	initializeExecsSteps(sc)
@@ -1029,7 +1030,7 @@ func initializeScenario(sc *godog.ScenarioContext) {
 			&quaycrewv1.ArchiveProjectSessionsRequest{Project: w.projectID})
 		return w.lastErr
 	})
-	sc.Step(`^(\d+) sessions? was archived and (\d+) was left$`, func(ctx context.Context, took, left int) error {
+	sc.Step(`^(\d+) sessions? (?:was|were) archived and (\d+) (?:was|were) left$`, func(ctx context.Context, took, left int) error {
 		w := worldFrom(ctx)
 		if got := len(w.lastSweep.GetArchived()); got != took {
 			return fmt.Errorf("the sweep archived %d sessions, want %d", got, took)

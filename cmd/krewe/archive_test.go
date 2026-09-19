@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	quaycrewv1 "github.com/atlantic-blue/quay-krewe/gen/quaycrew/v1"
 	"github.com/atlantic-blue/quay-krewe/internal/controlplane"
@@ -12,6 +14,7 @@ import (
 	"github.com/atlantic-blue/quay-krewe/internal/sandbox"
 	"github.com/atlantic-blue/quay-krewe/internal/secrets"
 	"github.com/atlantic-blue/quay-krewe/internal/store"
+	"github.com/atlantic-blue/quay-krewe/internal/workspace"
 )
 
 // aSystemWithASession stands a system up with one project and one session in it, and hands back the
@@ -120,29 +123,129 @@ func TestTheArchivedFlagTakesNoValue(t *testing.T) {
 	}
 }
 
-// The project form is a sweep. It takes what it can and says what it left, because a sweep that
-// reports only what it took reads as a sweep that took everything.
-func TestArchivingAProjectTakesTheSettledSessionsAndSaysWhatItLeft(t *testing.T) {
+// The project form is a sweep. It takes what it can and says what it left and why, because a sweep
+// that reports only what it took reads as a sweep that took everything.
+//
+// The age is a hair's breadth rather than the fourteen days somebody types, and the sweep is called
+// under the flag parsing rather than through it. The store writes its own stamps and takes none, so
+// no test can make a session old, and an age a session made in this function is past is the only
+// age that reaches the half of this word that moves rows. What a person may type is
+// TestTheAgeTakesOneShape below, and the default is the test after this one.
+func TestArchivingAProjectTakesTheSettledSessionsPastTheAgeAndSaysWhatItLeft(t *testing.T) {
 	client, held := aSystemWithASession(t)
 	settled := theOnlySessionIn(t, client, false)
 	if err := held.StopSession(context.Background(), settled.GetId()); err != nil {
 		t.Fatalf("StopSession: %v", err)
 	}
-	// A second session, still holding its container, which the sweep must leave alone.
+	// A second session, still holding its container, which the sweep must leave alone however old it
+	// is: an age is not a reason to take somebody's running work away.
 	mustRun(t, client, "exec", "and another")
 
-	said := mustRun(t, client, "archive", "me/house-bills")
+	var out bytes.Buffer
+	where, err := workspace.ParsePath("me/house-bills")
+	if err != nil {
+		t.Fatalf("ParsePath: %v", err)
+	}
+	if err := archiveAProject(context.Background(), client, where, time.Nanosecond, &out); err != nil {
+		t.Fatalf("archiveAProject: %v", err)
+	}
+	said := out.String()
 	if !strings.Contains(said, "archived 1 session") {
 		t.Errorf("the sweep does not say what it took: %q", said)
 	}
-	if !strings.Contains(said, "1 session left in the listing") {
-		t.Errorf("the sweep does not say what it left: %q", said)
+	if !strings.Contains(said, "1 session left in the listing: 1 holding a container, 0 younger than") {
+		t.Errorf("the sweep does not say what it left and why: %q", said)
+	}
+	// A person who has just moved 259 rows wants to read that nothing went with them.
+	if !strings.Contains(said, "nothing is deleted") {
+		t.Errorf("the sweep does not say the record is kept: %q", said)
 	}
 	if live := mustRun(t, client, "sessions"); strings.Contains(live, settled.GetId()[:8]) {
 		t.Errorf("the stopped session is still in the default listing:\n%s", live)
 	}
 	if putAway := mustRun(t, client, "sessions", "--archived"); !strings.Contains(putAway, settled.GetId()[:8]) {
 		t.Errorf("the archived listing does not hold what the sweep took:\n%s", putAway)
+	}
+}
+
+// The default is the whole of what most people will ever type, so a session that finished a moment
+// ago stays, and the sweep says which rule left it there.
+//
+// This is also the way off the sweep as it was. The same command used to take every settled session
+// of the project whatever its age, so an operator typing what they typed last week now reads that
+// their session is younger than 14d, rather than reading nothing and wondering.
+func TestASweepWithNoAgeGivenLeavesASessionYoungerThanFourteenDays(t *testing.T) {
+	client, held := aSystemWithASession(t)
+	settled := theOnlySessionIn(t, client, false)
+	if err := held.StopSession(context.Background(), settled.GetId()); err != nil {
+		t.Fatalf("StopSession: %v", err)
+	}
+
+	said := mustRun(t, client, "archive", "me/house-bills")
+	if !strings.Contains(said, "not been touched for 14d") {
+		t.Errorf("the sweep does not name the age it ran under: %q", said)
+	}
+	if !strings.Contains(said, "1 session left in the listing: 0 holding a container, 1 younger than 14d") {
+		t.Errorf("the sweep does not say why the session stayed: %q", said)
+	}
+	if !strings.Contains(said, flagOlderThan) {
+		t.Errorf("the sweep does not name the way to reach further back: %q", said)
+	}
+	if live := mustRun(t, client, "sessions"); !strings.Contains(live, settled.GetId()[:8]) {
+		t.Errorf("a session younger than the age was archived:\n%s", live)
+	}
+}
+
+// One shape, and not three. An age that also took 336h, or two weeks, would be three spellings of one
+// value in a command that hides sessions, and each spelling is a thing to get wrong.
+//
+// Zero and below are the ones that matter. A sweep is the one word here that moves hundreds of rows
+// at once, and an age of nothing would move every settled session in the project.
+func TestTheAgeTakesOneShape(t *testing.T) {
+	client, _ := aSystemWithASession(t)
+
+	for _, refused := range []string{"0d", "-1d", "336h", "2 weeks", "14", "d", "14days", ""} {
+		_, err := asked(t, client, "archive", "me/house-bills", flagOlderThan, refused)
+		if err == nil {
+			t.Errorf("%s %q was accepted, so the age has more than one shape", flagOlderThan, refused)
+			continue
+		}
+		if !strings.Contains(err.Error(), "whole number of days") {
+			t.Errorf("the refusal of %q does not say what shape to type: %s", refused, err)
+		}
+	}
+	// The one that names the slip rather than the shape, because typing it is one character and what
+	// it would take is the whole project.
+	_, err := asked(t, client, "archive", "me/house-bills", flagOlderThan, "0d")
+	if err == nil || !strings.Contains(err.Error(), "every session in the project") {
+		t.Errorf("an age of zero is not refused by what it would do: %v", err)
+	}
+
+	for _, taken := range []string{"1d", "14d", "30d", "365d"} {
+		if _, err := asked(t, client, "archive", "me/house-bills", flagOlderThan, taken); err != nil {
+			t.Errorf("%s %s was refused: %v", flagOlderThan, taken, err)
+		}
+	}
+}
+
+// The age reads a project. A session named on its own is the operator naming that session, and how
+// old it is has nothing to do with that decision, so an age beside one is refused rather than
+// ignored: a flag that is quietly dropped reads as a command that did what you asked.
+func TestAnAgeBesideOneSessionIsRefusedAndNamesBothWaysOut(t *testing.T) {
+	client, _ := aSystemWithASession(t)
+	session := theOnlySessionIn(t, client, false)
+
+	_, err := asked(t, client, "archive", session.GetId(), flagOlderThan, "30d")
+	if err == nil {
+		t.Fatal("an age was accepted beside one session, so it was read and ignored")
+	}
+	for _, want := range []string{"names one session", "krewe archive " + session.GetId(), "<workspace>/<project>"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %s", want, err)
+		}
+	}
+	if theOnlySessionIn(t, client, false).GetArchivedAt() != nil {
+		t.Error("the refused command archived the session anyway")
 	}
 }
 
@@ -183,7 +286,8 @@ func TestArchivingAnArchivedSessionNamesTheWayBack(t *testing.T) {
 
 // A tool with a command its own help does not name is a tool nobody finds the command in.
 func TestTheUsageNamesBothHalvesOfArchiving(t *testing.T) {
-	for _, word := range []string{"archive [<address>] [<session>]", "unarchive <session>", "--archived"} {
+	for _, word := range []string{"archive [<address>] [<session>]", "unarchive <session>", "--archived",
+		"--older-than <days>d"} {
 		if !strings.Contains(manual.Commands, word) {
 			t.Errorf("the usage does not name %q", word)
 		}

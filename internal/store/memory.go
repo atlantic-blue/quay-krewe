@@ -533,12 +533,14 @@ func (m *Memory) ArchiveSession(_ context.Context, id string) error {
 	return nil
 }
 
-// ArchiveProjectSessions puts away every session of the project that holds no container.
+// ArchiveProjectSessions puts away every session of the project that holds no container and has not
+// moved since lastMovedBefore.
 //
 // One stamp for all of them, rather than one clock read each: the archived listing is ordered by the
 // stamp, and stamps a nanosecond apart would order the sweep by which session the map happened to
 // yield first.
-func (m *Memory) ArchiveProjectSessions(ctx context.Context, project string) ([]string, error) {
+func (m *Memory) ArchiveProjectSessions(ctx context.Context, project string, lastMovedBefore time.Time) (
+	[]string, error) {
 	if _, err := m.GetProject(ctx, project); err != nil {
 		return nil, err
 	}
@@ -556,6 +558,11 @@ func (m *Memory) ArchiveProjectSessions(ctx context.Context, project string) ([]
 			continue
 		}
 		if !settled[session.GetStatus()] {
+			continue
+		}
+		// The touched stamp, which is what LastMoved reads for a row carrying no archived stamp, and
+		// every row here carries none. Postgres compares the same column.
+		if !lastMovedBefore.IsZero() && !session.GetUpdatedAt().AsTime().Before(lastMovedBefore) {
 			continue
 		}
 		m.putAway(session, at)
