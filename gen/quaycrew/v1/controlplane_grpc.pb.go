@@ -44,6 +44,7 @@ const (
 	ControlPlaneService_RestartSession_FullMethodName           = "/quaycrew.v1.ControlPlaneService/RestartSession"
 	ControlPlaneService_ArchiveSession_FullMethodName           = "/quaycrew.v1.ControlPlaneService/ArchiveSession"
 	ControlPlaneService_ArchiveProjectSessions_FullMethodName   = "/quaycrew.v1.ControlPlaneService/ArchiveProjectSessions"
+	ControlPlaneService_ArchiveSystemSessions_FullMethodName    = "/quaycrew.v1.ControlPlaneService/ArchiveSystemSessions"
 	ControlPlaneService_RestoreSession_FullMethodName           = "/quaycrew.v1.ControlPlaneService/RestoreSession"
 	ControlPlaneService_SetSessionPermissionMode_FullMethodName = "/quaycrew.v1.ControlPlaneService/SetSessionPermissionMode"
 	ControlPlaneService_SetSessionLabel_FullMethodName          = "/quaycrew.v1.ControlPlaneService/SetSessionLabel"
@@ -125,6 +126,9 @@ type ControlPlaneServiceClient interface {
 	RestartSession(ctx context.Context, in *RestartSessionRequest, opts ...grpc.CallOption) (*RestartSessionResponse, error)
 	ArchiveSession(ctx context.Context, in *ArchiveSessionRequest, opts ...grpc.CallOption) (*ArchiveSessionResponse, error)
 	ArchiveProjectSessions(ctx context.Context, in *ArchiveProjectSessionsRequest, opts ...grpc.CallOption) (*ArchiveProjectSessionsResponse, error)
+	// ArchiveSystemSessions is the same sweep across every workspace, which is the form that cuts a
+	// listing of 465 in one command.
+	ArchiveSystemSessions(ctx context.Context, in *ArchiveSystemSessionsRequest, opts ...grpc.CallOption) (*ArchiveSystemSessionsResponse, error)
 	RestoreSession(ctx context.Context, in *RestoreSessionRequest, opts ...grpc.CallOption) (*RestoreSessionResponse, error)
 	SetSessionPermissionMode(ctx context.Context, in *SetSessionPermissionModeRequest, opts ...grpc.CallOption) (*SetSessionPermissionModeResponse, error)
 	SetSessionLabel(ctx context.Context, in *SetSessionLabelRequest, opts ...grpc.CallOption) (*SetSessionLabelResponse, error)
@@ -505,6 +509,16 @@ func (c *controlPlaneServiceClient) ArchiveProjectSessions(ctx context.Context, 
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ArchiveProjectSessionsResponse)
 	err := c.cc.Invoke(ctx, ControlPlaneService_ArchiveProjectSessions_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *controlPlaneServiceClient) ArchiveSystemSessions(ctx context.Context, in *ArchiveSystemSessionsRequest, opts ...grpc.CallOption) (*ArchiveSystemSessionsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ArchiveSystemSessionsResponse)
+	err := c.cc.Invoke(ctx, ControlPlaneService_ArchiveSystemSessions_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -998,6 +1012,9 @@ type ControlPlaneServiceServer interface {
 	RestartSession(context.Context, *RestartSessionRequest) (*RestartSessionResponse, error)
 	ArchiveSession(context.Context, *ArchiveSessionRequest) (*ArchiveSessionResponse, error)
 	ArchiveProjectSessions(context.Context, *ArchiveProjectSessionsRequest) (*ArchiveProjectSessionsResponse, error)
+	// ArchiveSystemSessions is the same sweep across every workspace, which is the form that cuts a
+	// listing of 465 in one command.
+	ArchiveSystemSessions(context.Context, *ArchiveSystemSessionsRequest) (*ArchiveSystemSessionsResponse, error)
 	RestoreSession(context.Context, *RestoreSessionRequest) (*RestoreSessionResponse, error)
 	SetSessionPermissionMode(context.Context, *SetSessionPermissionModeRequest) (*SetSessionPermissionModeResponse, error)
 	SetSessionLabel(context.Context, *SetSessionLabelRequest) (*SetSessionLabelResponse, error)
@@ -1208,6 +1225,9 @@ func (UnimplementedControlPlaneServiceServer) ArchiveSession(context.Context, *A
 }
 func (UnimplementedControlPlaneServiceServer) ArchiveProjectSessions(context.Context, *ArchiveProjectSessionsRequest) (*ArchiveProjectSessionsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ArchiveProjectSessions not implemented")
+}
+func (UnimplementedControlPlaneServiceServer) ArchiveSystemSessions(context.Context, *ArchiveSystemSessionsRequest) (*ArchiveSystemSessionsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ArchiveSystemSessions not implemented")
 }
 func (UnimplementedControlPlaneServiceServer) RestoreSession(context.Context, *RestoreSessionRequest) (*RestoreSessionResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RestoreSession not implemented")
@@ -1808,6 +1828,24 @@ func _ControlPlaneService_ArchiveProjectSessions_Handler(srv interface{}, ctx co
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(ControlPlaneServiceServer).ArchiveProjectSessions(ctx, req.(*ArchiveProjectSessionsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ControlPlaneService_ArchiveSystemSessions_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ArchiveSystemSessionsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ControlPlaneServiceServer).ArchiveSystemSessions(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ControlPlaneService_ArchiveSystemSessions_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ControlPlaneServiceServer).ArchiveSystemSessions(ctx, req.(*ArchiveSystemSessionsRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -2692,6 +2730,10 @@ var ControlPlaneService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ArchiveProjectSessions",
 			Handler:    _ControlPlaneService_ArchiveProjectSessions_Handler,
+		},
+		{
+			MethodName: "ArchiveSystemSessions",
+			Handler:    _ControlPlaneService_ArchiveSystemSessions_Handler,
 		},
 		{
 			MethodName: "RestoreSession",

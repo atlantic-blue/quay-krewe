@@ -229,6 +229,48 @@ Feature: Sessions run in isolated sandboxes
     And the sessions left are 0 holding a container and 1 younger than the age
     And the workspace has 0 archived sessions
 
+  # The form that cuts the listing of 465 in one command. Archiving one whole workspace is still not
+  # a thing this word does: a workspace holds projects that have nothing to do with each other, so a
+  # sweep across them is not one decision. The system is one decision, and it is spelled with the
+  # word system, which is the address every workspace already answers to.
+  Scenario: archiving the system by age reaches every workspace
+    Given a session started by dispatching "hello"
+    And the operator stops the session
+    And another workspace holding a project with 1 stopped sessions
+    And a moment every session so far is older than
+    When the operator archives the system's sessions older than that moment
+    Then the system sweep archived 2 sessions and left 0
+    And the system sweep read 2 workspaces
+    And the workspace has 1 archived sessions
+    And the other workspaces hold 0 sessions
+
+  # Three, because two workspaces cannot tell a sweep that reaches every workspace from one that
+  # reaches the first and the last.
+  Scenario: A system of three workspaces archives across all three
+    Given a session started by dispatching "hello"
+    And the operator stops the session
+    And 2 more workspaces, each holding a project with 1 stopped sessions
+    And a moment every session so far is older than
+    When the operator archives the system's sessions older than that moment
+    Then the system sweep archived 3 sessions and left 0
+    And the system sweep read 3 workspaces
+    And the workspace has 1 archived sessions
+    And the other workspaces hold 0 sessions
+
+  # The rule that stops this command taking somebody's running work away, held in every workspace
+  # rather than in the one the sweep started from. A session in the second workspace is the one a
+  # sweep written as a loop over projects loses first.
+  Scenario: A session holding a container in another workspace survives the system sweep
+    Given a session started by dispatching "hello"
+    And the operator stops the session
+    And another workspace holding a project with 1 stopped sessions and a session that holds a container
+    And a moment every session so far is older than
+    When the operator archives the system's sessions older than that moment
+    Then the system sweep archived 2 sessions and left 1
+    And the sessions the system sweep left are 1 holding a container and 0 younger than the age
+    And the other workspaces hold 1 sessions
+    And the session holding a container in another workspace is still live
+
   # Archiving is the operator's word about the record. A session that could put sessions away could
   # hide the evidence of what it did.
   Scenario: The driver cannot archive a session
@@ -247,6 +289,14 @@ Feature: Sessions run in isolated sandboxes
   Scenario: A driver session cannot archive a project's sessions by age either
     Given a session started by dispatching "hello"
     When the driver asks to archive the project's sessions older than a day
+    Then the driver is refused, told the call is the operator's to make
+
+  # The widest of the three, so it is the one that has to be refused rather than assumed. A session
+  # that could sweep the system could hide the evidence of what it did, and of what every other
+  # session did, in one call.
+  Scenario: A driver session cannot archive the system's sessions
+    Given a session started by dispatching "hello"
+    When the driver asks to archive the system's sessions
     Then the driver is refused, told the call is the operator's to make
 
   # A handle is matched whether the session is put away or not, so this used to start a container for
@@ -339,6 +389,43 @@ Feature: Sessions run in isolated sandboxes
     When the caller archives the project's sessions older than "0d"
     Then the command fails
     And the refusal says an age of 0d would take the whole project
+    And the workspace has 0 archived sessions
+
+  # The default is the whole of what most people will ever type on this form too, and the flag is not
+  # where the slip is. A sweep over every workspace with no age would reach every stopped session
+  # there is.
+  Scenario: Running it with no flag uses 14 days across the system
+    Given the system listens on an address the tool can dial
+    And a session started by dispatching "hello"
+    And the operator stops the session
+    When the caller archives the system's sessions
+    Then the tool names 14d as the age it swept by
+    And the workspace has 0 archived sessions
+
+  # A command that archives 259 sessions across three workspaces and prints one number is one nobody
+  # can check. So the system form says what the project form says, and then says how many workspaces
+  # those counts cover, because three workspaces and one workspace give the same two numbers.
+  Scenario: The output says how many went and how many stayed across the system
+    Given the system listens on an address the tool can dial
+    And a session started by dispatching "hello"
+    And the operator stops the session
+    And a session started by dispatching "and another"
+    When the caller archives the system's sessions
+    Then the tool says nothing was archived
+    And the tool says 2 sessions were left, 1 holding a container and 1 younger than the age
+    And the tool says it read "1 workspace"
+    And the tool says the way to reach further back
+
+  # The same slip, one level up and worth that much more: an age of nothing here is every settled
+  # session in the system. It is refused before the call is made, so nothing has moved when the
+  # operator reads the refusal.
+  Scenario: An age of zero is refused by name before the system is swept
+    Given the system listens on an address the tool can dial
+    And a session started by dispatching "hello"
+    And the operator stops the session
+    When the caller archives the system's sessions older than "0d"
+    Then the command fails
+    And the refusal says an age of 0d would take the whole system
     And the workspace has 0 archived sessions
 
   # Archiving deletes nothing and it hides the session. Hiding it means hiding its volume too, so the

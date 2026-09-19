@@ -14,13 +14,14 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-// archiveUsage is what both forms of the word are, in the order somebody reads them.
-const archiveUsage = "usage: krewe archive [<address>] [<session>] [" + flagOlderThan + " <days>d]\n\n" +
+// archiveUsage is what the three forms of the word are, in the order somebody reads them.
+const archiveUsage = "usage: krewe archive [<address>|system] [<session>] [" + flagOlderThan + " <days>d]\n\n" +
 	"a session is its id, its handle, or its address, and it is put away on its own.\n" +
 	"an address naming a workspace and a project puts away every session in it that holds\n" +
-	"no container and has not been touched for " + defaultAgeTyped + ", and says how many it left and why.\n\n" +
+	"no container and has not been touched for " + defaultAgeTyped + ", and says how many it left and why.\n" +
+	"the word system does that across every workspace, and says how many it read.\n\n" +
 	flagOlderThan + " takes a whole number of days, written the way the age column prints one: 30d.\n" +
-	"it reads a project and not a session, and " + defaultAgeTyped + " is what a project takes without it.\n\n" +
+	"it reads a project or the system, and not a session, and " + defaultAgeTyped + " is what a sweep takes without it.\n\n" +
 	"with nothing at all it reads where you are standing.\n\n" +
 	"nothing is deleted: krewe sessions --archived lists what is put away, and\n" +
 	"krewe unarchive <session> brings one back"
@@ -42,18 +43,21 @@ const (
 	defaultAgeTyped = "14d"
 )
 
-// runArchive puts a session away, or every finished session of one project.
+// runArchive puts a session away, every finished session of one project, or every finished session
+// in the system.
 //
-// Two forms under one word, because a person archives one session and a project's sessions for the
+// Three forms under one word, because a person archives one session and a project's sessions for the
 // same reason: the finished ones bury the live ones. Measured on 5 September 2026 a system held 303
 // sessions and 282 of them were stopped, so the three that were working sat at the top of a list
-// nobody could read.
+// nobody could read. Read again on 19 September 2026 it held 465, across every workspace, which is
+// the listing the system form exists to cut.
 //
-// The address decides which form runs, exactly as krewe exec and krewe sessions decide.
+// The address decides which form runs, exactly as krewe exec and krewe sessions decide, and the word
+// system is the address that means every workspace, exactly as it does in krewe sessions system.
 //
-// The age reaches the project form only. A session named on its own is the operator naming that
-// session, and how old it is has nothing to do with that decision, so an age given beside one is
-// refused rather than ignored.
+// The age reaches the two sweeps and not the single session. A session named on its own is the
+// operator naming that session, and how old it is has nothing to do with that decision, so an age
+// given beside one is refused rather than ignored.
 func runArchive(ctx context.Context, client quaycrewv1.ControlPlaneServiceClient, args []string, out io.Writer) error {
 	flags, rest, err := readFlags(args)
 	if err != nil {
@@ -74,15 +78,20 @@ func runArchive(ctx context.Context, client quaycrewv1.ControlPlaneServiceClient
 	// and not what shape it takes.
 	if naming.session != "" {
 		if flags.has(flagOlderThan) {
-			return fmt.Errorf("%s reads a project, and %q names one session\n\narchive that session "+
-				"with krewe archive %s, or sweep its project with krewe archive <workspace>/<project> "+
-				"%s %s", flagOlderThan, typed, typed, flagOlderThan, defaultAgeTyped)
+			return fmt.Errorf("%s reads a project or the system, and %q names one session\n\narchive that "+
+				"session with krewe archive %s, or sweep its project with krewe archive "+
+				"<workspace>/<project> %s %s", flagOlderThan, typed, typed, flagOlderThan, defaultAgeTyped)
 		}
 		return archiveOneSession(ctx, client, naming.session, out)
 	}
-	age, err := ageToSweepBy(flags)
+	// Read before either sweep runs, so an age of zero is refused with nothing moved rather than part
+	// way through 465 sessions.
+	age, err := ageToSweepBy(flags, naming.reach())
 	if err != nil {
 		return err
+	}
+	if naming.system {
+		return archiveTheSystem(ctx, client, age, out)
 	}
 	return archiveAProject(ctx, client, naming.project, age, out)
 }
@@ -94,9 +103,10 @@ func runArchive(ctx context.Context, client quaycrewv1.ControlPlaneServiceClient
 // value, and each of them is a thing to get wrong in a command that hides sessions.
 //
 // Zero and below are refused by name. A sweep is the one word here that moves hundreds of rows at
-// once, and an age of nothing would move every settled session in the project, which is the slip this
-// refusal exists to stop.
-func ageToSweepBy(flags given) (time.Duration, error) {
+// once, and an age of nothing would move every settled session the sweep reaches, which is the slip
+// this refusal exists to stop. reach is what that sweep reaches, the project or the system, so the
+// refusal names the damage the operator was one keystroke away from.
+func ageToSweepBy(flags given, reach string) (time.Duration, error) {
 	if !flags.has(flagOlderThan) {
 		return defaultAge, nil
 	}
@@ -108,9 +118,9 @@ func ageToSweepBy(flags given) (time.Duration, error) {
 			typed, flagOlderThan, defaultAgeTyped)
 	}
 	if days < 1 {
-		return 0, fmt.Errorf("an age of %s would archive every session in the project that holds no "+
+		return 0, fmt.Errorf("an age of %s would archive every session in the %s that holds no "+
 			"container, whatever it is: %s takes a whole number of days above zero, written as %s or 30d",
-			typed, flagOlderThan, defaultAgeTyped)
+			typed, reach, flagOlderThan, defaultAgeTyped)
 	}
 	return time.Duration(days) * 24 * time.Hour, nil
 }
@@ -121,18 +131,34 @@ func typedAge(age time.Duration) string {
 	return strconv.Itoa(int(age/(24*time.Hour))) + "d"
 }
 
-// archiving is which of the two forms an invocation asked for: one of the fields is set and the
-// other is empty.
+// archiving is which of the three forms an invocation asked for: one of the fields is set and the
+// rest are empty.
 type archiving struct {
 	session string
 	project workspace.Path
+	system  bool
 }
 
-// whatToArchive decides between the two forms. A word that names a session is one, an address that
-// reaches a project is the other, and nothing at all is whichever of those the operator is standing
-// in.
+// reach is what the sweep this names covers, in the word a refusal puts in a sentence.
+func (a archiving) reach() string {
+	if a.system {
+		return "system"
+	}
+	return "project"
+}
+
+// whatToArchive decides between the three forms. A word that names a session is one, an address that
+// reaches a project is the second, the word system is the third, and nothing at all is whichever of
+// the first two the operator is standing in.
 func whatToArchive(typed string) (archiving, error) {
 	if typed != "" {
+		// The word that means every workspace, read before anything tries to parse it as an address.
+		// No workspace may be called system, so an address made of it would send the operator looking
+		// for a workspace that was never going to be there. It is the same word krewe sessions system
+		// takes, and it means the same thing.
+		if readsTheSystem(typed) {
+			return archiving{system: true}, nil
+		}
 		// A bare word is a session when it is shaped like one of a session's two identifiers, which is
 		// what a listing prints. Everything else is an address, and the level it stops at picks the
 		// form: a session archives on its own, a project is swept.
@@ -147,10 +173,11 @@ func whatToArchive(typed string) (archiving, error) {
 			return archiving{session: typed}, nil
 		}
 		// Archiving a whole workspace is not a thing this word does. A workspace holds projects that
-		// have nothing to do with each other, and a sweep across all of them is not one decision.
+		// have nothing to do with each other, and a sweep across all of them is not one decision. The
+		// system is one decision, and it is spelled system rather than by naming a workspace.
 		if path.Project == "" {
-			return archiving{}, fmt.Errorf("%q names a workspace, and archiving reads a project or a "+
-				"session\n\n%s", typed, archiveUsage)
+			return archiving{}, fmt.Errorf("%q names a workspace, and archiving reads a project, a "+
+				"session, or the word system\n\n%s", typed, archiveUsage)
 		}
 		return archiving{project: path}, nil
 	}
@@ -159,6 +186,8 @@ func whatToArchive(typed string) (archiving, error) {
 	if err != nil {
 		return archiving{}, err
 	}
+	// Standing nowhere is not the system. A sweep over every workspace is a thing somebody types on
+	// purpose, never a thing a missing argument turns into.
 	switch {
 	case where.Session != "":
 		return archiving{session: where.String()}, nil
@@ -166,7 +195,7 @@ func whatToArchive(typed string) (archiving, error) {
 		return archiving{project: where}, nil
 	default:
 		return archiving{}, fmt.Errorf("you are not standing in a project or a session, so there is "+
-			"nothing to archive\n\n%s", archiveUsage)
+			"nothing to archive\n\nsweep every workspace with krewe archive system\n\n%s", archiveUsage)
 	}
 }
 
@@ -233,6 +262,65 @@ func archiveAProject(ctx context.Context, client quaycrewv1.ControlPlaneServiceC
 	fmt.Fprintf(out, "nothing is deleted: krewe sessions %s --archived lists what went, and "+
 		"krewe unarchive <session> brings one back\n", path.String())
 	return nil
+}
+
+// archiveTheSystem sweeps every workspace, and says what it read as well as what it took.
+//
+// It prints the sentences the project form prints, in the same words, because the two forms answer
+// the same question at two levels and an operator should not have to read them twice. It adds two
+// the project form has no use for: how many workspaces the counts cover, and which workspaces it
+// could not read. A sweep over 465 sessions that quietly skipped a workspace leaves a listing short
+// by a number nobody can account for.
+func archiveTheSystem(ctx context.Context, client quaycrewv1.ControlPlaneServiceClient, age time.Duration,
+	out io.Writer) error {
+	// The instant rather than the length, for the reason the project form sends one: the rule cannot
+	// shift between this process reading its clock and the system reading its own.
+	resp, err := client.ArchiveSystemSessions(ctx, &quaycrewv1.ArchiveSystemSessionsRequest{
+		LastMovedBefore: timestamppb.New(time.Now().UTC().Add(-age)),
+	})
+	if err != nil {
+		return err
+	}
+	archived := resp.GetArchived()
+	if len(archived) == 0 {
+		fmt.Fprintf(out, "nothing was archived in this system: a sweep takes a session that holds no "+
+			"container and has not been touched for %s\n", typedAge(age))
+	} else {
+		fmt.Fprintf(out, "archived %s in this system, none of them touched for %s\n",
+			plural(len(archived), "sessions"), typedAge(age))
+	}
+	fmt.Fprintf(out, "%s left in the listing: %d holding a container, %d younger than %s\n",
+		plural(int(resp.GetSkipped()), "sessions"), resp.GetHoldingAContainer(), resp.GetYoungerThanTheAge(),
+		typedAge(age))
+	// What the counts above cover. Three workspaces and one workspace give the same two numbers, and
+	// only this line tells them apart.
+	fmt.Fprintf(out, "read %s\n", plural(int(resp.GetWorkspacesRead()), "workspaces"))
+	sayWhatWasNotRead(out, resp.GetUnswept())
+	if len(archived) == 0 {
+		fmt.Fprintf(out, "reach further back with krewe archive system %s <days>d\n", flagOlderThan)
+		return nil
+	}
+	// Said on the way out as well as in the usage, because a person who has just moved 259 rows wants
+	// to read that nothing went with them without going to look for it.
+	fmt.Fprint(out, "nothing is deleted: krewe sessions system --archived lists what went, and "+
+		"krewe unarchive <session> brings one back\n")
+	return nil
+}
+
+// sayWhatWasNotRead names every workspace the sweep could not read, and why.
+//
+// Named one per line rather than counted. A count says the sweep is incomplete and leaves the
+// operator with nowhere to go; the name is what they type to sweep that workspace on its own once
+// whatever failed is fixed.
+func sayWhatWasNotRead(out io.Writer, unswept []*quaycrewv1.UnsweptWorkspace) {
+	if len(unswept) == 0 {
+		return
+	}
+	fmt.Fprintf(out, "%s could not be read, so nothing in them was swept:\n",
+		plural(len(unswept), "workspaces"))
+	for _, one := range unswept {
+		fmt.Fprintf(out, "  %s: %s\n", display.Name(one.GetName(), one.GetWorkspace()), one.GetReason())
+	}
 }
 
 // runUnarchive brings a session back into the default listing.
