@@ -588,9 +588,16 @@ type Session struct {
 	Title string `protobuf:"bytes,21,opt,name=title,proto3" json:"title,omitempty"`
 	// context_spend is where this session's context went, by category. Absent where the system cannot
 	// say, which is a conversation nobody has spoken in.
-	ContextSpend  *ContextSpend `protobuf:"bytes,22,opt,name=context_spend,json=contextSpend,proto3" json:"context_spend,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	ContextSpend *ContextSpend `protobuf:"bytes,22,opt,name=context_spend,json=contextSpend,proto3" json:"context_spend,omitempty"`
+	// archived_reason is why the session left the listing: "hand" when a person archived it, "age" when
+	// the age rule did, and empty while the session is live.
+	//
+	// Empty on a session put away before this was recorded, which is not the same as a session nobody
+	// archived: an archived session carrying no reason is one the record cannot speak for, and a guess
+	// written in its place would be a made up fact nothing could ever correct.
+	ArchivedReason string `protobuf:"bytes,23,opt,name=archived_reason,json=archivedReason,proto3" json:"archived_reason,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *Session) Reset() {
@@ -768,6 +775,13 @@ func (x *Session) GetContextSpend() *ContextSpend {
 		return x.ContextSpend
 	}
 	return nil
+}
+
+func (x *Session) GetArchivedReason() string {
+	if x != nil {
+		return x.ArchivedReason
+	}
+	return ""
 }
 
 // ContextSpend is where a session's context went, in characters, by category.
@@ -10403,7 +10417,7 @@ const file_quaycrew_v1_controlplane_proto_rawDesc = "" +
 	"\fDeployTarget\x12\x18\n" +
 	"\aaccount\x18\x01 \x01(\tR\aaccount\x12\x16\n" +
 	"\x06region\x18\x02 \x01(\tR\x06region\x12\x1a\n" +
-	"\bidentity\x18\x03 \x01(\tR\bidentity\"\xdb\x06\n" +
+	"\bidentity\x18\x03 \x01(\tR\bidentity\"\x84\a\n" +
 	"\aSession\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1c\n" +
 	"\tworkspace\x18\x02 \x01(\tR\tworkspace\x12\x16\n" +
@@ -10429,7 +10443,8 @@ const file_quaycrew_v1_controlplane_proto_rawDesc = "" +
 	"\freclaimed_at\x18\x13 \x01(\v2\x1a.google.protobuf.TimestampR\vreclaimedAt\x128\n" +
 	"\bpresence\x18\x14 \x01(\x0e2\x1c.quaycrew.v1.SessionPresenceR\bpresence\x12\x14\n" +
 	"\x05title\x18\x15 \x01(\tR\x05title\x12>\n" +
-	"\rcontext_spend\x18\x16 \x01(\v2\x19.quaycrew.v1.ContextSpendR\fcontextSpendJ\x04\b\x12\x10\x13\"d\n" +
+	"\rcontext_spend\x18\x16 \x01(\v2\x19.quaycrew.v1.ContextSpendR\fcontextSpend\x12'\n" +
+	"\x0farchived_reason\x18\x17 \x01(\tR\x0earchivedReasonJ\x04\b\x12\x10\x13\"d\n" +
 	"\fContextSpend\x12\x14\n" +
 	"\x05reads\x18\x01 \x01(\x03R\x05reads\x12\x14\n" +
 	"\x05tools\x18\x02 \x01(\x03R\x05tools\x12\x14\n" +

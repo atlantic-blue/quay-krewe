@@ -292,6 +292,72 @@ func initializeSystemSweepSteps(sc *godog.ScenarioContext) {
 	sc.Step(`^the tool says it read "([^"]*)"$`, func(ctx context.Context, what string) error {
 		return toolSaid(ctx, "read "+what)
 	})
+	// Why each session left the listing, read from the archived listing itself, because that listing
+	// is where a person reads it and a field that survives only a fetch by identifier reaches nobody.
+	sc.Step(`^the archived listing says the session started (first|last) went by "([^"]*)"$`,
+		func(ctx context.Context, which, want string) error {
+			w := worldFrom(ctx)
+			if len(w.execs) < 2 {
+				return fmt.Errorf("fewer than two sessions were started, so first and last are the same one")
+			}
+			wanted := w.execs[0]
+			if which == "last" {
+				wanted = w.execs[len(w.execs)-1]
+			}
+			return archivedSessionWentBy(ctx, wanted.sessionID, want)
+		})
+	sc.Step(`^the archived listing says that session went by "([^"]*)"$`,
+		func(ctx context.Context, want string) error {
+			current, err := worldFrom(ctx).lastExec()
+			if err != nil {
+				return err
+			}
+			return archivedSessionWentBy(ctx, current.sessionID, want)
+		})
+
+	// A session nothing has put away. It is read by identifier rather than from a listing, because a
+	// live session is in the other listing and the point is the word it carries, not where it is.
+	sc.Step(`^that session says nothing about why it went$`, func(ctx context.Context) error {
+		w := worldFrom(ctx)
+		current, err := w.lastExec()
+		if err != nil {
+			return err
+		}
+		read, err := w.client.GetSession(ctx, &quaycrewv1.GetSessionRequest{Id: current.sessionID})
+		if err != nil {
+			return err
+		}
+		if got := read.GetSession().GetArchivedReason(); got != "" {
+			return fmt.Errorf("the session says it went by %q, and nothing has it put away", got)
+		}
+		return nil
+	})
+}
+
+// archivedSessionWentBy reads the archived listing and says whether the session it was asked about
+// carries the word it was asked for.
+//
+// It fails when the session is not in that listing at all, rather than passing over an empty answer:
+// a listing that lost the row would otherwise read the same as a listing that drew it correctly.
+func archivedSessionWentBy(ctx context.Context, session, want string) error {
+	w := worldFrom(ctx)
+	listed, err := w.client.ListSessions(ctx, &quaycrewv1.ListSessionsRequest{
+		Workspace: w.workspaceID, Archived: true,
+	})
+	if err != nil {
+		return err
+	}
+	for _, one := range listed.GetSessions() {
+		if one.GetId() != session {
+			continue
+		}
+		if got := one.GetArchivedReason(); got != want {
+			return fmt.Errorf("the archived listing says session %s went by %q, want %q", session, got, want)
+		}
+		return nil
+	}
+	return fmt.Errorf("session %s is not in the archived listing of %d sessions",
+		session, len(listed.GetSessions()))
 }
 
 // aWorkspaceBeside makes a workspace the background never made, holding one project, so the system

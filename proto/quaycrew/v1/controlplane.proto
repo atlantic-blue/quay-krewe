@@ -139,6 +139,13 @@ message Session {
   // context_spend is where this session's context went, by category. Absent where the system cannot
   // say, which is a conversation nobody has spoken in.
   ContextSpend context_spend = 22;
+  // archived_reason is why the session left the listing: "hand" when a person archived it, "age" when
+  // the age rule did, and empty while the session is live.
+  //
+  // Empty on a session put away before this was recorded, which is not the same as a session nobody
+  // archived: an archived session carrying no reason is one the record cannot speak for, and a guess
+  // written in its place would be a made up fact nothing could ever correct.
+  string archived_reason = 23;
 }
 
 // ContextSpend is where a session's context went, in characters, by category.
