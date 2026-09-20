@@ -529,7 +529,7 @@ func (m *Memory) ArchiveSession(_ context.Context, id string) error {
 	if session.GetArchivedAt() != nil {
 		return ErrNotFound
 	}
-	m.putAway(session, timestamppb.New(time.Now().UTC()))
+	m.putAway(session, timestamppb.New(time.Now().UTC()), ArchivedByHand)
 	return nil
 }
 
@@ -565,7 +565,7 @@ func (m *Memory) ArchiveProjectSessions(ctx context.Context, project string, las
 		if !lastMovedBefore.IsZero() && !session.GetUpdatedAt().AsTime().Before(lastMovedBefore) {
 			continue
 		}
-		m.putAway(session, at)
+		m.putAway(session, at, ArchivedByTheAgeRule)
 		putAway = append(putAway, session)
 	}
 	sortByLastMoved(putAway)
@@ -576,26 +576,27 @@ func (m *Memory) ArchiveProjectSessions(ctx context.Context, project string, las
 	return archived, nil
 }
 
-// putAway is the write both of those make. The caller holds the lock.
-func (m *Memory) putAway(session *quaycrewv1.Session, at *timestamppb.Timestamp) {
+// putAway is the write both of those make, and the reason is an argument because it is the one thing
+// the two do not share: a person named this session, or the age rule reached it. The caller holds the
+// lock.
+func (m *Memory) putAway(session *quaycrewv1.Session, at *timestamppb.Timestamp, reason string) {
 	delete(m.skillsBorn, session.GetId())
 	session.ArchivedAt = at
+	session.ArchivedReason = reason
 	session.UpdatedAt = timestamppb.New(time.Now().UTC())
 }
 
-// RestoreSession clears the stamp, bringing the session back into the default listing.
+// RestoreSession clears the stamp and the reason with it, bringing the session back into the default
+// listing. Postgres clears the same two columns in one statement.
 func (m *Memory) RestoreSession(_ context.Context, id string) error {
-	return m.stampArchived(id, nil)
-}
-
-func (m *Memory) stampArchived(id string, at *timestamppb.Timestamp) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	session, ok := m.sessions[id]
 	if !ok {
 		return ErrNotFound
 	}
-	session.ArchivedAt = at
+	session.ArchivedAt = nil
+	session.ArchivedReason = ArchivedByNobodyRecorded
 	session.UpdatedAt = timestamppb.New(time.Now().UTC())
 	return nil
 }

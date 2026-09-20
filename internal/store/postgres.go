@@ -339,8 +339,8 @@ func (p *Postgres) GetSession(ctx context.Context, id string) (*quaycrewv1.Sessi
 // than four copies of it: a column added to the row and forgotten in one of the four reads is a
 // session that scans in three places and fails in the fourth.
 const sessionColumns = `id, workspace, project, handle, status, model_session_id, created_at, ` +
-	`updated_at, archived_at, reclaimed_at, permission_mode, driver, label, description, ` +
-	`described_at_exec, title`
+	`updated_at, archived_at, archived_reason, reclaimed_at, permission_mode, driver, label, ` +
+	`description, described_at_exec, title`
 
 // ListSessions returns sessions, filtered to one project when set, else to one workspace when set,
 // last moved first: see sortByLastMoved for the order and why it is that one.
@@ -569,8 +569,9 @@ func (p *Postgres) CountExecs(ctx context.Context, session string) (int, error) 
 // exec start between the two, and the session is then put away with an open exec in it.
 func (p *Postgres) ArchiveSession(ctx context.Context, id string) error {
 	tag, err := p.pool.Exec(ctx,
-		`update sessions set archived_at = now(), skills_fingerprint = '', updated_at = now()
-		  where id = $1 and archived_at is null and status <> $2`, id, StatusRunning)
+		`update sessions set archived_at = now(), archived_reason = $3, skills_fingerprint = '',
+			updated_at = now()
+		  where id = $1 and archived_at is null and status <> $2`, id, StatusRunning, ArchivedByHand)
 	if err != nil {
 		return fmt.Errorf("archive session: %w", err)
 	}
@@ -623,12 +624,14 @@ func (p *Postgres) ArchiveProjectSessions(ctx context.Context, project string, l
 	}
 	rows, err := p.pool.Query(ctx, `
 		with put_away as (
-			update sessions set archived_at = now(), skills_fingerprint = '', updated_at = now()
+			update sessions set archived_at = now(), archived_reason = $4, skills_fingerprint = '',
+				updated_at = now()
 			where project = $1 and archived_at is null and status = any($2)
 			  and ($3::timestamptz is null or updated_at < $3::timestamptz)
 			returning id, archived_at
 		)
-		select id from put_away order by archived_at desc, id`, project, settledStatuses(), before)
+		select id from put_away order by archived_at desc, id`,
+		project, settledStatuses(), before, ArchivedByTheAgeRule)
 	if err != nil {
 		return nil, fmt.Errorf("archive project sessions: %w", err)
 	}
@@ -648,18 +651,14 @@ func (p *Postgres) ArchiveProjectSessions(ctx context.Context, project string, l
 	return archived, nil
 }
 
-// RestoreSession clears the stamp, bringing the session back into the default listing.
+// RestoreSession clears the stamp and the reason with it, bringing the session back into the default
+// listing. The memory store clears the same two.
 func (p *Postgres) RestoreSession(ctx context.Context, id string) error {
-	return p.stampArchived(ctx, id, `archived_at = null`)
-}
-
-// stampArchived is the update restoring is. The clause is a constant from the caller above and never
-// carries a value, so nothing here is built from input.
-func (p *Postgres) stampArchived(ctx context.Context, id, clause string) error {
 	tag, err := p.pool.Exec(ctx,
-		`update sessions set `+clause+`, updated_at = now() where id = $1`, id)
+		`update sessions set archived_at = null, archived_reason = '', updated_at = now()
+		  where id = $1`, id)
 	if err != nil {
-		return fmt.Errorf("archive session: %w", err)
+		return fmt.Errorf("restore session: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
@@ -2006,14 +2005,15 @@ func scanSession(rows pgx.Rows) (*quaycrewv1.Session, error) {
 		id, workspace, project, handle, status, modelSessionID string
 		createdAt, updatedAt                                   time.Time
 		archivedAt, reclaimedAt                                *time.Time
+		archivedReason                                         string
 		permissionMode                                         string
 		driver                                                 bool
 		label, description, title                              string
 		describedAtExec                                        int32
 	)
 	if err := rows.Scan(&id, &workspace, &project, &handle, &status, &modelSessionID,
-		&createdAt, &updatedAt, &archivedAt, &reclaimedAt, &permissionMode, &driver, &label,
-		&description, &describedAtExec, &title); err != nil {
+		&createdAt, &updatedAt, &archivedAt, &archivedReason, &reclaimedAt, &permissionMode, &driver,
+		&label, &description, &describedAtExec, &title); err != nil {
 		return nil, fmt.Errorf("scan session: %w", err)
 	}
 	session := &quaycrewv1.Session{
@@ -2031,6 +2031,7 @@ func scanSession(rows pgx.Rows) (*quaycrewv1.Session, error) {
 		Description:     description,
 		DescribedAtExec: describedAtExec,
 		Title:           title,
+		ArchivedReason:  archivedReason,
 	}
 	if archivedAt != nil {
 		session.ArchivedAt = timestamppb.New(*archivedAt)

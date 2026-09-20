@@ -464,6 +464,54 @@ Feature: Sessions run in isolated sandboxes
     Then a second sandbox has been created for that session
     And the second exec resumed the conversation the first exec started
 
+  # A sweep nobody can tell apart from a person's own decision is one nobody can audit. Two sessions
+  # leave the listing here, one because somebody named it and one because it was old, and the record
+  # says which was which. A sweep on a clock is a later piece of work, and it lands on this record.
+  Scenario: The archived listing says whether a person or the rule put a session away
+    Given the system listens on an address the tool can dial
+    And a session started by dispatching "hello"
+    And the operator stops the session
+    And a session started by dispatching "and another"
+    And the operator stops the session
+    When the caller archives the session started first
+    And a moment every session so far is older than
+    And the operator archives the project's sessions older than that moment
+    Then the archived listing says the session started first went by "hand"
+    And the archived listing says the session started last went by "age"
+
+  # The system form is the one that cuts a listing of 465, so it is the one whose record matters most.
+  # It reads the same word as the project form, because it is the same rule one level up.
+  Scenario: A sweep over every workspace says the age rule put each session away
+    Given the system listens on an address the tool can dial
+    And a session started by dispatching "hello"
+    And the operator stops the session
+    And a moment every session so far is older than
+    When the operator archives the system's sessions older than that moment
+    Then the archived listing says that session went by "age"
+
+  # The reason goes back with the stamp. A live session still carrying the word would have the next
+  # archive read as the first one, and nothing above the store could tell.
+  Scenario: Unarchiving takes the reason back with the stamp
+    Given the system listens on an address the tool can dial
+    And a session started by dispatching "hello"
+    When the caller archives that session
+    And the caller unarchives that session
+    Then that session says nothing about why it went
+
+  # The case a default value hides: the sweep's word outliving the sweep. This session goes by the age
+  # rule, comes back, and is then named by a person, so the record has to change rather than merely be
+  # written again.
+  Scenario: A session put away again by the other route reads the second reason
+    Given the system listens on an address the tool can dial
+    And a session started by dispatching "hello"
+    And the operator stops the session
+    And a moment every session so far is older than
+    When the operator archives the project's sessions older than that moment
+    Then the archived listing says that session went by "age"
+    When the caller unarchives that session
+    And the caller archives that session
+    Then the archived listing says that session went by "hand"
+
   # The mode an exec runs in was hardcoded, so no operator could see it or change it. It belongs to the
   # session rather than to an exec: a session started to plan something should keep planning instead of
   # being re armed on every dispatch.
