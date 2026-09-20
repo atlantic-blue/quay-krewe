@@ -19,9 +19,14 @@ import (
 // The tool sends the document and never parses it. One grammar, in one place, so the console and the
 // command line cannot drift on what a step heading looks like.
 
+// The grammar prints under the forms, because somebody reading this refusal is about to write a
+// document. The milestone line says the same thing as the manual, in the same words: a person who
+// reads one and then the other must not find two grammars.
 const pathUsage = "usage: krewe path [<address>] [<feature>]" +
 	"\n       krewe path set [<address>] <feature> --file <path>" +
-	"\n       krewe path cap [<address>] [<number>]"
+	"\n       krewe path cap [<address>] [<number>]" +
+	"\n\na step is a heading with two hashes: ## 1. <title>" +
+	"\na milestone is a heading with one hash: # 1. <title>"
 
 // pathCapUsage is its own line, because the cap takes a number where the rest of the word takes a
 // feature, and a refusal that printed all three forms would not say which one was typed wrong.
