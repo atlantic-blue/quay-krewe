@@ -1249,6 +1249,61 @@ Feature: A project holds a numbered path of steps
     Then the heading "no milestone" prints before the heading "1. A design carries an approval"
     And the command succeeds
 
+  # A project of 51 steps wrote eight features with no milestone heading, read the words no milestone
+  # eight times, and read that as the product having no milestone in it. The grammar writes one and
+  # nothing said so, so these hold the words the manual and the refusal print to what the parser
+  # accepts.
+
+  Scenario: the manual says how a milestone is written
+    Given the system listens on an address the tool can dial
+    When the caller asks for the manual
+    Then standard output carries "heading with one hash: # 1. <title>"
+    And standard output carries "Step numbers are unique"
+    And standard output carries "across the whole feature"
+    And standard output carries "under the words no milestone"
+    And the command succeeds
+
+  Scenario: The manual entry and the usage line agree with each other
+    Given the system listens on an address the tool can dial
+    When the caller asks for the manual
+    Then standard output carries "heading with one hash: # 1. <title>"
+    When the caller types "path one two three" through the tool
+    Then standard error says "heading with one hash: # 1. <title>"
+    And the command fails
+
+  Scenario: A path document with two milestone headings draws two headings, each carrying its steps
+    Given the system listens on an address the tool can dial
+    And a path file saying:
+      """
+      # 1. The tool reaches the volume
+
+      ## 1. The address parses
+      ## 2. The command copies one file
+
+      # 2. The transport leaves the machine
+
+      ## 3. The stream carries a large file
+      """
+    And the caller wrote the path from that file
+    When the caller reads the path
+    Then standard output carries "1. The tool reaches the volume (2 steps, 0 done)"
+    And standard output carries "2. The transport leaves the machine (1 steps, 0 done)"
+    And standard output lists 3 step lines
+    And the command succeeds
+
+  Scenario: A path document with no milestone heading draws its steps under no milestone
+    Given the system listens on an address the tool can dial
+    And a path file saying:
+      """
+      ## 1. The address parses
+      ## 2. The command copies one file
+      """
+    And the caller wrote the path from that file
+    When the caller reads the path
+    Then standard output carries "no milestone (2 steps, 0 done)"
+    And standard output lists 2 step lines
+    And the command succeeds
+
   Scenario: The line under the list counts the feature and names the next step
     Given the system listens on an address the tool can dial
     And a path file saying:

@@ -233,8 +233,13 @@ commands:
     --file <path>                         heading reading ## 1. <title>, and the blocks under it say
                                           what changes, what it touches, what proves it and which
                                           step it waits for. A step that names no predecessor waits
-                                          for the number below it. The other features of the project
-                                          keep the paths they have
+                                          for the number below it. Above them, a milestone is a
+                                          heading with one hash: # 1. <title>, and every step under
+                                          it belongs to that milestone. Step numbers are unique
+                                          across the whole feature, so a milestone does not start
+                                          them again. A step above every milestone heading reads
+                                          under the words no milestone. The other features of the
+                                          project keep the paths they have
   path cap [<address>] [<number>]         how many steps of the project may run at once, counted
                                           across every feature. With no number it prints the cap and
                                           what runs now and writes nothing. The default of 10 is what
