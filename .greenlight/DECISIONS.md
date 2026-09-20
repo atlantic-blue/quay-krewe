@@ -1234,3 +1234,41 @@ built.**
   reading.
 - So `ageToSweepBy` takes what the sweep reaches and puts that word in the sentence. One parser, one
   refusal, and the project form's text is unchanged to the character.
+
+## Settled on 2026-09-19, building step 4.7 of feature 4, where the path and the code disagreed
+
+The path names three counts for the frame that says what needs the operator. The code carries one of
+them as written. The other two are recorded here, with what the frame draws instead.
+
+**No session reads "asking", so the frame counts the sessions whose last exec did not land.**
+- Status: settled, and the path uses a word the code retired.
+- Step 4.7 of the path reads "sessions reading asking".
+- A session's status is idle, running, failed, stopped or reclaimed, in field 4 of `Session`.
+  `internal/display/session.go` adds awake, attached and unknown, read from the sandbox. None of
+  them is "asking". It was a stage word on a job, and migration
+  `0060_remove_jobs_flows_and_roles.up.sql` removed the jobs on 3 September 2026.
+- So the line counts a session whose status reads failed. The proto says failed means the last exec
+  did not land. It is the one session state that stopped and wants the operator.
+- Idle is rejected. The proto calls idle "waiting for you", and every session that is not running is
+  idle, so a count of them is a count of sessions. The presence read that tells a real idle from a
+  conversation somebody left running costs one question to each sandbox, and the panel asks for no
+  presence.
+
+**A standing trust offer costs one call per project, so the frame counts the checks nobody closed.**
+- Status: settled, and it is the cost rather than a defect.
+- Step 4.7 of the path reads "projects with a standing trust offer".
+- `trust_offered` is field 14 of `Design`. `GetDesign` takes one project and is the only call that
+  answers it, and no list response carries a design. `designOf` in `internal/console/resources.go`
+  reads it per project for the projects listing, which is the shape this panel refuses: the console
+  draws again every three seconds, so forty projects is forty calls every three seconds.
+- Working the offer out from the steps is rejected. `operator_agreed` sits on each step and the
+  threshold sits on the design, so the panel would print a number `krewe trust` can disagree with.
+- So the third line counts a step that krewe checked, that passed, and that nobody closed.
+  `waitsForTheOperator` in `internal/console/resources.go` already reads that as waiting on the
+  operator, and the path view already marks the row. SLASH-6 lists the same thing second in what
+  waits on the operator. This frame counts that mark across every project, so the panel and the path
+  cannot disagree about what waits.
+- A failing verdict is not counted. SLASH-6 lists it third, and `waitsForTheOperator` does not read
+  it as waiting. The two already disagree on `main`, and this frame follows the code.
+- The cost is stated. The operator still runs `krewe trust <address>` to find a standing offer. The
+  panel will say nothing about one until a call answers the trust record for every project at once.

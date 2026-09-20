@@ -34,6 +34,36 @@ Feature: The operator sees the system from the console
       | d         |
       | home      |
 
+  # The frame at the top left, and the only one that makes the operator act. Every other frame on the
+  # panel is a report. Each line carries the address behind its count, because a count on its own
+  # leaves the operator to go and find what it is about.
+  Scenario: the panel says what needs the operator
+    Given a session whose first exec failed
+    And the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+      """
+    When the operator takes step 1
+    And the session writes its restatement:
+      """
+      What this step changes
+      The store holds a project's brief.
+      """
+    And the operator dispatches "and again" to the same session
+    And the operator opens the console
+    Then the panel says 1 "session failed" under "what needs you"
+    And that line carries the address of the session
+    And the panel says 1 "restatement to read" under "what needs you"
+    And that line carries the address of the project and step "1.1"
+
+  # Three counts of zero in a column read as three problems at a glance, which is the opposite of what
+  # this frame is for.
+  Scenario: The panel says nothing waits rather than drawing three zeros
+    When the operator opens the console
+    Then the panel says nothing waits on the operator
+
   # Moving the default takes nothing away. The tree the console used to open on is one word away, and
   # so is every other view.
   Scenario: Typing the workspaces view still reaches it
