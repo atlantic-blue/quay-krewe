@@ -1272,3 +1272,48 @@ them as written. The other two are recorded here, with what the frame draws inst
   it as waiting. The two already disagree on `main`, and this frame follows the code.
 - The cost is stated. The operator still runs `krewe trust <address>` to find a standing offer. The
   panel will say nothing about one until a call answers the trust record for every project at once.
+
+## Settled on 2026-09-20, building step 4.8 of feature 4, where the path and the code disagreed
+
+The path names two counts for the frame that says what is in flight. The code carries both counts. It
+does not carry the cap they sit against, and it does not carry one of the two words the path counts
+sessions by. Both are recorded here, with what the frame draws instead.
+
+**No call the panel makes carries a cap, so the frame draws the count and no cap.**
+- Status: settled, and it is the cost rather than a defect.
+- Step 4.8 of the path reads "steps in state taken against each project's cap", and names the
+  scenario "the panel says what is in flight against the cap". The scenario keeps that name, because
+  the step names it and `krewe step check` runs it by name.
+- `steps_in_flight_cap` is field 17 of `Design`. `GetDesign` takes one project and is the only call
+  that answers it, and no list response carries a design. The panel makes six calls for the whole
+  system, one reading per draw, so a cap per project is a call per project: forty calls every three
+  seconds on a system of forty. Step 4.7 recorded the same finding about the standing trust offer.
+- The default of 10 is rejected as a stand in for the number nobody read. A project whose cap the
+  operator set to 3 would draw "2 of 10", and a number the control plane disagrees with is worse on
+  a panel than no number at all.
+- So the frame draws "2 steps in flight" with the address of the first of them, and says nothing
+  about a cap. `krewe path cap <address>` prints the cap and the count against it, and the projects
+  listing draws both in its flight cell, where the call is already spent per row.
+- The counts are across the system rather than one line per project. Two reasons. Without a cap a
+  project line carries one number, which the frame above already draws as one line with the address
+  of the first. And `TestOneDrawOfThePanelReadsTheSystemAFixedNumberOfTimes`, which step 6 wrote and
+  this step may not edit, holds the panel to two rows per frame on a system of six projects, each
+  holding a step somebody took.
+- A project with no path still draws nothing rather than a count of zero. It holds no step, so it
+  adds nothing to the count, and a system with nothing taken draws one line saying nothing is in
+  flight rather than a zero.
+
+**No session reads "working", so the frame counts the sessions the listing already draws as busy.**
+- Status: settled, and the path uses a word the wire does not carry.
+- Step 4.8 of the path reads "sessions reading running or working".
+- A session's status is idle, running, failed, stopped or reclaimed, in field 4 of `Session`.
+  `internal/display/session.go` adds awake, attached and unknown, read from the sandbox. None of
+  them is "working".
+- So the frame counts a status that `stateFromStatus` in `internal/console/resources.go` already
+  colours busy on the sessions listing. Two words answer yes: running, which the control plane
+  writes while an exec is in flight, and dispatching. The panel and that listing then cannot
+  disagree about which sessions are busy.
+- A session whose row reads idle while a conversation runs inside its container is not counted. That
+  difference is read from the sandbox, one question per session, and the panel asks for no presence.
+  The cost is stated: a container somebody left answering is in flight and this frame does not say
+  so, until a listing carries presence without a question per row.

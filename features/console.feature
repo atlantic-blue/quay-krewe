@@ -64,6 +64,31 @@ Feature: The operator sees the system from the console
     When the operator opens the console
     Then the panel says nothing waits on the operator
 
+  # What the system is working on right now: the sessions with an exec under way, and the steps
+  # somebody holds. The cap each count sits against is one call per project, which the panel does not
+  # spend, so the frame counts across the system. See .greenlight/DECISIONS.md.
+  Scenario: the panel says what is in flight against the cap
+    Given the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+
+      ## 2. The store holds a project's design
+
+      After
+      """
+    And the operator takes step 1
+    And the operator takes step 2
+    And the model takes longer over an exec than anybody will wait
+    And an exec dispatched without waiting for it
+    And an exec dispatched without waiting for it
+    And an exec is under way
+    When the operator opens the console
+    Then the panel says 2 "sessions running" under "in flight"
+    And the panel says 2 "steps in flight" under "in flight"
+    And that line carries the address of the project and step "1.1"
+
   # Moving the default takes nothing away. The tree the console used to open on is one word away, and
   # so is every other view.
   Scenario: Typing the workspaces view still reaches it

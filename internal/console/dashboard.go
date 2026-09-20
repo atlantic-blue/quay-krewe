@@ -48,7 +48,7 @@ func Dashboard(client quaycrewv1.ControlPlaneServiceClient) Resource {
 // first, where the eye goes.
 var panelWidgets = []widget{
 	{id: "needs-you", title: "what needs you", body: whatNeedsYou},
-	{id: "in-flight", title: "in flight"},
+	{id: "in-flight", title: "in flight", body: whatIsInFlight},
 	{id: "the-path", title: "the path"},
 	{id: "trust", title: "trust"},
 	{id: "spend", title: "spend"},
@@ -276,6 +276,81 @@ func waitsOnARestatement(step *quaycrewv1.Step) bool {
 // answering it is what the operator does next.
 func waitsOnAWordToClose(step *quaycrewv1.Step) bool {
 	return waitsForTheOperator(step) && !waitsOnARestatement(step)
+}
+
+// nothingIsInFlight is the whole body of the frame on a system where nothing is moving. Two counts of
+// zero read as two stopped things at a glance, and a project nobody has started would draw the same
+// line as one that stalled.
+const nothingIsInFlight = "nothing is in flight"
+
+// theReadsBehindWhatIsInFlight is every read this frame uses: two to count with, and three to turn the
+// identifiers the counts came from into addresses. Losing any of them empties the frame, for the
+// reason the frame above it is emptied: a count the panel cannot name is a number nobody can act on.
+// The spend is not here, because it says what the system cost and never what it is doing.
+var theReadsBehindWhatIsInFlight = []panelRead{
+	readWorkspaces, readProjects, readSessions, readFeatures, readSteps,
+}
+
+// whatIsInFlight is what the system is working on right now: the sessions with an exec under way, and
+// the steps somebody holds.
+//
+// Two lines, in the shape the frame above uses: a count, what they are, and the address of the first
+// of them. A count of nothing is not drawn at all, so the frame says only what is moving and a system
+// where nothing is says so in one line.
+//
+// The cap each count sits against is not drawn. It is field 17 of Design, GetDesign takes one project
+// and no listing carries it, so a cap per project is a call per project and the panel makes one
+// reading for the whole system. See .greenlight/DECISIONS.md.
+func whatIsInFlight(read panelReading) []string {
+	for _, needed := range theReadsBehindWhatIsInFlight {
+		if !read.answered(needed) {
+			return nil
+		}
+	}
+	book := addressesIn(read)
+
+	var running, held waiting
+	for _, session := range read.sessions {
+		if anExecIsUnderWay(session.GetStatus()) {
+			running.add(book.session(session))
+		}
+	}
+	for _, step := range read.steps {
+		if step.GetState() == stepTaken {
+			held.add(book.step(step))
+		}
+	}
+
+	counted := []struct {
+		one, many string
+		held      waiting
+	}{
+		{"session running", "sessions running", running},
+		{"step in flight", "steps in flight", held},
+	}
+	lines := make([]string, 0, len(counted))
+	for _, count := range counted {
+		if line := count.held.line(count.one, count.many); line != "" {
+			lines = append(lines, line)
+		}
+	}
+	if len(lines) == 0 {
+		return []string{nothingIsInFlight}
+	}
+	return lines
+}
+
+// anExecIsUnderWay says whether a session's status means the system is working in it now.
+//
+// It reads the status through the colour the sessions listing already gives it, so the panel and that
+// listing cannot disagree about which sessions are busy. Two words answer yes today: running, which
+// the control plane writes while an exec is in flight, and dispatching.
+//
+// A session whose row says idle while a conversation runs inside its container is not counted. That
+// difference is read from the sandbox, one question per session, and the panel asks for no presence:
+// six calls is the whole cost of a draw, whatever the system holds.
+func anExecIsUnderWay(status string) bool {
+	return stateFromStatus(status) == StateBusy
 }
 
 // waiting is the addresses of one kind of thing that has stopped until the operator answers.

@@ -212,15 +212,15 @@ func bodyOf(drawn [][]string, title string) []string {
 // The panel is a grid of frames, and this is the grid: one frame per widget, in the order the panel
 // declares them, with what needs the operator at the top.
 //
-// Every frame below the first says nothing at all. A body with a word in it is a widget, and those
-// widgets are the steps after this one.
+// Every frame below the two that have been built says nothing at all. A body with a word in it is a
+// widget, and those widgets are the steps after this one.
 func TestThePanelDrawsAFrameForEveryWidget(t *testing.T) {
 	drawn := drawnBy(t, Dashboard(aSystemOf(2, 2, 1)), "")
 
 	if got := framesDrawn(drawn); strings.Join(got, ",") != strings.Join(theFrames, ",") {
 		t.Fatalf("the panel draws the frames %v, want %v", got, theFrames)
 	}
-	for _, title := range theFrames[1:] {
+	for _, title := range theFrames[2:] {
 		body := bodyOf(drawn, title)
 		if len(body) != 1 || body[0] != "" {
 			t.Errorf("the body of the %q frame says %q, want one empty row", title, body)
@@ -741,5 +741,266 @@ func TestALineTooLongForTheWindowIsCutAndKeepsItsCount(t *testing.T) {
 	}
 	if strings.Contains(drawn, theFirstSession) {
 		t.Fatalf("at 40 columns the whole address is drawn, so the row runs past the frame:\n%s", drawn)
+	}
+}
+
+// What the in flight frame says, case by case. Two counts, each with the address of the first thing
+// behind it, and one line rather than two zeros on a system where nothing is moving.
+//
+// The sessions are counted by the colour the sessions listing already gives their status, so a
+// session this frame counts and a session that listing draws as busy are the same session.
+func TestWhatIsInFlightCountsWhatTheSystemIsWorkingOnNow(t *testing.T) {
+	for _, held := range []struct {
+		named string
+		build func(*dashboardClient)
+		says  []string
+	}{
+		{
+			// The system aSystemOf builds: one step somebody holds, and every session waiting.
+			named: "a step somebody holds and no exec under way",
+			build: func(*dashboardClient) {},
+			says:  []string{"1 step in flight        " + theProjectAddress + " 1.1"},
+		},
+		{
+			named: "nothing is moving at all",
+			build: func(client *dashboardClient) {
+				client.steps[0].State = stepReady
+			},
+			says: []string{nothingIsInFlight},
+		},
+		{
+			named: "one session has an exec under way",
+			build: func(client *dashboardClient) {
+				client.sessions[0].Status = "running"
+			},
+			says: []string{
+				"1 session running       " + theFirstSession,
+				"1 step in flight        " + theProjectAddress + " 1.1",
+			},
+		},
+		{
+			// The other word the sessions listing draws as busy. A session working under it is the
+			// system working, and counting only the first word would leave it off the panel.
+			named: "a working session counts beside a running one",
+			build: func(client *dashboardClient) {
+				client.sessions[0].Status, client.sessions[1].Status = "running", "dispatching"
+			},
+			says: []string{
+				"2 sessions running      " + theFirstSession,
+				"1 step in flight        " + theProjectAddress + " 1.1",
+			},
+		},
+		{
+			named: "a session waiting for work is not in flight",
+			build: func(client *dashboardClient) {
+				client.sessions[0].Status = "idle"
+			},
+			says: []string{"1 step in flight        " + theProjectAddress + " 1.1"},
+		},
+		{
+			named: "a session somebody stopped is not in flight",
+			build: func(client *dashboardClient) {
+				client.sessions[0].Status = "stopped"
+			},
+			says: []string{"1 step in flight        " + theProjectAddress + " 1.1"},
+		},
+		{
+			named: "a session whose last exec did not land is not in flight",
+			build: func(client *dashboardClient) {
+				client.sessions[0].Status = statusFailed
+			},
+			says: []string{"1 step in flight        " + theProjectAddress + " 1.1"},
+		},
+		{
+			// The control plane answers in whatever order it holds, and the panel draws itself again
+			// every three seconds, so the line has to name the same session until that one lands.
+			named: "the sessions come back in the other order",
+			build: func(client *dashboardClient) {
+				client.sessions[0], client.sessions[2] = client.sessions[2], client.sessions[0]
+				client.sessions[0].Status, client.sessions[2].Status = "running", "running"
+			},
+			says: []string{
+				"2 sessions running      " + theFirstSession,
+				"1 step in flight        " + theProjectAddress + " 1.1",
+			},
+		},
+		{
+			named: "two steps somebody holds",
+			build: func(client *dashboardClient) {
+				aTakenStepOf(client, 2)
+			},
+			says: []string{"2 steps in flight       " + theProjectAddress + " 1.1"},
+		},
+		{
+			named: "a step somebody closed is not in flight",
+			build: func(client *dashboardClient) {
+				client.steps[0].State = stepDone
+			},
+			says: []string{nothingIsInFlight},
+		},
+		{
+			named: "a step nobody has taken is not in flight",
+			build: func(client *dashboardClient) {
+				aTakenStepOf(client, 2).State = stepReady
+			},
+			says: []string{"1 step in flight        " + theProjectAddress + " 1.1"},
+		},
+		{
+			// Zero of a cap is a project nobody has started, and a line about it would read as a
+			// project that stalled. The frame says nothing at all about one instead.
+			named: "a project with no path draws nothing rather than a count of zero",
+			build: func(client *dashboardClient) {
+				client.features, client.steps = nil, nil
+			},
+			says: []string{nothingIsInFlight},
+		},
+		{
+			named: "a project with no path beside one with a path",
+			build: func(client *dashboardClient) {
+				client.projects = append(client.projects, &quaycrewv1.Project{
+					Id:        fmt.Sprintf("%012d%012d", 1, 2),
+					Workspace: client.workspaces[0].GetId(),
+					Name:      "project-nobody-has-started",
+				})
+			},
+			says: []string{"1 step in flight        " + theProjectAddress + " 1.1"},
+		},
+	} {
+		t.Run(held.named, func(t *testing.T) {
+			client := aSystemOf(1, 1, 3)
+			held.build(client)
+
+			got := bodyOf(drawnBy(t, Dashboard(client), ""), theFrames[1])
+			if strings.Join(got, "\n") != strings.Join(held.says, "\n") {
+				t.Fatalf("in flight says\n%q\nwant\n%q", got, held.says)
+			}
+		})
+	}
+}
+
+// A project at its cap is drawn the way the projects listing draws one: plainly, with no colour and
+// no mark. The refusal is what the operator reads when they take the next step, and a panel that
+// shouted about a project with work in it would be shouting about the normal state of one.
+//
+// Ten is the cap a project nobody set one on carries, so ten steps in flight is a project at it.
+func TestAProjectAtItsCapIsDrawnPlainly(t *testing.T) {
+	client := aSystemOf(1, 1, 1)
+	for number := int32(2); number <= 10; number++ {
+		aTakenStepOf(client, number)
+	}
+
+	rows, err := Dashboard(client).List(context.Background(), "")
+	if err != nil {
+		t.Fatalf("the panel refused to draw: %v", err)
+	}
+	said := 0
+	for _, row := range rows {
+		if !strings.HasPrefix(row.ID, "in-flight:body:") {
+			continue
+		}
+		said++
+		if want := "10 steps in flight      " + theProjectAddress + " 1.1"; row.Cells[saysCell] != want {
+			t.Errorf("the frame says %q, want %q", row.Cells[saysCell], want)
+		}
+		if row.State != StateUnknown {
+			t.Errorf("the line %q is drawn in state %v, want no colour and no claim",
+				row.Cells[saysCell], row.State)
+		}
+	}
+	if said != 1 {
+		t.Fatalf("the in flight frame drew %d body rows, want one", said)
+	}
+}
+
+// A count on its own is a report, and the address is what turns it into something to act on. Every
+// address the frame draws is read back through the parser the command line reads an address with, so
+// a line carrying an identifier, or a shortened one, fails here.
+func TestEveryAddressTheInFlightFrameDrawsIsOneKreweAccepts(t *testing.T) {
+	client := aSystemOf(1, 1, 3)
+	client.sessions[0].Status = "running"
+
+	body := bodyOf(drawnBy(t, Dashboard(client), ""), theFrames[1])
+	if len(body) != 2 {
+		t.Fatalf("in flight says %q, want two lines", body)
+	}
+	for _, line := range body {
+		fields := strings.Fields(addressOn(t, line))
+		parsed, err := workspace.ParsePath(fields[0])
+		if err != nil {
+			t.Fatalf("the line %q carries %q, which krewe does not read as an address: %v",
+				line, fields[0], err)
+		}
+		if parsed.Workspace != "workspace-1" || parsed.Project != "project-1-1" {
+			t.Errorf("the line %q addresses %q, want the workspace and the project by name", line, parsed)
+		}
+	}
+	if got := addressOn(t, body[0]); got != theFirstSession {
+		t.Errorf("the running session is drawn as %q, want the handle at %q", got, theFirstSession)
+	}
+	for _, identifier := range identifiersOf(client) {
+		for _, line := range body {
+			if strings.Contains(line, identifier[:8]) {
+				t.Errorf("the line %q carries the identifier %q rather than a name", line, identifier)
+			}
+		}
+	}
+}
+
+// Losing a read this frame counts or names with empties the frame, and every other frame is still
+// drawn. A frame that guessed at the part it could not read would put a number on the screen that
+// nothing behind it agrees with.
+func TestLosingAReadEmptiesWhatIsInFlightAndLeavesEveryOtherFrameDrawn(t *testing.T) {
+	for _, refused := range theReadsBehindWhatIsInFlight {
+		t.Run(string(refused), func(t *testing.T) {
+			client := aSystemOf(1, 1, 3)
+			client.sessions[0].Status = "running"
+			client.refuses = refused
+
+			drawn := drawnBy(t, Dashboard(client), "")
+			if got := framesDrawn(drawn); strings.Join(got, ",") != strings.Join(theFrames, ",") {
+				t.Fatalf("losing the %s read draws the frames %v, want all of %v", refused, got, theFrames)
+			}
+			if got := bodyOf(drawn, theFrames[1]); len(got) != 1 || got[0] != "" {
+				t.Fatalf("losing the %s read draws %q in flight, want an empty body", refused, got)
+			}
+		})
+	}
+}
+
+// The other side of that rule: a read this frame does not use costs it nothing. The spend says what
+// the system has cost and never what it is doing.
+func TestLosingTheSpendReadLeavesWhatIsInFlightSaying(t *testing.T) {
+	client := aSystemOf(1, 1, 3)
+	client.sessions[0].Status = "running"
+	client.refuses = readSpend
+
+	got := bodyOf(drawnBy(t, Dashboard(client), ""), theFrames[1])
+	want := []string{
+		"1 session running       " + theFirstSession,
+		"1 step in flight        " + theProjectAddress + " 1.1",
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("losing the spend read draws %q in flight, want %q", got, want)
+	}
+}
+
+// The draw costs what it cost before this frame had a body, on a system where the frame has both of
+// its counts to say. The panel reads the system once and hands that one reading to every frame, so a
+// frame that answered from a call of its own would show up here as a seventh call.
+func TestAFrameWithBothCountsStillCostsTheSixReadings(t *testing.T) {
+	client := aSystemOf(3, 2, 2)
+	for _, session := range client.sessions {
+		session.Status = "running"
+	}
+
+	if _, err := Dashboard(client).List(context.Background(), ""); err != nil {
+		t.Fatalf("the panel refused to draw: %v", err)
+	}
+	made := 0
+	for _, times := range client.counted {
+		made += times
+	}
+	if made != len(everyCallThePanelMakes) {
+		t.Fatalf("one draw made %d calls, want %d", made, len(everyCallThePanelMakes))
 	}
 }
