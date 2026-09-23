@@ -1,0 +1,78 @@
+Feature: A mockup is refused unless every shape names its component
+
+  The mockups stage carries a flows.json, and an operator approves it by playing each story. A
+  session then builds the screens on it. That session has to read which library component each
+  shape stands for, so a shape that names none is a picture nobody can build from.
+
+  The fault used to surface at the end, when the building session reached a rectangle labelled
+  "Sign in" and had to guess. So the artifact is read when it is written. A mockup a session could
+  not build from never reaches the operator to approve.
+
+  A screen is drawn in the colours and the fonts of its tokens, and those come from the
+  design_system stage, which the operator approved before the mockups could be written. A value
+  that stage does not name is a second design system nobody agreed to, so it is refused too.
+
+  The other five stages carry whatever json they carry. Nothing here reaches them.
+
+  Background:
+    Given a running control plane
+    And a workspace named "acme"
+    And a project named "house-bills"
+    And the stages up to the design system are approved, naming the project's colours and fonts
+
+  # The refusal this whole feature exists for. It names the screen and the shape, because a mockup
+  # runs to dozens of screens and an operator told only that a component is missing has to read the
+  # whole file to find out where.
+  Scenario: A mockup with a shape that names no component is refused
+    When the operator writes the mockups stage with a shape that names no component
+    Then the control plane refuses it as invalid
+    And the refusal suggests "sign-in"
+    And the refusal suggests "component"
+    And the project holds no mockups stage
+
+  Scenario: A mockup that names a component on every shape goes in
+    When the operator writes the mockups stage with a component on every shape
+    Then the mockups stage carries the artifact it was given
+
+  # The backstop. The schema is the file the skill tells a session to write from, so a document that
+  # is json and is not a flows.json is refused against the same file rather than kept.
+  Scenario: An artifact that is not a flows file is refused against the schema
+    When the operator writes the mockups stage with the artifact:
+      """
+      {"screens": {}}
+      """
+    Then the control plane refuses it as invalid
+    And the refusal suggests "schema"
+
+  # The tokens are what every screen is drawn in, so one colour outside the design system is wrong
+  # on every screen of the mockup.
+  Scenario: A mockup drawn in a colour the design system does not name is refused
+    When the operator writes the mockups stage drawn in the colour "#ff0000"
+    Then the control plane refuses it as invalid
+    And the refusal suggests "#ff0000"
+    And the refusal suggests "design_system"
+
+  Scenario: A mockup drawn in a font the design system does not name is refused
+    When the operator writes the mockups stage drawn in the font "Comic Sans MS, cursive"
+    Then the control plane refuses it as invalid
+    And the refusal suggests "Comic Sans MS"
+
+  # Prose first and the page after is how a stage gets written. A mockups stage with nothing to read
+  # has nothing to refuse.
+  Scenario: A mockups stage carrying prose alone is not refused
+    When the operator writes the "mockups" design stage as "the screens, in words"
+    And the operator reads the project's design stages
+    Then the "mockups" design stage reads "the screens, in words"
+
+  # The check belongs to the mockups and to nothing else. A check that reached the other five would
+  # refuse the discovery stage for not being a flows.json.
+  Scenario: A stage that is not the mockups carries any json it likes
+    When the operator writes the "discovery" design stage with the artifact:
+      """
+      {"asked": ["when does it move"]}
+      """
+    And the operator reads the project's design stages
+    Then the "discovery" design stage carries an artifact meaning:
+      """
+      {"asked":["when does it move"]}
+      """

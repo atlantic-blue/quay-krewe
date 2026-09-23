@@ -713,6 +713,7 @@ func initializeScenario(sc *godog.ScenarioContext) {
 	initializeStageCommandSteps(sc)
 	initializeStageGateSteps(sc)
 	initializeFlowMapSteps(sc)
+	initializeMockupCheckSteps(sc)
 	initializeRedRunSteps(sc)
 	initializePathSteps(sc)
 	initializePathRenderSteps(sc)
@@ -764,6 +765,7 @@ func initializeScenario(sc *godog.ScenarioContext) {
 	initializeConstantBranchesSteps(sc)
 	initializeCommandSteps(sc)
 	initializeDiscoverSteps(sc)
+	initializeDesignOrderSteps(sc)
 	initializeTestGateSteps(sc)
 	// Tear the control plane down. The scenario's own failure is already recorded, so this returns
 	// nil rather than the incoming error, which would be reported a second time as a hook failure.

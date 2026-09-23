@@ -1,4 +1,4 @@
-package flowmap
+package render
 
 import (
 	"encoding/json"
