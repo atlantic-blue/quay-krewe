@@ -711,6 +711,7 @@ func initializeScenario(sc *godog.ScenarioContext) {
 	initializeStageCommandSteps(sc)
 	initializeStageGateSteps(sc)
 	initializeFlowMapSteps(sc)
+	initializeMockupCheckSteps(sc)
 	initializeRedRunSteps(sc)
 	initializePathSteps(sc)
 	initializePathRenderSteps(sc)

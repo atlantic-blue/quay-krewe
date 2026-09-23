@@ -1,4 +1,4 @@
-// Package flowmap runs the flow map page's own renderer outside a browser.
+// Package render runs the flow map page's own renderer outside a browser.
 //
 // The page draws a screen in JavaScript, in a script block that touches no document. This package
 // reads that block out of index.html, runs it over a flows.json, and answers with the markup an
@@ -6,7 +6,11 @@
 //
 // It is here rather than under internal/ because it belongs to the skill. The page and the harness
 // that proves the page move together, and a reader of the skill directory finds both.
-package flowmap
+//
+// It sits under the skill rather than beside schema.json because it carries a JavaScript engine.
+// The control plane reads the schema and must not link the engine: the engine costs the server
+// 7.8 MB and the server never runs a line of JavaScript.
+package render
 
 import (
 	"encoding/json"

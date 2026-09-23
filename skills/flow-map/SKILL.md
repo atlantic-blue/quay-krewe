@@ -33,7 +33,8 @@ names no component.
 
 ## Tokens
 
-Take the values from the approved design_system stage. Do not invent them here.
+Take the values from the approved design_system stage. Do not invent them here. The mockups stage
+refuses a colour or a font that stage does not name.
 
 The page draws with these names: colour `surface`, `surface-low`, `ink`, `muted`, `line`,
 `primary`, `on-primary` and `frame`; font `sans` and `mono`; radius `screen`, `control` and
