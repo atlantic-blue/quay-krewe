@@ -39,11 +39,18 @@ func initializeStageSteps(sc *godog.ScenarioContext) {
 			return writeStage(ctx, stage, unescape(body), "")
 		})
 
+	// A body that runs to more than one line arrives as a docstring, because a diagram is a fenced
+	// block and a fenced block is three lines at the shortest.
+	sc.Step(`^the operator writes the "([^"]*)" design stage as:$`,
+		func(ctx context.Context, stage string, body *godog.DocString) error {
+			return writeStage(ctx, stage, body.Content, "")
+		})
+
 	// The artifact arrives as a docstring rather than inside quotes, because it is json and json is
 	// mostly quotes.
 	sc.Step(`^the operator writes the "([^"]*)" design stage with the artifact:$`,
 		func(ctx context.Context, stage string, artifact *godog.DocString) error {
-			return writeStage(ctx, stage, "the "+stage+" body", artifact.Content)
+			return writeStage(ctx, stage, settledBody(stage), artifact.Content)
 		})
 
 	sc.Step(`^the operator approves the "([^"]*)" design stage$`, func(ctx context.Context, stage string) error {
@@ -84,6 +91,32 @@ func initializeStageSteps(sc *godog.ScenarioContext) {
 		}
 		if held := stagesFrom(ctx).stages; len(held) != 0 {
 			return fmt.Errorf("the project holds %v, and nothing was supposed to be written", stageNames(held))
+		}
+		return nil
+	})
+
+	// The picture itself, rather than the whole body word for word. What the rule asks for is a
+	// diagram in the stage, and a scenario that repeated the body would be reading the setup back.
+	sc.Step(`^the "([^"]*)" design stage carries a diagram$`, func(ctx context.Context, stage string) error {
+		held, err := stageRead(ctx, stage)
+		if err != nil {
+			return err
+		}
+		if !strings.Contains(held.GetBody(), "```mermaid") {
+			return fmt.Errorf("the %s stage reads %q, and it holds no mermaid block", stage, held.GetBody())
+		}
+		return nil
+	})
+
+	// The other half of a refusal: the write left nothing behind. A refusal that stored the text
+	// anyway would leave the operator a stage they cannot see and cannot approve.
+	sc.Step(`^the project holds no "([^"]*)" design stage$`, func(ctx context.Context, stage string) error {
+		if err := readStages(ctx); err != nil {
+			return err
+		}
+		if held := stageNamed(stagesFrom(ctx).stages, stage); held != nil {
+			return fmt.Errorf("the project holds a %s stage reading %q, and the write was refused",
+				stage, held.GetBody())
 		}
 		return nil
 	})
@@ -209,7 +242,7 @@ func approveStage(ctx context.Context, stage string) error {
 // settleStage is the setup step: a stage is written and then agreed, and a refusal of either is the
 // setup failing rather than the scenario's own refusal to read later.
 func settleStage(ctx context.Context, stage string) error {
-	if err := writeStage(ctx, stage, "the "+stage+" body", ""); err != nil {
+	if err := writeStage(ctx, stage, settledBody(stage), ""); err != nil {
 		return err
 	}
 	if w := worldFrom(ctx); w.lastErr != nil {
@@ -222,6 +255,19 @@ func settleStage(ctx context.Context, stage string) error {
 		return fmt.Errorf("approving the %s stage was refused: %w", stage, w.lastErr)
 	}
 	return nil
+}
+
+// settledBody is the body the setup writes for one stage.
+//
+// The data model and the architecture each describe a structure, and a structure is written as a
+// picture, so a write of either carries a diagram or it is refused. A setup without one would be
+// refused, and every scenario standing on it would read as a failure of its own.
+func settledBody(stage string) string {
+	body := "the " + stage + " body"
+	if stage == store.StageDataModel || stage == store.StageArchitecture {
+		return body + "\n\n```mermaid\nflowchart TD\n  one --> two\n```\n"
+	}
+	return body
 }
 
 // stageRead is one stage out of the last listing, and it reads the listing when no step has yet.

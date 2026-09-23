@@ -31,10 +31,22 @@ func aFileSaying(t *testing.T, name, body string) string {
 }
 
 // settle writes a stage and approves it, which is the only way past the rule that orders the six.
+//
+// The data model and the architecture are refused without a diagram, so the file written for those
+// two holds one.
 func settle(t *testing.T, client quaycrewv1.ControlPlaneServiceClient, stage string) {
 	t.Helper()
-	mustRun(t, client, "stage", "set", stage, flagFile, aFileSaying(t, stage+".md", "the "+stage+"\n"))
+	mustRun(t, client, "stage", "set", stage, flagFile, aFileSaying(t, stage+".md", stageFileFor(stage)))
 	mustRun(t, client, "stage", "approve", stage)
+}
+
+// stageFileFor is what the settle helper writes into the file for one stage.
+func stageFileFor(stage string) string {
+	text := "the " + stage + "\n"
+	if stage == store.StageDataModel || stage == store.StageArchitecture {
+		return text + "\n```mermaid\nflowchart TD\n  one --> two\n```\n"
+	}
+	return text
 }
 
 // The listing says where the project is up to, so it names all six. A listing of the stages that

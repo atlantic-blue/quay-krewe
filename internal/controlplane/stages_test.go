@@ -26,7 +26,7 @@ func TestAStageIsRefusedWhileTheStageBeforeItIsNotApproved(t *testing.T) {
 	_, projectID := newProject(t, s)
 
 	_, err := s.SetDesignStage(ctx, &quaycrewv1.SetDesignStageRequest{
-		Project: projectID, Stage: store.StageDataModel, Body: "the tables",
+		Project: projectID, Stage: store.StageDataModel, Body: stageBody(store.StageDataModel),
 	})
 	if status.Code(err) != codes.FailedPrecondition {
 		t.Fatalf("writing the data model first answered %v, want FailedPrecondition", err)
@@ -57,7 +57,7 @@ func TestTheSixStagesAreWrittenAndApprovedInOrder(t *testing.T) {
 
 	for _, stage := range store.DesignStages() {
 		written, err := s.SetDesignStage(ctx, &quaycrewv1.SetDesignStageRequest{
-			Project: projectID, Stage: stage, Body: "the " + stage + " body",
+			Project: projectID, Stage: stage, Body: stageBody(stage),
 		})
 		if err != nil {
 			t.Fatalf("SetDesignStage %s: %v", stage, err)
@@ -98,7 +98,7 @@ func TestWritingAStageSaysWhichApprovalsItTookAway(t *testing.T) {
 
 	for _, stage := range store.DesignStages() {
 		if _, err := s.SetDesignStage(ctx, &quaycrewv1.SetDesignStageRequest{
-			Project: projectID, Stage: stage, Body: "the " + stage + " body",
+			Project: projectID, Stage: stage, Body: stageBody(stage),
 		}); err != nil {
 			t.Fatalf("SetDesignStage %s: %v", stage, err)
 		}
@@ -355,4 +355,212 @@ func TestWhatASessionMayDoWithTheStages(t *testing.T) {
 				method, err)
 		}
 	}
+}
+
+// SITE-10. The two stages that describe a structure carry a picture of it.
+//
+// A data model or an architecture written as prose alone is read a different way by every reader,
+// and the operator then approves a paragraph rather than a design. So the write is refused until the
+// body holds a fenced block marked mermaid, and the refusal says which stage and what to write.
+
+// The stage the step is named for. The refusal is InvalidArgument rather than FailedPrecondition,
+// because the body itself is what is wrong: no later approval makes this same call go through.
+func TestAnArchitectureStageWithNoDiagramIsRefused(t *testing.T) {
+	s := newServer(&model.FakeRunner{})
+	ctx := context.Background()
+	_, projectID := newProject(t, s)
+	designedUpTo(t, s, projectID, store.StageArchitecture)
+
+	_, err := s.SetDesignStage(ctx, &quaycrewv1.SetDesignStageRequest{
+		Project: projectID, Stage: store.StageArchitecture,
+		Body: "the control plane holds the store, and a session talks to the control plane",
+	})
+
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("writing an architecture of prose answered %v, want InvalidArgument", err)
+	}
+	said := status.Convert(err).Message()
+	if !strings.Contains(said, store.StageArchitecture) {
+		t.Errorf("the refusal reads %q, and it has to name the stage it is about", said)
+	}
+	if !strings.Contains(said, "mermaid") {
+		t.Errorf("the refusal reads %q, and it has to say what to write", said)
+	}
+	if !strings.Contains(said, "diagram") {
+		t.Errorf("the refusal reads %q, and it has to say a diagram is what is missing", said)
+	}
+
+	if held := stagesHeld(t, s, projectID); stageInList(held, store.StageArchitecture) != nil {
+		t.Error("the refused write left an architecture stage behind")
+	}
+}
+
+// The data model carries the same rule, and its refusal names the data model rather than the stage
+// the rule was written for.
+func TestADataModelStageWithNoDiagramIsRefused(t *testing.T) {
+	s := newServer(&model.FakeRunner{})
+	ctx := context.Background()
+	_, projectID := newProject(t, s)
+	designedUpTo(t, s, projectID, store.StageDataModel)
+
+	_, err := s.SetDesignStage(ctx, &quaycrewv1.SetDesignStageRequest{
+		Project: projectID, Stage: store.StageDataModel, Body: "one table for each bill",
+	})
+
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("writing a data model of prose answered %v, want InvalidArgument", err)
+	}
+	if said := status.Convert(err).Message(); !strings.Contains(said, store.StageDataModel) {
+		t.Errorf("the refusal reads %q, and it has to name the stage it is about", said)
+	}
+	if held := stagesHeld(t, s, projectID); stageInList(held, store.StageDataModel) != nil {
+		t.Error("the refused write left a data model stage behind")
+	}
+}
+
+// The other half. A body with a diagram goes in, and it is kept whole, so the rule adds a condition
+// and takes nothing away.
+func TestAnArchitectureStageWithADiagramGoesIn(t *testing.T) {
+	s := newServer(&model.FakeRunner{})
+	ctx := context.Background()
+	_, projectID := newProject(t, s)
+	designedUpTo(t, s, projectID, store.StageArchitecture)
+	body := "the control plane holds the store\n\n```mermaid\nflowchart LR\n  session --> store\n```\n"
+
+	written, err := s.SetDesignStage(ctx, &quaycrewv1.SetDesignStageRequest{
+		Project: projectID, Stage: store.StageArchitecture, Body: body,
+	})
+	if err != nil {
+		t.Fatalf("writing an architecture with a diagram: %v", err)
+	}
+	if written.GetStage().GetBody() != body {
+		t.Errorf("the stage reads %q, want the body it was given", written.GetStage().GetBody())
+	}
+}
+
+// An empty body holds no diagram, so it earns the same refusal rather than a second message about
+// the same fault.
+func TestAnEmptyArchitectureStageIsRefusedAsHavingNoDiagram(t *testing.T) {
+	s := newServer(&model.FakeRunner{})
+	ctx := context.Background()
+	_, projectID := newProject(t, s)
+	designedUpTo(t, s, projectID, store.StageArchitecture)
+
+	_, err := s.SetDesignStage(ctx, &quaycrewv1.SetDesignStageRequest{
+		Project: projectID, Stage: store.StageArchitecture, Body: "",
+	})
+
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("writing an empty architecture answered %v, want InvalidArgument", err)
+	}
+	if said := status.Convert(err).Message(); !strings.Contains(said, "mermaid") {
+		t.Errorf("the refusal reads %q, and it has to say what to write", said)
+	}
+}
+
+// What counts as a diagram, and what does not.
+//
+// The fence is what a renderer keys on, so this is the same reading a renderer does: the block
+// opens with three backticks or three tildes, and the first word after it is mermaid. A body that
+// only talks about mermaid holds no picture, and a language whose name starts with mermaid is
+// another language.
+func TestWhatCountsAsADiagramInAStage(t *testing.T) {
+	for _, body := range []struct {
+		what   string
+		text   string
+		counts bool
+	}{
+		{what: "a fenced block", text: "the shape\n\n```mermaid\nflowchart LR\n  a --> b\n```\n", counts: true},
+		{what: "a block fenced with tildes", text: "~~~mermaid\nflowchart LR\n  a --> b\n~~~\n", counts: true},
+		{what: "a fence carrying more than the language", text: "```mermaid title=bills\nflowchart LR\n  a --> b\n```\n", counts: true},
+		{what: "a fence indented under a list item", text: "- the shape\n\n  ```mermaid\n  flowchart LR\n    a --> b\n  ```\n", counts: true},
+		{what: "a diagram after some prose", text: "one table for each bill.\n\nthe rest:\n\n```mermaid\nerDiagram\n  BILL ||--o{ PAYMENT : has\n```", counts: true},
+		{what: "prose about a diagram", text: "the mermaid diagram is in the wiki", counts: false},
+		{what: "a fenced block of something else", text: "```go\nfunc main() {}\n```\n", counts: false},
+		{what: "a language whose name begins with mermaid", text: "```mermaidjs\nflowchart LR\n  a --> b\n```\n", counts: false},
+		{what: "a fence that names no language", text: "```\nflowchart LR\n  a --> b\n```\n", counts: false},
+	} {
+		t.Run(body.what, func(t *testing.T) {
+			s := newServer(&model.FakeRunner{})
+			_, projectID := newProject(t, s)
+			designedUpTo(t, s, projectID, store.StageArchitecture)
+
+			_, err := s.SetDesignStage(context.Background(), &quaycrewv1.SetDesignStageRequest{
+				Project: projectID, Stage: store.StageArchitecture, Body: body.text,
+			})
+
+			if body.counts && err != nil {
+				t.Fatalf("%s was refused: %v", body.what, err)
+			}
+			if !body.counts && status.Code(err) != codes.InvalidArgument {
+				t.Fatalf("%s answered %v, want InvalidArgument", body.what, err)
+			}
+		})
+	}
+}
+
+// The rule is about the two stages that describe a structure. A discovery is what somebody was
+// asked and told, and a rule over all six would refuse the four stages nobody can draw.
+func TestTheOtherFourStagesAreWrittenWithoutADiagram(t *testing.T) {
+	s := newServer(&model.FakeRunner{})
+	ctx := context.Background()
+	_, projectID := newProject(t, s)
+
+	for _, stage := range []string{
+		store.StageDiscovery, store.StageStories, store.StageDesignSystem, store.StageMockups,
+	} {
+		if _, err := s.SetDesignStage(ctx, &quaycrewv1.SetDesignStageRequest{
+			Project: projectID, Stage: stage, Body: "the " + stage + " body",
+		}); err != nil {
+			t.Fatalf("writing %s as prose was refused: %v", stage, err)
+		}
+		if _, err := s.ApproveDesignStage(ctx, &quaycrewv1.ApproveDesignStageRequest{
+			Project: projectID, Stage: stage,
+		}); err != nil {
+			t.Fatalf("ApproveDesignStage %s: %v", stage, err)
+		}
+	}
+}
+
+// stageBody is the body a test writes for one stage.
+//
+// The data model and the architecture carry a diagram or they are refused, so a setup that writes
+// all six writes a picture into those two. Every other stage is prose.
+func stageBody(stage string) string {
+	body := "the " + stage + " body"
+	if stage == store.StageDataModel || stage == store.StageArchitecture {
+		return body + "\n\n```mermaid\nflowchart TD\n  one --> two\n```\n"
+	}
+	return body
+}
+
+// designedUpTo writes and approves every stage before the one named, which is the only state a
+// write of that stage is read in.
+func designedUpTo(t *testing.T, s *controlplane.Server, projectID, stage string) {
+	t.Helper()
+	for _, before := range store.DesignStagesBefore(stage) {
+		writeStage(t, s, projectID, before)
+		approveStage(t, s, projectID, before)
+	}
+}
+
+// stagesHeld is what the project holds now, read back through the call an operator reads it with.
+func stagesHeld(t *testing.T, s *controlplane.Server, projectID string) []*quaycrewv1.DesignStage {
+	t.Helper()
+	listed, err := s.ListDesignStages(context.Background(), &quaycrewv1.ListDesignStagesRequest{
+		Project: projectID,
+	})
+	if err != nil {
+		t.Fatalf("ListDesignStages: %v", err)
+	}
+	return listed.GetStages()
+}
+
+func stageInList(stages []*quaycrewv1.DesignStage, stage string) *quaycrewv1.DesignStage {
+	for _, held := range stages {
+		if held.GetStage() == stage {
+			return held
+		}
+	}
+	return nil
 }
