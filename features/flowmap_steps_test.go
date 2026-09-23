@@ -7,7 +7,7 @@ import (
 	"regexp"
 	"strings"
 
-	flowmap "github.com/atlantic-blue/quay-krewe/skills/flow-map"
+	flowmap "github.com/atlantic-blue/quay-krewe/skills/flow-map/render"
 	"github.com/cucumber/godog"
 )
 
