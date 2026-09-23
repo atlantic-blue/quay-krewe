@@ -2,11 +2,13 @@ package main
 
 import (
 	"fmt"
+	"path"
 	"strings"
 )
 
 // Building is the environment variable that says this session is building against tests it did not
-// write. The system sets it on the exec of a worker in the build stage, and on nothing else.
+// write. It is read for a worker the system starts under it, and the mark in walk.go is what says so
+// for a session that was already running when its tests were seen to fail.
 //
 // A command line that sets it is refused, whatever else it does, and so is a command line that unsets
 // it. A session that could set the variable could put itself outside the boundary, and a boundary a
@@ -45,6 +47,11 @@ func Decide(tool string, input Input, building bool, holds func(string) bool) (R
 	// The lift is checked first, and it is checked even where the gate is off. Setting the variable is
 	// the one thing that is refused whatever else the line says.
 	if refusal, refused := setsTheVariable(input.Command); refused {
+		return refusal, true
+	}
+	// The mark is the other half of the same rule, and it is checked in the same place and for the
+	// same reason: what puts a session inside or outside the boundary is never the session's to move.
+	if refusal, refused := touchesTheMark(tool, input); refused {
 		return refusal, true
 	}
 	if !building {
@@ -177,4 +184,61 @@ func segmentsOf(line string) [][]string {
 		found = append(found, words)
 	}
 	return found
+}
+
+// touchesTheMark refuses a session that writes the mark or takes it away.
+//
+// It is the same rule as the one above, on the thing the system writes now. A session that can clear
+// its own mark is outside the boundary the moment it decides to be, and a boundary a session lifts
+// is advice with extra steps. The directory holding the mark counts too: a command that takes the
+// directory takes the mark inside it.
+//
+// Reading is not touched, so `cat .krewe/building` and `ls .krewe` go through. A session that cannot
+// read why it was refused argues with the refusal rather than answering it.
+func touchesTheMark(tool string, input Input) (Refusal, bool) {
+	for _, where := range []string{input.FilePath, input.NotebookPath, input.Path} {
+		if theMark(where) {
+			return markRefusal(where, said(tool)+" writes to it."), true
+		}
+	}
+	if input.Command == "" {
+		return Refusal{}, false
+	}
+	written := WrittenBy(input.Command)
+	for _, where := range append(written.Paths, written.Named...) {
+		if theMark(where) {
+			return markRefusal(where, "This command writes to it."), true
+		}
+	}
+	for _, cover := range written.Covers {
+		if theMark(cover.Path) {
+			return markRefusal(cover.Path, cover.Program+" takes it whole."), true
+		}
+	}
+	return Refusal{}, false
+}
+
+// theMark says whether a path is the mark, or the directory holding it.
+func theMark(where string) bool {
+	where = strings.TrimSpace(where)
+	if where == "" {
+		return false
+	}
+	cleaned := path.Clean(strings.ReplaceAll(where, `\`, "/"))
+	if path.Base(cleaned) == MarkDir {
+		return true
+	}
+	return path.Base(cleaned) == MarkFile && path.Base(path.Dir(cleaned)) == MarkDir
+}
+
+// markRefusal is what a session gets when it reaches for its own mark.
+func markRefusal(where, doing string) Refusal {
+	return Refusal{
+		What: fmt.Sprintf("%s is the mark that says whether this session is building, and it is the "+
+			"system's to write. %s", where, doing),
+		Instead: "A session that decides its own boundary has no boundary. The system writes this " +
+			"when it records a run that saw this step's tests fail, and takes it away when the step " +
+			"is over. You may read it. If you believe this session should not be under the boundary, " +
+			"say so in your answer, name the file and say why.",
+	}
 }

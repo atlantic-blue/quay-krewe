@@ -45,13 +45,21 @@ type Input struct {
 }
 
 func main() {
-	os.Exit(Run(os.Stdin, os.Stderr, os.Getenv(Building) != ""))
+	// The runtime sends where the session is working, and this is the fallback for one that does not.
+	here, err := os.Getwd()
+	if err != nil {
+		here = ""
+	}
+	os.Exit(Run(os.Stdin, os.Stderr, os.Getenv(Building) != "", here))
 }
 
 // Run reads what the runtime sends and answers it. Everything that is not a write this hook
 // understands is allowed, including a payload it cannot read: a gate that refuses what it does not
 // understand refuses the work, and a broken hook must not be able to stop a system.
-func Run(in io.Reader, errs io.Writer, building bool) int {
+// set is the environment variable, which the system writes on a worker it starts under the boundary.
+// here is this process's own directory, which is where the mark is read from when the runtime does
+// not say where the session is working.
+func Run(in io.Reader, errs io.Writer, set bool, here string) int {
 	body, err := io.ReadAll(in)
 	if err != nil {
 		return 0
@@ -59,10 +67,18 @@ func Run(in io.Reader, errs io.Writer, building bool) int {
 	var event struct {
 		ToolName  string `json:"tool_name"`
 		ToolInput Input  `json:"tool_input"`
+		// Where the session is working. The runtime sends it, and the process directory is the
+		// fallback for a runtime that does not.
+		Cwd string `json:"cwd"`
 	}
 	if err := json.Unmarshal(body, &event); err != nil {
 		return 0
 	}
+	dir := event.Cwd
+	if dir == "" {
+		dir = here
+	}
+	building := set || Marked(dir)
 	refusal, refused := Decide(event.ToolName, event.ToolInput, building, HoldsATest)
 	if !refused {
 		return 0

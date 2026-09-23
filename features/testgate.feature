@@ -69,11 +69,13 @@ Feature: After its red run, a building session cannot change a test
     Then the session holding the step is under the test gate
     And a session holding no step is not under the test gate
 
-  # The mark is written again on every exec, out of the record the store holds. A session whose
-  # container was replaced comes back under the gate rather than out from under it.
-  Scenario: The gate is still on at the next exec
+  # The mark is written again on every exec, out of the record the store holds, rather than only at
+  # the moment of the run. So a session that lost it, to a container replaced or to a hand reaching
+  # into the directory, comes back under the gate at its next exec.
+  Scenario: The gate is put back at the next exec
     Given the run answers "1 scenarios (0 passed, 1 failed)" and exits 1
     And the operator checks step 1
+    And the mark is taken off the session from outside
     When the operator dispatches "carry on" to the same session
     Then the session holding the step is under the test gate
     And the test gate refuses that session a write to "features/brief_test.go"

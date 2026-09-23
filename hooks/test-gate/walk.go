@@ -57,3 +57,41 @@ func HoldsATest(where string) bool {
 	})
 	return full
 }
+
+// The mark is how the system says this session is building.
+//
+// It is a file rather than an environment variable because of when the gate comes on. A session
+// writes the tests first, watches them fail, and only then builds against them, so the boundary
+// arrives in the middle of that session's life. A container that is already running cannot be handed
+// a new variable, and it can be handed a file: the session's own directory is a bind mount, so the
+// system writes into it from outside and the next tool call reads it.
+const (
+	// MarkDir is the directory the system already writes the design, the path and the contracts into.
+	MarkDir = ".krewe"
+	// MarkFile is the mark itself. What is in it is for a person to read; the gate reads whether it
+	// is there.
+	MarkFile = "building"
+)
+
+// Marked says whether the session working here is building against tests it has seen fail.
+//
+// It looks up the tree rather than in one directory. A session clones the repository it works on
+// into its own directory, so most commands run one or two directories below the mark, and a read of
+// the working directory alone would find nothing and turn the gate off for the whole build.
+//
+// A directory it cannot read answers no, for the reason a broken hook must not stop a system.
+func Marked(dir string) bool {
+	if strings.TrimSpace(dir) == "" {
+		return false
+	}
+	for at := filepath.Clean(dir); ; {
+		if _, err := os.Stat(filepath.Join(at, MarkDir, MarkFile)); err == nil {
+			return true
+		}
+		up := filepath.Dir(at)
+		if up == at {
+			return false
+		}
+		at = up
+	}
+}

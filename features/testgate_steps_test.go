@@ -90,6 +90,21 @@ func initializeTestGateSteps(sc *godog.ScenarioContext) {
 			return theTestGateRefused(ctx, false)
 		})
 
+	// Nothing inside the sandbox can do this: the gate refuses the session every way of reaching the
+	// file. It stands in for the mark being lost rather than removed, which is what a working
+	// directory restored under a replaced container looks like.
+	sc.Step(`^the mark is taken off the session from outside$`, func(ctx context.Context) error {
+		dir, err := theStepSessionDir(ctx)
+		if err != nil {
+			return err
+		}
+		at := filepath.Join(dir, theMarkFile)
+		if _, err := os.Stat(at); err != nil {
+			return fmt.Errorf("there is no mark to take off at %s, so this proves nothing: %w", at, err)
+		}
+		return os.Remove(at)
+	})
+
 	sc.Step(`^the refusal says to answer that the test is wrong instead$`, func(ctx context.Context) error {
 		said := worldFrom(ctx).testGate.said
 		for _, needed := range []string{"say so in your answer", "name the file"} {

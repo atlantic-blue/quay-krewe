@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	quaycrewv1 "github.com/atlantic-blue/quay-krewe/gen/quaycrew/v1"
@@ -380,6 +381,9 @@ const (
 	// session in the project and a contracts document is long: this repository carries 127 contracts
 	// across 44 slices. The take text names it, and a model that needs it opens it.
 	contractsFile = "contracts.md"
+	// buildingFile is the mark that puts a session under the test gate, in the same dot directory.
+	// The hook reads whether it is there; what is in it is for a person who opens it.
+	buildingFile = "building"
 )
 
 // renderDesign puts the design body in the session's working directory and returns the summary that
@@ -425,6 +429,45 @@ func (s *Server) renderContracts(ctx context.Context, project, dir string) {
 		return
 	}
 	s.writeSessionFile(dir, contractsFile, "contracts", design.GetContracts())
+}
+
+// renderBuilding puts the mark that says this session is building where the test gate reads it, or
+// takes it away.
+//
+// The gate is on from the moment krewe records the run that saw the step's tests fail, and not
+// before. The same session writes those tests first, so a gate that was on from the take would
+// refuse the session for doing what the step asked of it.
+//
+// It is written on every exec as well as at the moment of the run, out of the record the store
+// holds, so a session whose container was replaced comes back under the gate rather than out from
+// under it. A step nobody holds any more answers nil here, which is what takes the mark away.
+func (s *Server) renderBuilding(ctx context.Context, session *quaycrewv1.Session, dir string) {
+	on, _ := s.stepThisSessionHolds(ctx, session)
+	s.markBuilding(dir, on)
+}
+
+// markBuilding writes or clears the mark for one step in one directory.
+func (s *Server) markBuilding(dir string, on *quaycrewv1.Step) {
+	s.writeSessionFile(dir, buildingFile, "test gate mark", whyTheGateIsOn(on))
+}
+
+// whyTheGateIsOn is what somebody reads when they open the mark, and the empty string for a step
+// whose tests nobody has seen fail, which is what takes the file away.
+//
+// A run that failed with no scenario in it executed nothing, so it says nothing about the tests and
+// turns nothing on. That is the reading the word done already makes, and the two have to agree.
+func whyTheGateIsOn(on *quaycrewv1.Step) string {
+	if on.GetRedRunAt() == nil {
+		return ""
+	}
+	return fmt.Sprintf("This session is building against tests it has seen fail.\n\n"+
+		"Step %d's scenario ran on %s. It failed, with %d scenario(s) in the run. From that moment a "+
+		"write to a test file is refused: the suite is the only thing holding the requirement, and a "+
+		"build that edits the test proves nothing.\n\n"+
+		"You may read the tests. If you believe a test is wrong, say so in your answer, name the file "+
+		"and the assertion, and say what it should assert. A person decides that.\n",
+		on.GetNumber(), on.GetRedRunAt().AsTime().UTC().Format(time.RFC3339),
+		on.GetRedRunScenarios())
 }
 
 // stepThisSessionHolds is the step this session took and how many steps that step's path has, and
