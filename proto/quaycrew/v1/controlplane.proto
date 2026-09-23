@@ -912,6 +912,17 @@ message Step {
   // The take clears it, the way it clears the restatement and the verdict: a second attempt sees its
   // own tests fail rather than standing on the record of the attempt that stopped.
   google.protobuf.Timestamp red_run_at = 28;
+  // red_run_required says whether the red run rule bound this step: true where the take that
+  // started it happened under the rule, and false on a row that was written before the rule existed.
+  //
+  // A step a session was holding when the rule arrived has its code written and its tests passing,
+  // so no run of it can go red any more. The word done reads this field, and a step it does not bind
+  // closes on a check alone.
+  //
+  // The take writes it, and nothing else does. A step that stopped and is taken again is bound, the
+  // way its second attempt clears the restatement and the verdict: the attempt that starts now
+  // starts under the rule.
+  bool red_run_required = 29;
 }
 
 // Milestone is one group of a feature's steps. A feature is delivered in milestones, and a milestone

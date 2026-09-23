@@ -1,0 +1,16 @@
+-- Whether the red run rule bound this step: true where the take that started it happened under the
+-- rule, and false on every row that was already there.
+--
+-- The rule arrived after work had started. A step a session was holding then has its code written
+-- and its tests passing, so no run of it can go red any more. Read against every row, the rule left
+-- that step unable to finish at all, and the only ways out were to write the record of a run nobody
+-- made or to take the step again and build it twice.
+--
+-- So the default is false, which is what every row this statement lands on reads. The take writes
+-- true from now on, including a take of a step that stopped and is taken again, because a second
+-- attempt starts under the rule whatever the first one started under.
+--
+-- The check that some run was read is not scoped by this. Nothing checked a step and a step whose
+-- tests nobody saw fail are two different states, and the first one is refused on every step, the
+-- way it was before the rule.
+alter table feature_steps add column if not exists red_run_required boolean not null default false;

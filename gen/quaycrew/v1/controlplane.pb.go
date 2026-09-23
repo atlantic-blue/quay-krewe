@@ -5133,9 +5133,20 @@ type Step struct {
 	//
 	// The take clears it, the way it clears the restatement and the verdict: a second attempt sees its
 	// own tests fail rather than standing on the record of the attempt that stopped.
-	RedRunAt      *timestamppb.Timestamp `protobuf:"bytes,28,opt,name=red_run_at,json=redRunAt,proto3" json:"red_run_at,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	RedRunAt *timestamppb.Timestamp `protobuf:"bytes,28,opt,name=red_run_at,json=redRunAt,proto3" json:"red_run_at,omitempty"`
+	// red_run_required says whether the red run rule bound this step: true where the take that
+	// started it happened under the rule, and false on a row that was written before the rule existed.
+	//
+	// A step a session was holding when the rule arrived has its code written and its tests passing,
+	// so no run of it can go red any more. The word done reads this field, and a step it does not bind
+	// closes on a check alone.
+	//
+	// The take writes it, and nothing else does. A step that stopped and is taken again is bound, the
+	// way its second attempt clears the restatement and the verdict: the attempt that starts now
+	// starts under the rule.
+	RedRunRequired bool `protobuf:"varint,29,opt,name=red_run_required,json=redRunRequired,proto3" json:"red_run_required,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *Step) Reset() {
@@ -5362,6 +5373,13 @@ func (x *Step) GetRedRunAt() *timestamppb.Timestamp {
 		return x.RedRunAt
 	}
 	return nil
+}
+
+func (x *Step) GetRedRunRequired() bool {
+	if x != nil {
+		return x.RedRunRequired
+	}
+	return false
 }
 
 // Milestone is one group of a feature's steps. A feature is delivered in milestones, and a milestone
@@ -11207,7 +11225,7 @@ const file_quaycrew_v1_controlplane_proto_rawDesc = "" +
 	"\aproject\x18\x01 \x01(\tR\aproject\x12\x1c\n" +
 	"\tthreshold\x18\x02 \x01(\x05R\tthreshold\"H\n" +
 	"\x19SetTrustThresholdResponse\x12+\n" +
-	"\x06design\x18\x01 \x01(\v2\x13.quaycrew.v1.DesignR\x06design\"\xbc\b\n" +
+	"\x06design\x18\x01 \x01(\v2\x13.quaycrew.v1.DesignR\x06design\"\xe6\b\n" +
 	"\x04Step\x12\x18\n" +
 	"\afeature\x18\x01 \x01(\tR\afeature\x12\x16\n" +
 	"\x06number\x18\x02 \x01(\x05R\x06number\x12\x14\n" +
@@ -11242,7 +11260,8 @@ const file_quaycrew_v1_controlplane_proto_rawDesc = "" +
 	"\x0econtract_scope\x18\x1a \x01(\tR\rcontractScope\x12*\n" +
 	"\x11red_run_scenarios\x18\x1b \x01(\x05R\x0fredRunScenarios\x128\n" +
 	"\n" +
-	"red_run_at\x18\x1c \x01(\v2\x1a.google.protobuf.TimestampR\bredRunAt\"q\n" +
+	"red_run_at\x18\x1c \x01(\v2\x1a.google.protobuf.TimestampR\bredRunAt\x12(\n" +
+	"\x10red_run_required\x18\x1d \x01(\bR\x0eredRunRequired\"q\n" +
 	"\tMilestone\x12\x18\n" +
 	"\afeature\x18\x01 \x01(\tR\afeature\x12\x16\n" +
 	"\x06number\x18\x02 \x01(\x05R\x06number\x12\x14\n" +

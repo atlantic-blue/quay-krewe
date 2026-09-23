@@ -926,6 +926,10 @@ func (m *Memory) TakeStep(_ context.Context, feature string, number int32, sessi
 	step.Session = session
 	step.TakenAt = timestamppb.New(time.Now().UTC())
 	startClean(step)
+	// The take is what binds a step to the red run rule, so a step started before the rule existed
+	// still closes and every step started from now on sees its tests fail first. A retake binds a
+	// step the rule never reached, because the attempt that starts now starts under the rule.
+	step.RedRunRequired = true
 	return proto.Clone(step).(*quaycrewv1.Step), int32(len(flying)) + 1, nil
 }
 
