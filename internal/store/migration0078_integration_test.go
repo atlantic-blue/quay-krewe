@@ -45,13 +45,17 @@ func TestAStepWrittenBeforeTheRedRunColumnsReadsBackWhole(t *testing.T) {
 	// A step a session is holding, whose restatement the operator approved and whose scenario krewe
 	// already ran. That is the case this migration is about: the two defaults land on the row without
 	// touching the verdict or the word spoken over the restatement.
+	//
+	// The row says the red run rule binds it, because the refusals below are the rule and a row the
+	// rule does not bind closes on a check alone. Which rows it binds is a separate question, and it
+	// is answered in the test of the migration that scopes it.
 	if _, err := pool.Exec(ctx, `
 		insert into feature_steps (feature, number, title, proof_scenario, state, session,
 			restatement, restated_at, restatement_approved, restatement_approved_at,
-			proof_state, proof_scenarios_run, proof_output, proof_ran_at)
+			proof_state, proof_scenarios_run, proof_output, proof_ran_at, red_run_required)
 		values ('f1', 1, 'the store holds a brief', 'a project carries a brief', 'taken', 's1',
 			'what I understood', now(), true, now(),
-			'passing', 1, '1 scenarios (1 passed)', now())`); err != nil {
+			'passing', 1, '1 scenarios (1 passed)', now(), true)`); err != nil {
 		t.Fatalf("seed the step: %v", err)
 	}
 

@@ -1023,7 +1023,7 @@ const stepColumns = `s.feature, s.number, s.title, s.intention, s.touches, s.pro
 	`s.state, s.session, s.result, s.closed_by, s.operator_agreed, s.taken_at, s.finished_at, ` +
 	`s.restatement, s.restated_at, s.restatement_approved, s.restatement_approved_at, ` +
 	`s.proof_state, s.proof_scenarios_run, s.proof_output, s.proof_ran_at, ` +
-	`s.red_run_scenarios, s.red_run_at`
+	`s.red_run_scenarios, s.red_run_at, s.red_run_required`
 
 // stepJoins is the join every path read goes through: a step to its feature, that feature to its
 // project, and that project to its workspace.
@@ -1045,7 +1045,7 @@ func scanStep(row pgx.Row) (*quaycrewv1.Step, error) {
 		restatement, proofState, proofOutput      string
 		number, after, milestone, scenariosRun    int32
 		redRunScenarios                           int32
-		approved                                  bool
+		approved, redRunRequired                  bool
 		takenAt, finishedAt                       *time.Time
 		restatedAt, approvedAt, proofRanAt        *time.Time
 		redRunAt                                  *time.Time
@@ -1055,7 +1055,7 @@ func scanStep(row pgx.Row) (*quaycrewv1.Step, error) {
 		&state, &session, &result, &closedBy, &operatorAgreed, &takenAt, &finishedAt,
 		&restatement, &restatedAt, &approved, &approvedAt,
 		&proofState, &scenariosRun, &proofOutput, &proofRanAt,
-		&redRunScenarios, &redRunAt); err != nil {
+		&redRunScenarios, &redRunAt, &redRunRequired); err != nil {
 		return nil, err
 	}
 	step := &quaycrewv1.Step{
@@ -1084,6 +1084,7 @@ func scanStep(row pgx.Row) (*quaycrewv1.Step, error) {
 		ProofOutput:       proofOutput,
 
 		RedRunScenarios: redRunScenarios,
+		RedRunRequired:  redRunRequired,
 	}
 	if takenAt != nil {
 		step.TakenAt = timestamppb.New(*takenAt)
@@ -1436,13 +1437,17 @@ func (p *Postgres) TakeStep(ctx context.Context, feature string, number int32, s
 	// approval, no verdict and no red run from the attempt that stopped. The second session sees its
 	// own tests fail. The result, the moment it finished and who closed it stay where they are: they
 	// are the record of that attempt.
+	//
+	// The take is also what binds a step to the red run rule. A row written before the rule reads
+	// false and closes on a check alone, and a take from now on writes true, including a take of a
+	// step that stopped: the attempt that starts now starts under the rule.
 	step, err := scanStep(transaction.QueryRow(ctx, `
 		update feature_steps s
 		set state = $4, session = $3, taken_at = now(), updated_at = now(),
 			restatement = '', restated_at = null,
 			restatement_approved = false, restatement_approved_at = null,
 			proof_state = $6, proof_scenarios_run = 0, proof_output = '', proof_ran_at = null,
-			red_run_scenarios = 0, red_run_at = null
+			red_run_scenarios = 0, red_run_at = null, red_run_required = true
 		where s.feature = $1 and s.number = $2 and s.state = any($5)
 		returning `+stepColumns, feature, number, session, StepTaken, TakeableStates(), ProofUnproven))
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -1585,6 +1590,10 @@ func (p *Postgres) FinishStep(ctx context.Context, feature string, number int32,
 	//
 	// The columns read for the gates are proof_ran_at and red_run_at, and never proof_state. A failing
 	// run carries a moment, so it opens the first gate and the row keeps the disagreement.
+	//
+	// The second gate reads red_run_required beside the moment. A step in flight when the rule arrived
+	// reads false and closes on the check it already has, because its tests pass and no run of it can
+	// go red any more. The first gate binds every step, the way it did before the rule.
 	step, err := scanStep(transaction.QueryRow(ctx, `
 		update feature_steps s
 		set state = $3, result = $4, closed_by = $5,
@@ -1594,7 +1603,8 @@ func (p *Postgres) FinishStep(ctx context.Context, feature string, number int32,
 				else $12 end,
 			finished_at = now(), updated_at = now()
 		where s.feature = $1 and s.number = $2
-			and (not $6::boolean or (s.proof_ran_at is not null and s.red_run_at is not null))
+			and (not $6::boolean or (s.proof_ran_at is not null
+				and (not s.red_run_required or s.red_run_at is not null)))
 		returning `+stepColumns,
 		feature, number, finish.State, finish.Result, finish.ClosedBy, finish.State == StepDone,
 		StepDone, ProofPassing, StepStopped, AgreedYes, ProofFailing, AgreedNo))

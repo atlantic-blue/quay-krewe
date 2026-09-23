@@ -2026,6 +2026,7 @@ func RunConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 	runRestatementConformance(t, newDataset)
 	runProofResultConformance(t, newDataset)
 	runRedRunConformance(t, newDataset)
+	runRedRunScopeConformance(t, newDataset)
 	runTrustConformance(t, newDataset)
 	runFeatureConformance(t, newDataset)
 }
