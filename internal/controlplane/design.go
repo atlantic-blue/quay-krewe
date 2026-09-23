@@ -2146,12 +2146,18 @@ func takeText(step *quaycrewv1.Step, inThePath int, project string, hasContracts
 	if step.GetContractScope() != "" {
 		blocks = append(blocks, labelScope+"\n"+step.GetContractScope())
 	}
-	blocks = append(blocks, whereToRead(hasContracts), takeDelivery, restateFirst())
+	blocks = append(blocks, whereToRead(hasContracts), takeDelivery)
+	// The restatement is asked for only where the project asked to have its steps checked. Without a
+	// proof command there is no check to approve a restatement for, so the paragraph would cost the
+	// session a read and the operator a reading, and gate nothing at the end of it.
+	if step.GetCheckRequired() {
+		blocks = append(blocks, restateFirst())
+	}
 	return strings.Join(blocks, "\n\n") + "\n"
 }
 
-// restateFirst is the last paragraph of the take text, and it is always there, whole. It is what
-// makes the session restate the step rather than build it.
+// restateFirst is the last paragraph of the take text of a step its project asked to have checked,
+// whole. It is what makes the session restate the step rather than build it.
 //
 // It goes after the paragraph about delivering the work, because the last thing the text says is the
 // thing the session does next, and the session that has just read this delivers nothing yet.

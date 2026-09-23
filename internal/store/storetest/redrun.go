@@ -178,14 +178,31 @@ func runRedRunConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 
 // aFeatureHoldingOneStep is a project with one feature, one step, and a session holding that step,
 // which is the state every finish is spoken over.
+//
+// The project says how one scenario is run before the take, because that is what binds a step to
+// these gates. A project that says nothing is left as it was before they existed, and the cases
+// about that scope stand their own project up.
 func aFeatureHoldingOneStep(t *testing.T, s store.Store) string {
 	t.Helper()
-	feature := newFeature(t, s, newProject(t, s, "acme", "house-bills"), "the bills")
+	project := newProject(t, s, "acme", "house-bills")
+	provesItsSteps(t, s, project.GetId())
+	feature := newFeature(t, s, project, "the bills")
 	writePath(t, s, feature.GetId(), store.Step{Number: 1, Title: "the first"})
 	if _, _, err := s.TakeStep(context.Background(), feature.GetId(), 1, "session-one"); err != nil {
 		t.Fatalf("TakeStep: %v", err)
 	}
 	return feature.GetId()
+}
+
+// provesItsSteps records what one scenario run looks like in this project, which is what turns the
+// gates on for every step taken after it.
+func provesItsSteps(t *testing.T, s store.Store, project string) {
+	t.Helper()
+	if _, err := s.SetProofCommand(context.Background(), project, store.ProofSettings{
+		Command: "go test ./features/... -run '{scenario}'",
+	}); err != nil {
+		t.Fatalf("SetProofCommand: %v", err)
+	}
 }
 
 // oneRun writes what one run of the step's scenario reported, with the count the case names, and
@@ -239,19 +256,24 @@ func runRedRunScopeConformance(t *testing.T, newDataset func(t *testing.T) Opene
 		}
 	})
 
-	// The check that some run was read stays on every step, bound or not. A step nobody checked says
-	// nothing about its tests either way, and that refusal is older than this rule.
-	t.Run("a step the rule never bound is still refused while nobody checked it", func(t *testing.T) {
+	// The other gate on the same step, read the same way. A row no take reached carries neither
+	// requirement, so the word done is given over it, and the step beside it that a take did reach
+	// is refused for both in turn.
+	t.Run("a step the rule never bound is refused neither gate", func(t *testing.T) {
 		s := newDataset(t)(t)
 		feature := aFeatureHoldingOneStep(t, s)
 		writePath(t, s, feature,
 			store.Step{Number: 1, Title: "the first"},
 			store.Step{Number: 2, Title: "the second"})
 
-		if _, _, err := s.FinishStep(context.Background(), feature, 2, store.Finish{
+		written, _, err := s.FinishStep(context.Background(), feature, 2, store.Finish{
 			State: store.StepDone, Result: "shipped", ClosedBy: "operator",
-		}); !errors.Is(err, store.ErrNotChecked) {
-			t.Fatalf("finishing an unbound step nobody checked answered %v, want ErrNotChecked", err)
+		})
+		if err != nil {
+			t.Fatalf("finishing a step no take reached: %v", err)
+		}
+		if written.GetState() != store.StepDone {
+			t.Fatalf("the step came back in state %q, want %q", written.GetState(), store.StepDone)
 		}
 	})
 
@@ -313,4 +335,130 @@ func runRedRunScopeConformance(t *testing.T, newDataset func(t *testing.T) Opene
 			t.Fatalf("finishing the step this take bound answered %v, want ErrNoRedRun", err)
 		}
 	})
+}
+
+// runProofCommandScopeConformance holds both stores to which projects these gates bind at all.
+//
+// The check and the red run both stand on a proof command: krewe runs it to reach a verdict, and
+// without one there is nothing for it to run. A project that never set one could not pass the check,
+// so its steps could not close, and the two projects this system was building at the time were both
+// in that state. So the take reads the project. A project that says how one scenario is run gets the
+// gates, and a project that says nothing works the way it did before them.
+//
+// It is read at the take and never at the finish, for the reason the red run rule gives: a step
+// already in flight has no way to meet a gate it was not taken under.
+func runProofCommandScopeConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
+	t.Helper()
+
+	// The state this scope exists for. Nobody checked the step and nobody saw its tests fail, and the
+	// word done is given rather than refused.
+	t.Run("a step taken in a project with no proof command finishes with no check", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		feature := aStepTakenInAProjectThatProvesNothing(t, s)
+
+		written, _, err := s.FinishStep(ctx, feature, 1, store.Finish{
+			State: store.StepDone, Result: "shipped", ClosedBy: "operator",
+		})
+		if err != nil {
+			t.Fatalf("finishing a step of a project with no proof command: %v", err)
+		}
+		if written.GetState() != store.StepDone {
+			t.Fatalf("the step came back in state %q, want %q", written.GetState(), store.StepDone)
+		}
+	})
+
+	// The flags the take wrote, read off the step, so a finish that passed for some other reason is
+	// not read as the scope working.
+	t.Run("a take in a project with no proof command binds neither gate", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		feature := aStepTakenInAProjectThatProvesNothing(t, s)
+
+		read, err := s.GetStep(ctx, feature, 1)
+		if err != nil {
+			t.Fatalf("GetStep: %v", err)
+		}
+		if read.GetCheckRequired() {
+			t.Error("a take in a project with no proof command bound the step to the check")
+		}
+		if read.GetRedRunRequired() {
+			t.Error("a take in a project with no proof command bound the step to the red run")
+		}
+	})
+
+	t.Run("a take in a project that proves its steps binds both gates", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		feature := aFeatureHoldingOneStep(t, s)
+
+		read, err := s.GetStep(ctx, feature, 1)
+		if err != nil {
+			t.Fatalf("GetStep: %v", err)
+		}
+		if !read.GetCheckRequired() {
+			t.Error("a take in a project that proves its steps left the check off")
+		}
+		if !read.GetRedRunRequired() {
+			t.Error("a take in a project that proves its steps left the red run off")
+		}
+		if _, _, err := s.FinishStep(ctx, feature, 1, store.Finish{
+			State: store.StepDone, Result: "shipped", ClosedBy: "operator",
+		}); !errors.Is(err, store.ErrNotChecked) {
+			t.Fatalf("finishing a step nobody checked answered %v, want ErrNotChecked", err)
+		}
+	})
+
+	// The proof command arriving later binds the steps taken after it, and leaves the one in flight
+	// where it is. Read at the finish instead, a project that turned the gates on would strand the
+	// step a session was already holding, which is the fault this whole scope answers.
+	t.Run("a proof command set after the take leaves that step unbound", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		feature := aStepTakenInAProjectThatProvesNothing(t, s)
+		project, err := s.GetFeature(ctx, feature)
+		if err != nil {
+			t.Fatalf("GetFeature: %v", err)
+		}
+		provesItsSteps(t, s, project.GetProject())
+
+		written, _, err := s.FinishStep(ctx, feature, 1, store.Finish{
+			State: store.StepDone, Result: "shipped", ClosedBy: "operator",
+		})
+		if err != nil {
+			t.Fatalf("finishing the step the proof command arrived after: %v", err)
+		}
+		if written.GetState() != store.StepDone {
+			t.Fatalf("the step came back in state %q, want %q", written.GetState(), store.StepDone)
+		}
+	})
+
+	// A path rewrite keeps what the take bound, the way it keeps the red run requirement: a document
+	// a session writes could otherwise take a step out of the check by saying its title again.
+	t.Run("a path rewrite keeps the check the take bound", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		feature := aFeatureHoldingOneStep(t, s)
+
+		writePath(t, s, feature, store.Step{Number: 1, Title: "the first", Intention: "said again"})
+		read, err := s.GetStep(ctx, feature, 1)
+		if err != nil {
+			t.Fatalf("GetStep after the rewrite: %v", err)
+		}
+		if !read.GetCheckRequired() {
+			t.Error("the rewritten step reads as one the check never bound")
+		}
+	})
+}
+
+// aStepTakenInAProjectThatProvesNothing is the state the two projects building at the time were in:
+// a path the operator approved, a session holding step 1, and nothing saying how one scenario runs.
+func aStepTakenInAProjectThatProvesNothing(t *testing.T, s store.Store) string {
+	t.Helper()
+	feature := newFeature(t, s, newProject(t, s, "acme", "house-rent"), "the rent")
+	writePath(t, s, feature.GetId(), store.Step{Number: 1, Title: "the first"})
+	if _, _, err := s.TakeStep(context.Background(), feature.GetId(), 1, "session-one"); err != nil {
+		t.Fatalf("TakeStep: %v", err)
+	}
+	return feature.GetId()
 }

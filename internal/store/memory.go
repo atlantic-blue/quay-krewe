@@ -926,10 +926,13 @@ func (m *Memory) TakeStep(_ context.Context, feature string, number int32, sessi
 	step.Session = session
 	step.TakenAt = timestamppb.New(time.Now().UTC())
 	startClean(step)
-	// The take is what binds a step to the red run rule, so a step started before the rule existed
-	// still closes and every step started from now on sees its tests fail first. A retake binds a
-	// step the rule never reached, because the attempt that starts now starts under the rule.
-	step.RedRunRequired = true
+	// The take is what binds a step to the check and to the red run, and it binds it to both or to
+	// neither. Both stand on the project's proof command, so a project that says nothing about how a
+	// scenario of it runs gets a step that closes the way one closed before these rules. A retake
+	// reads the project again, because the attempt that starts now starts under what it asks today.
+	gated := m.provesItsStepsLocked(held.GetProject())
+	step.RedRunRequired = gated
+	step.CheckRequired = gated
 	return proto.Clone(step).(*quaycrewv1.Step), int32(len(flying)) + 1, nil
 }
 
@@ -1012,6 +1015,18 @@ func (m *Memory) stepsInFlightLocked(project string) []StepInFlight {
 // stepsInFlightCapLocked is how many steps this project may hold in state taken at one time. A
 // project with no design row has set no cap and reads the default, which is what the column would
 // have given it. The caller holds the lock.
+// provesItsStepsLocked answers whether this project said how one scenario of it is run, which is
+// what the take reads to decide which gates bind the step. The caller holds the lock.
+//
+// A project with no design row says nothing, the way it answers the cap with the default.
+func (m *Memory) provesItsStepsLocked(project string) bool {
+	held, ok := m.designs[project]
+	if !ok {
+		return false
+	}
+	return held.GetProofCommand() != ""
+}
+
 func (m *Memory) stepsInFlightCapLocked(project string) int32 {
 	held, ok := m.designs[project]
 	if !ok {

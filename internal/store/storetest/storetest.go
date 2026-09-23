@@ -2027,6 +2027,7 @@ func RunConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 	runProofResultConformance(t, newDataset)
 	runRedRunConformance(t, newDataset)
 	runRedRunScopeConformance(t, newDataset)
+	runProofCommandScopeConformance(t, newDataset)
 	runTrustConformance(t, newDataset)
 	runFeatureConformance(t, newDataset)
 }
@@ -2257,8 +2258,12 @@ func runTrustConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 		s := newDataset(t)(t)
 		ctx := context.Background()
 		project := newProject(t, s, "acme", "house-bills")
+		provesItsSteps(t, s, project.GetId())
 		feature := newFeature(t, s, project, "the bills")
 		writePath(t, s, feature.GetId(), store.Step{Number: 1, Title: "the first"})
+		if _, _, err := s.TakeStep(ctx, feature.GetId(), 1, "session-one"); err != nil {
+			t.Fatalf("TakeStep: %v", err)
+		}
 
 		if _, _, err := s.FinishStep(ctx, feature.GetId(), 1, store.Finish{
 			State: store.StepDone, Result: "shipped", ClosedBy: "operator",
@@ -5572,25 +5577,27 @@ func runTakeConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 
 	// Gate 3. The operator reads a verdict before speaking the word, so a step nobody ran anything on
 	// is refused and nothing about it moves.
+	//
+	// The project says how one scenario of it is run, because that is what the take reads to bind the
+	// step to this gate. A project that says nothing is refused nothing, and redrun.go holds that.
 	t.Run("finishing a step nothing checked is refused, and nothing is written", func(t *testing.T) {
 		s := newDataset(t)(t)
 		ctx := context.Background()
-		feature := newFeature(t, s, newProject(t, s, "acme", "house-bills"), "the bills")
-		writePath(t, s, feature.GetId(), store.Step{Number: 1, Title: "the first"})
+		feature := aFeatureHoldingOneStep(t, s)
 
-		if _, _, err := s.FinishStep(ctx, feature.GetId(), 1, store.Finish{
+		if _, _, err := s.FinishStep(ctx, feature, 1, store.Finish{
 			State: store.StepDone, Result: "shipped as pull request 712", ClosedBy: "operator",
 		}); !errors.Is(err, store.ErrNotChecked) {
 			t.Fatalf("finishing a step nobody checked answered %v, want ErrNotChecked", err)
 		}
 		// The refusal has to leave the row as it stood. A write that refused its caller and stamped
 		// the row anyway reads as done to everybody else.
-		read, err := s.GetStep(ctx, feature.GetId(), 1)
+		read, err := s.GetStep(ctx, feature, 1)
 		if err != nil {
 			t.Fatalf("GetStep after the refusal: %v", err)
 		}
-		if read.GetState() != store.StepReady {
-			t.Errorf("the refused step reads as %q, want ready", read.GetState())
+		if read.GetState() != store.StepTaken {
+			t.Errorf("the refused step reads as %q, want taken", read.GetState())
 		}
 		if read.GetResult() != "" || read.GetFinishedAt() != nil {
 			t.Errorf("the refused step says %q, finished at %v", read.GetResult(), read.GetFinishedAt())

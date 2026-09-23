@@ -18,6 +18,11 @@ Feature: A step cannot finish without a red run before its green run
 
   Stopping a step is refused nothing. A step nobody will finish makes no promise about its tests.
 
+  The project says whether any of this binds it. Both gates stand on a proof command, because that is
+  what krewe runs to reach a verdict, and a project that never set one has nothing for krewe to run.
+  So the take reads the project: a project that says how one scenario runs gets the gates and the
+  restatement, and a project that says nothing works the way it did before them.
+
   Background:
     Given a running control plane
     And a workspace named "acme"
@@ -28,12 +33,13 @@ Feature: A step cannot finish without a red run before its green run
       """
       ## 1. The store holds a project's brief
       """
-    And the operator took step 1
 
   # The whole feature in one scenario. The code passes its tests on the first run, so nothing was ever
   # seen to fail, and the word done is refused.
   Scenario: A step with no red run cannot finish
-    Given krewe ran step 1's scenario, and it passed
+    Given the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the operator took step 1
+    And krewe ran step 1's scenario, and it passed
     When the operator finishes step 1 with "shipped"
     Then the control plane refuses it as the wrong state
     And the refusal suggests "nobody saw step 1's tests fail"
@@ -41,7 +47,9 @@ Feature: A step cannot finish without a red run before its green run
     And step 1 is still taken
 
   Scenario: A step whose tests were seen to fail first finishes
-    Given krewe ran step 1's scenario, and it failed
+    Given the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the operator took step 1
+    And krewe ran step 1's scenario, and it failed
     And krewe ran step 1's scenario, and it passed
     When the operator finishes step 1 with "shipped"
     Then step 1 is still done
@@ -49,7 +57,9 @@ Feature: A step cannot finish without a red run before its green run
   # Zero scenarios never passes, and zero scenarios never fails either. A run that executed nothing
   # says nothing about the tests.
   Scenario: A run that failed with no scenario in it is not a red run
-    Given krewe ran step 1's scenario, and it failed with no scenario in it
+    Given the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the operator took step 1
+    And krewe ran step 1's scenario, and it failed with no scenario in it
     And krewe ran step 1's scenario, and it passed
     When the operator finishes step 1 with "shipped"
     Then the control plane refuses it as the wrong state
@@ -59,19 +69,25 @@ Feature: A step cannot finish without a red run before its green run
   # The other refusal, so the operator reads the move they are on rather than one sentence for two
   # states.
   Scenario: A step nobody checked is told that nothing ran
+    Given the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the operator took step 1
     When the operator finishes step 1 with "shipped"
     Then the control plane refuses it as the wrong state
     And the refusal suggests "nothing checked step 1"
     And step 1 is still taken
 
   Scenario: Stopping a step needs no red run
+    Given the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the operator took step 1
     When the operator stops step 1 with "the approach was wrong"
     Then step 1 is still stopped
 
   # A second attempt proves itself again. A red run carried over from the attempt that stopped would
   # let the next session write the code first.
   Scenario: A step taken again must see its tests fail again
-    Given krewe ran step 1's scenario, and it failed
+    Given the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the operator took step 1
+    And krewe ran step 1's scenario, and it failed
     And krewe ran step 1's scenario, and it passed
     And the operator stops step 1 with "the approach was wrong"
     And the operator takes step 1
@@ -89,7 +105,9 @@ Feature: A step cannot finish without a red run before its green run
   # this suite holds its rows in memory and runs no migration, so a step the path wrote and nobody
   # took is the same row an upgrade leaves behind.
   Scenario: A step taken before the red run rule finishes without a red run
-    Given the path holds step 2, whose row carries no red run requirement
+    Given the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the operator took step 1
+    And the path holds step 2, whose row carries no red run requirement
     And krewe ran step 2's scenario, and it passed
     When the operator finishes step 2 with "shipped"
     Then step 2 is still done
@@ -97,9 +115,45 @@ Feature: A step cannot finish without a red run before its green run
   # The other half of the rule, read off the same path: step 1 was taken under it, so it is bound
   # whatever step 2 beside it is allowed to do.
   Scenario: A step taken under the rule is bound while a step beside it is not
-    Given the path holds step 2, whose row carries no red run requirement
+    Given the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the operator took step 1
+    And the path holds step 2, whose row carries no red run requirement
     And krewe ran step 1's scenario, and it passed
     When the operator finishes step 1 with "shipped"
     Then the control plane refuses it as the wrong state
     And the refusal suggests "nobody saw step 1's tests fail"
     And step 1 is still taken
+
+  # The two projects this system was building when the gates arrived were both in this state: a path
+  # the operator approved, a session holding a step, and nothing saying how one scenario runs. The
+  # check could not pass, because krewe had no command to run, so the step could not close at all.
+  # A project that asked for none of this gets the tool it had before: build the step, open the pull
+  # request, say done.
+  Scenario: A step in a project with no proof command finishes with no restatement and no check
+    When the operator takes step 1
+    Then the step text does not carry "Write no code. Change no file in the repository."
+    And the step text carries "Deliver this step as one pull request."
+    When the operator finishes step 1 with "shipped"
+    Then step 1 is still done
+
+  # The other half, read off a project that did ask. Setting a proof command is what turns the gates
+  # on, and it turns all three on together: the restatement in the take text, the check, and the run
+  # that must be seen to fail.
+  Scenario: A step in a project that proves its steps is refused until something checked it
+    Given the project's proof command is "go test ./features/... -run '{scenario}'"
+    When the operator takes step 1
+    Then the step text carries "Write no code. Change no file in the repository."
+    When the operator finishes step 1 with "shipped"
+    Then the control plane refuses it as the wrong state
+    And the refusal suggests "nothing checked step 1"
+    And step 1 is still taken
+
+  # What the operator reads at the take, through the tool. The session that just started is building,
+  # so a line saying it will restate the step and build nothing would send the operator away to wait
+  # for a text that never arrives.
+  Scenario: The take of a step in a project with no proof command says the session is building it
+    Given the system listens on an address the tool can dial
+    When the caller takes step "1.1"
+    Then standard output carries "it will build the step and open a pull request"
+    And standard output never says "it will restate the step and build nothing"
+    And the command succeeds

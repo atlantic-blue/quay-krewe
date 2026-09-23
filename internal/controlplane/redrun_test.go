@@ -179,6 +179,14 @@ func aTakenStep(t *testing.T) (*controlplane.Server, store.Store, string) {
 	if _, err := s.ApproveDesign(ctx, &quaycrewv1.ApproveDesignRequest{Project: projectID}); err != nil {
 		t.Fatalf("ApproveDesign: %v", err)
 	}
+	// The project says how one scenario of it is run, before the take. That is what binds a step to
+	// these gates: krewe runs the command to reach a verdict, so a project that says nothing has
+	// nothing for krewe to run, and its steps close on the operator's word alone.
+	if _, err := s.SetProofCommand(ctx, &quaycrewv1.SetProofCommandRequest{
+		Project: projectID, Command: "go test ./features/... -run '{scenario}'",
+	}); err != nil {
+		t.Fatalf("SetProofCommand: %v", err)
+	}
 	feature := newFeatureWithAStep(t, s, projectID)
 	if _, err := s.TakeStep(ctx, &quaycrewv1.TakeStepRequest{Feature: feature, Number: 1}); err != nil {
 		t.Fatalf("TakeStep: %v", err)

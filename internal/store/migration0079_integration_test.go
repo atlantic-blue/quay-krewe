@@ -36,6 +36,14 @@ func TestAStepWrittenBeforeTheRedRunRuleFinishesWithoutOne(t *testing.T) {
 		`insert into projects (id, workspace, name) values ('p1', 'w1', 'house-bills')`); err != nil {
 		t.Fatalf("seed the project: %v", err)
 	}
+	// The project says how one scenario of it is run, because the take reads that to decide whether
+	// the red run rule binds the step it starts. A project that says nothing binds nothing, and
+	// migration 0080 holds that.
+	if _, err := pool.Exec(ctx,
+		`insert into project_designs (project, body, proof_command)
+		 values ('p1', '# Bills', 'go test ./features/... -run ''{scenario}''')`); err != nil {
+		t.Fatalf("seed the design: %v", err)
+	}
 	if _, err := pool.Exec(ctx,
 		`insert into features (id, project, number, title) values ('f1', 'p1', 1, 'the bills')`); err != nil {
 		t.Fatalf("seed the feature: %v", err)

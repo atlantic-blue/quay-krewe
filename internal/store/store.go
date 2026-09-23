@@ -192,12 +192,13 @@ var ErrNoRedRun = errors.New("store: nobody saw this step's tests fail")
 // The order is the order the two runs happen in, so the operator is told the move they are on rather
 // than the one after it.
 //
-// The red run is read only where the take that started the step happened under the rule. A step in
-// flight when the rule arrived has its code written and its tests passing, so no run of it can go
-// red any more, and a rule that bound it would leave it unable to close at all. The check that some
-// run was read binds every step, bound or not, the way it did before the rule.
+// Each gate is read only where the take that started the step wrote its requirement. Both stand on
+// the project's proof command: krewe runs it to reach a verdict, so a project that never set one has
+// nothing for krewe to run, and a check it cannot make would hold the word done forever. A step in
+// flight when the red run rule arrived reads false there for the same shape of reason: its code is
+// written and its tests pass, so no run of it can go red any more.
 func WhyDoneIsRefused(step *quaycrewv1.Step) error {
-	if step.GetProofRanAt() == nil {
+	if step.GetCheckRequired() && step.GetProofRanAt() == nil {
 		return ErrNotChecked
 	}
 	if step.GetRedRunRequired() && step.GetRedRunAt() == nil {
@@ -592,7 +593,7 @@ func protectedSteps(held []*quaycrewv1.Step, incoming []Step) []ProtectedStep {
 // keepTheRecord carries what the system owns from the step as it stands onto the step the document
 // declares: the state, the session that took it, the result, who closed it, the stamps, what the
 // session restated, what the last run of its scenario reported, the run that was seen to fail, and
-// whether the red run rule binds it.
+// which gates the take bound it to.
 //
 // The document is what a caller may set, and none of these are on it. A write that took them from
 // the document would let somebody declare work that never happened, and one that left them behind
@@ -615,6 +616,7 @@ func keepTheRecord(writing, held *quaycrewv1.Step) {
 	writing.RedRunScenarios = held.GetRedRunScenarios()
 	writing.RedRunAt = held.GetRedRunAt()
 	writing.RedRunRequired = held.GetRedRunRequired()
+	writing.CheckRequired = held.GetCheckRequired()
 }
 
 // Step is what a caller may set about one step of a path.

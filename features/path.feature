@@ -1658,11 +1658,14 @@ Feature: A project holds a numbered path of steps
     When the operator takes step 5
     Then the step text carries "Step 5 of 3 on the path for house-bills."
 
-  # The last paragraph is always there, whole. It is what makes the session restate the step rather
-  # than build it, and the mark it names is the mark the read back looks for.
+  # The last paragraph of a step a project asked to have checked, whole. It is what makes the session
+  # restate the step rather than build it, and the mark it names is the mark the read back looks for.
+  # The proof command is what asks: a project that sets none is given the text without this paragraph,
+  # in redrun.feature.
   Scenario: The text tells the session to write no code and to restate the step
     Given the project's design is "# Bills\n"
     And the operator approved the project's design
+    And the project's proof command is "go test ./features/... -run '{scenario}'"
     And the project's path is:
       """
       ## 1. The store holds a project's brief
@@ -2982,6 +2985,7 @@ Feature: A project holds a numbered path of steps
     Given the system listens on an address the tool can dial
     And the project's design is "# Bills\n"
     And the operator approved the project's design
+    And the project's proof command is "go test ./features/... -run '{scenario}'"
     And the project's path is:
       """
       ## 1. The store holds a project's brief
@@ -3669,9 +3673,12 @@ Feature: A project holds a numbered path of steps
   # A stop reads nothing at all. A step nobody will finish still has to be closable, whatever ran on
   # it, and a stop after a failing verdict agrees with krewe rather than differing from it.
 
+  # The proof command comes before the take, because the take is what binds a step to this gate. A
+  # project that says nothing about how a scenario of it runs has nothing for krewe to check, and
+  # redrun.feature holds what its steps do instead.
   Scenario: Finishing a step nothing checked is refused, and the refusal names the check
-    Given a step taken, restated and approved, naming the scenario "a project carries a brief"
-    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    Given the project's proof command is "go test ./features/... -run '{scenario}'"
+    And a step taken, restated and approved, naming the scenario "a project carries a brief"
     When the operator finishes step 1 with "shipped as pull request 733"
     Then the control plane refuses it as the wrong state
     And the refusal suggests "krewe step check"
