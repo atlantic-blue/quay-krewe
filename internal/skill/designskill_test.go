@@ -102,12 +102,17 @@ func TestTheDesignBriefNeverApprovesTheDesign(t *testing.T) {
 	}
 }
 
-// Five words for things this system removed. A session reading one of them goes looking for
+// Three words for things this system removed. A session reading one of them goes looking for
 // machinery that is not there, and writes a design around it.
+//
+// Two words left this list, because the product now ships them. A design stage is a row of
+// project_design_stages and `krewe stage show` reads it, so the design skill has to name the six. A
+// flow is a story drawn on a page, the flow-map skill draws it, and the mockups stage carries its
+// flows.json as an artifact.
 func TestTheDesignSkillHoldsNoneOfTheRemovedWords(t *testing.T) {
 	design := shippedSkill(t, "design")
 
-	for _, gone := range []string{"stage", "job", "flow", "role", "controller"} {
+	for _, gone := range []string{"job", "role", "controller"} {
 		for where, body := range everyFileOf(t, design) {
 			if strings.Contains(strings.ToLower(body), gone) {
 				t.Errorf("%s says %q, which names a thing this system removed: a session reading it goes looking for machinery that is not there",
