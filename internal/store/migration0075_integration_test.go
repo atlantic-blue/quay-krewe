@@ -158,6 +158,19 @@ func TestAProjectWrittenBeforeTheTrustColumnsReadsBackWhole(t *testing.T) {
 		t.Errorf("the step reads %q, proved %q", held.GetState(), held.GetProofState())
 	}
 
+	// The seeded row predates the columns that hold the run seen to fail, which is where an upgrade
+	// leaves every step in flight: the scenario is run once more, and the record lands.
+	if _, err := opened.RecordProof(ctx, "f1", 1, store.ProofResult{
+		State: store.ProofFailing, ScenariosRun: 1, Output: "1 scenarios (0 passed, 1 failed)",
+	}); err != nil {
+		t.Fatalf("RecordProof on the run that went red: %v", err)
+	}
+	if _, err := opened.RecordProof(ctx, "f1", 1, store.ProofResult{
+		State: store.ProofPassing, ScenariosRun: 1, Output: "1 scenarios (1 passed)",
+	}); err != nil {
+		t.Fatalf("RecordProof on the run that passed: %v", err)
+	}
+
 	// The columns the migration added take the record, and the call that closes a step writes it.
 	written, moved, err := opened.FinishStep(ctx, "f1", 1, store.Finish{
 		State: store.StepDone, Result: "it reads back whole", ClosedBy: "operator",
@@ -191,8 +204,11 @@ func TestADisagreementAtLevelOneLowersTheLevelInPostgres(t *testing.T) {
 		`insert into workspaces (id, name) values ('w1', 'acme')`,
 		`insert into projects (id, workspace, name) values ('p1', 'w1', 'house-bills')`,
 		`insert into features (id, project, number, title) values ('f1', 'p1', 1, 'the bills')`,
+		// A step a session holds, checked twice: the run that went red, and the run that says the
+		// work is still not there.
 		`insert into feature_steps (feature, number, title, state, proof_state, proof_scenarios_run,
-			proof_ran_at) values ('f1', 1, 'the first', 'taken', 'failing', 1, now())`,
+			proof_ran_at, red_run_scenarios, red_run_at)
+			values ('f1', 1, 'the first', 'taken', 'failing', 1, now(), 1, now())`,
 		// Where the operator accepting an offer will put the project.
 		`insert into project_designs (project, body, trust_level, trust_run, trust_agreements)
 			values ('p1', 'the design, whole', 1, 0, 5)`,

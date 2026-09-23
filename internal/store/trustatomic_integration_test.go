@@ -31,8 +31,11 @@ func TestAClosedStepIsNeverReadableBeforeItsCountersMove(t *testing.T) {
 		`insert into workspaces (id, name) values ('w1', 'acme')`,
 		`insert into projects (id, workspace, name) values ('p1', 'w1', 'house-bills')`,
 		`insert into features (id, project, number, title) values ('f1', 'p1', 1, 'the bills')`,
+		// A step a session holds, whose tests were seen to fail and then to pass, which is the state
+		// the word done is spoken over.
 		`insert into feature_steps (feature, number, title, state, proof_state, proof_scenarios_run,
-			proof_ran_at) values ('f1', 1, 'the first', 'taken', 'passing', 1, now())`,
+			proof_ran_at, red_run_scenarios, red_run_at)
+			values ('f1', 1, 'the first', 'taken', 'passing', 1, now(), 1, now())`,
 		`insert into project_designs (project, body) values ('p1', 'the design, whole')`,
 	} {
 		if _, err := pool.Exec(ctx, statement); err != nil {
