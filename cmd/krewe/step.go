@@ -90,9 +90,16 @@ func runStepTake(ctx context.Context, client quaycrewv1.ControlPlaneServiceClien
 	fmt.Fprintf(out, "(session %s, handle %s)\n\n",
 		resp.GetSession().GetId(), resp.GetSession().GetHandle())
 	fmt.Fprintf(out, "it was asked to:\n\n%s\n", strings.TrimRight(resp.GetText(), "\n"))
-	// What the session does next, said once here, because the take text above is long and an
-	// operator who reads only the first lines of it still has to know that no code is coming yet.
-	fmt.Fprint(out, "\nit will restate the step and build nothing\n")
+	// What the session does next, said once here, because the take text above is long and an operator
+	// who reads only the first lines of it still has to know which of the two it is. A project that
+	// says nothing about how a scenario of it runs gets no restatement and no check, so the session
+	// it just started is building, and a line saying otherwise would send the operator to wait for a
+	// text that never arrives.
+	if step.GetCheckRequired() {
+		fmt.Fprint(out, "\nit will restate the step and build nothing\n")
+	} else {
+		fmt.Fprint(out, "\nit will build the step and open a pull request\n")
+	}
 	sayWarnings(out, resp.GetWarnings())
 	// Both numbers are the control plane's, read off the response. Counting the steps here would put
 	// a second count of one thing in a second place, and the two would disagree the moment a take

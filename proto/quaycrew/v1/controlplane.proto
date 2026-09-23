@@ -923,6 +923,19 @@ message Step {
   // way its second attempt clears the restatement and the verdict: the attempt that starts now
   // starts under the rule.
   bool red_run_required = 29;
+  // check_required says whether the word done on this step waits for a verdict krewe read: true
+  // where the project said how one scenario of it is run at the moment of the take, and false where
+  // it said nothing.
+  //
+  // Both gates stand on that command. Krewe runs it to reach a verdict, so a project that never set
+  // one has nothing for krewe to run, and its steps could not close at all. The same field decides
+  // whether the take text asks the session to restate the step first, because a restatement nobody
+  // can act on through a check is a paragraph that costs context and gates nothing.
+  //
+  // The take writes it, and nothing else does. A proof command set afterwards binds the steps taken
+  // after it, for the reason red_run_required gives: a step in flight has no way to meet a gate it
+  // was not taken under.
+  bool check_required = 30;
 }
 
 // Milestone is one group of a feature's steps. A feature is delivered in milestones, and a milestone

@@ -1023,7 +1023,7 @@ const stepColumns = `s.feature, s.number, s.title, s.intention, s.touches, s.pro
 	`s.state, s.session, s.result, s.closed_by, s.operator_agreed, s.taken_at, s.finished_at, ` +
 	`s.restatement, s.restated_at, s.restatement_approved, s.restatement_approved_at, ` +
 	`s.proof_state, s.proof_scenarios_run, s.proof_output, s.proof_ran_at, ` +
-	`s.red_run_scenarios, s.red_run_at, s.red_run_required`
+	`s.red_run_scenarios, s.red_run_at, s.red_run_required, s.check_required`
 
 // stepJoins is the join every path read goes through: a step to its feature, that feature to its
 // project, and that project to its workspace.
@@ -1046,6 +1046,7 @@ func scanStep(row pgx.Row) (*quaycrewv1.Step, error) {
 		number, after, milestone, scenariosRun    int32
 		redRunScenarios                           int32
 		approved, redRunRequired                  bool
+		checkRequired                             bool
 		takenAt, finishedAt                       *time.Time
 		restatedAt, approvedAt, proofRanAt        *time.Time
 		redRunAt                                  *time.Time
@@ -1055,7 +1056,7 @@ func scanStep(row pgx.Row) (*quaycrewv1.Step, error) {
 		&state, &session, &result, &closedBy, &operatorAgreed, &takenAt, &finishedAt,
 		&restatement, &restatedAt, &approved, &approvedAt,
 		&proofState, &scenariosRun, &proofOutput, &proofRanAt,
-		&redRunScenarios, &redRunAt, &redRunRequired); err != nil {
+		&redRunScenarios, &redRunAt, &redRunRequired, &checkRequired); err != nil {
 		return nil, err
 	}
 	step := &quaycrewv1.Step{
@@ -1085,6 +1086,7 @@ func scanStep(row pgx.Row) (*quaycrewv1.Step, error) {
 
 		RedRunScenarios: redRunScenarios,
 		RedRunRequired:  redRunRequired,
+		CheckRequired:   checkRequired,
 	}
 	if takenAt != nil {
 		step.TakenAt = timestamppb.New(*takenAt)
@@ -1438,18 +1440,30 @@ func (p *Postgres) TakeStep(ctx context.Context, feature string, number int32, s
 	// own tests fail. The result, the moment it finished and who closed it stay where they are: they
 	// are the record of that attempt.
 	//
-	// The take is also what binds a step to the red run rule. A row written before the rule reads
-	// false and closes on a check alone, and a take from now on writes true, including a take of a
-	// step that stopped: the attempt that starts now starts under the rule.
+	// The take is also what binds a step to the check and to the red run, and it binds it to both or
+	// to neither. Both stand on the project's proof command, so a project that says nothing about how
+	// a scenario of it runs gets a step that closes the way one closed before these rules, and a
+	// project that says how gets all three gates, the restatement in the take text among them.
+	//
+	// Read here and never at the finish: a proof command set while a session is holding a step binds
+	// the steps taken after it, because a step in flight has no way to meet a gate it was not taken
+	// under. A take of a step that stopped is a take, so the attempt that starts now starts under
+	// whatever the project asks for today.
+	gated, err := provesItsSteps(ctx, transaction, project)
+	if err != nil {
+		return nil, 0, err
+	}
 	step, err := scanStep(transaction.QueryRow(ctx, `
 		update feature_steps s
 		set state = $4, session = $3, taken_at = now(), updated_at = now(),
 			restatement = '', restated_at = null,
 			restatement_approved = false, restatement_approved_at = null,
 			proof_state = $6, proof_scenarios_run = 0, proof_output = '', proof_ran_at = null,
-			red_run_scenarios = 0, red_run_at = null, red_run_required = true
+			red_run_scenarios = 0, red_run_at = null,
+			red_run_required = $7, check_required = $7
 		where s.feature = $1 and s.number = $2 and s.state = any($5)
-		returning `+stepColumns, feature, number, session, StepTaken, TakeableStates(), ProofUnproven))
+		returning `+stepColumns,
+		feature, number, session, StepTaken, TakeableStates(), ProofUnproven, gated))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, 0, ErrStepNotReady
 	}
@@ -1525,6 +1539,24 @@ func stepsInFlight(ctx context.Context, transaction pgx.Tx, project string) ([]S
 
 // stepsInFlightCap is how many steps this project may hold in state taken at one time. A project with
 // no design row has set no cap and reads the default, which is what the column would have given it.
+// provesItsSteps answers whether this project said how one scenario of it is run, which is what the
+// take reads to decide whether the check, the red run and the restatement bind the step.
+//
+// A project with no design row says nothing, the way it answers the cap with the default: the row is
+// written on first use, so a project nobody configured has none.
+func provesItsSteps(ctx context.Context, transaction pgx.Tx, project string) (bool, error) {
+	var command string
+	err := transaction.QueryRow(ctx,
+		`select proof_command from project_designs where project = $1`, project).Scan(&command)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read the proof command: %w", err)
+	}
+	return command != "", nil
+}
+
 func stepsInFlightCap(ctx context.Context, transaction pgx.Tx, project string) (int32, error) {
 	var atOnce int32
 	err := transaction.QueryRow(ctx,
@@ -1591,9 +1623,10 @@ func (p *Postgres) FinishStep(ctx context.Context, feature string, number int32,
 	// The columns read for the gates are proof_ran_at and red_run_at, and never proof_state. A failing
 	// run carries a moment, so it opens the first gate and the row keeps the disagreement.
 	//
-	// The second gate reads red_run_required beside the moment. A step in flight when the rule arrived
-	// reads false and closes on the check it already has, because its tests pass and no run of it can
-	// go red any more. The first gate binds every step, the way it did before the rule.
+	// Each gate reads the requirement its take wrote, beside the moment. A step of a project that says
+	// nothing about how a scenario of it runs is bound by neither: krewe has no command to run, so a
+	// check it cannot make would hold the word done forever. A step in flight when the red run rule
+	// arrived reads false there too, and closes on the check it already has.
 	step, err := scanStep(transaction.QueryRow(ctx, `
 		update feature_steps s
 		set state = $3, result = $4, closed_by = $5,
@@ -1603,7 +1636,7 @@ func (p *Postgres) FinishStep(ctx context.Context, feature string, number int32,
 				else $12 end,
 			finished_at = now(), updated_at = now()
 		where s.feature = $1 and s.number = $2
-			and (not $6::boolean or (s.proof_ran_at is not null
+			and (not $6::boolean or ((not s.check_required or s.proof_ran_at is not null)
 				and (not s.red_run_required or s.red_run_at is not null)))
 		returning `+stepColumns,
 		feature, number, finish.State, finish.Result, finish.ClosedBy, finish.State == StepDone,

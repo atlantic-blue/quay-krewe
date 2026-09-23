@@ -5145,8 +5145,21 @@ type Step struct {
 	// way its second attempt clears the restatement and the verdict: the attempt that starts now
 	// starts under the rule.
 	RedRunRequired bool `protobuf:"varint,29,opt,name=red_run_required,json=redRunRequired,proto3" json:"red_run_required,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// check_required says whether the word done on this step waits for a verdict krewe read: true
+	// where the project said how one scenario of it is run at the moment of the take, and false where
+	// it said nothing.
+	//
+	// Both gates stand on that command. Krewe runs it to reach a verdict, so a project that never set
+	// one has nothing for krewe to run, and its steps could not close at all. The same field decides
+	// whether the take text asks the session to restate the step first, because a restatement nobody
+	// can act on through a check is a paragraph that costs context and gates nothing.
+	//
+	// The take writes it, and nothing else does. A proof command set afterwards binds the steps taken
+	// after it, for the reason red_run_required gives: a step in flight has no way to meet a gate it
+	// was not taken under.
+	CheckRequired bool `protobuf:"varint,30,opt,name=check_required,json=checkRequired,proto3" json:"check_required,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Step) Reset() {
@@ -5378,6 +5391,13 @@ func (x *Step) GetRedRunAt() *timestamppb.Timestamp {
 func (x *Step) GetRedRunRequired() bool {
 	if x != nil {
 		return x.RedRunRequired
+	}
+	return false
+}
+
+func (x *Step) GetCheckRequired() bool {
+	if x != nil {
+		return x.CheckRequired
 	}
 	return false
 }
@@ -11225,7 +11245,7 @@ const file_quaycrew_v1_controlplane_proto_rawDesc = "" +
 	"\aproject\x18\x01 \x01(\tR\aproject\x12\x1c\n" +
 	"\tthreshold\x18\x02 \x01(\x05R\tthreshold\"H\n" +
 	"\x19SetTrustThresholdResponse\x12+\n" +
-	"\x06design\x18\x01 \x01(\v2\x13.quaycrew.v1.DesignR\x06design\"\xe6\b\n" +
+	"\x06design\x18\x01 \x01(\v2\x13.quaycrew.v1.DesignR\x06design\"\x8d\t\n" +
 	"\x04Step\x12\x18\n" +
 	"\afeature\x18\x01 \x01(\tR\afeature\x12\x16\n" +
 	"\x06number\x18\x02 \x01(\x05R\x06number\x12\x14\n" +
@@ -11261,7 +11281,8 @@ const file_quaycrew_v1_controlplane_proto_rawDesc = "" +
 	"\x11red_run_scenarios\x18\x1b \x01(\x05R\x0fredRunScenarios\x128\n" +
 	"\n" +
 	"red_run_at\x18\x1c \x01(\v2\x1a.google.protobuf.TimestampR\bredRunAt\x12(\n" +
-	"\x10red_run_required\x18\x1d \x01(\bR\x0eredRunRequired\"q\n" +
+	"\x10red_run_required\x18\x1d \x01(\bR\x0eredRunRequired\x12%\n" +
+	"\x0echeck_required\x18\x1e \x01(\bR\rcheckRequired\"q\n" +
 	"\tMilestone\x12\x18\n" +
 	"\afeature\x18\x01 \x01(\tR\afeature\x12\x16\n" +
 	"\x06number\x18\x02 \x01(\x05R\x06number\x12\x14\n" +
