@@ -608,6 +608,10 @@ func (s *Server) renderContext(ctx context.Context, session *quaycrewv1.Session)
 			// this section is read on every exec of every session in the project and is capped, and a
 			// fourth pointer here would cut the brief further.
 			s.renderContracts(ctx, session.GetProject(), dirs[at])
+			// The mark the test gate reads, written from the store on every exec for the reason the
+			// documents above are: what a session holds has to say what the store says, and a session
+			// whose container was replaced would otherwise come back out from under the gate.
+			s.renderBuilding(ctx, session, dirs[at])
 			if summary := s.renderDesign(ctx, session, dirs[at], hasPath); summary != "" {
 				sections = append(sections, sandbox.Section{Scope: sandbox.DesignScope, Body: summary})
 			}

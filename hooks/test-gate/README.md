@@ -12,13 +12,37 @@ the moment the session tries, by a process the session does not control.
 
 ## When it is on
 
-Only for a session the system set `KREWE_BUILDING` on, which is a worker in the build stage and
-nothing else. Every other session is refused nothing here. That matters. The stage before this one
-writes the tests, and a gate that fired for every session would refuse the worker that fills the
-suite.
+From the moment krewe records the run that saw a step's tests fail, for the session holding that
+step, and for no other session.
 
-A command that sets or clears the variable is refused, whether the gate is on or off. A session that
-decides its own boundary has none.
+The moment is the whole rule. The same session writes those tests first, so a gate that came on at
+the take would refuse that session for doing what the step asked of it. A run that passed saw
+nothing fail, and a run that failed with no scenario in it executed nothing, so neither one turns
+anything on. The mark goes away when the step is done or stopped.
+
+A session that holds no step is refused nothing here.
+
+## How it is told
+
+The system writes a file into the session's own directory, at `.krewe/building`. The gate reads
+whether that file is there.
+
+A file rather than an environment variable, because of when the gate comes on. The red run lands in
+the middle of a session's life, and a container that is already running cannot be handed a new
+variable. It can be handed a file: the session's directory is a bind mount, so the system writes
+into it from outside and the next tool call reads it. The same file is written again on every exec,
+out of the record the store holds, so a session whose container was replaced comes back under the
+gate.
+
+The mark is looked for in the directory the runtime says the session is working in, and then in each
+directory above it. A session clones the repository it works on into its own directory, so most
+commands run a level or two below the mark.
+
+A session may read the mark. It may not write it, and it may not take it away, and nor may it take
+away the directory holding it. A boundary a session can lift is advice with extra steps.
+
+`KREWE_BUILDING` is still read, for a worker the system starts under the boundary. A command that
+sets or clears the variable is refused, whether the gate is on or off, for the same reason.
 
 ## How it reads a command
 

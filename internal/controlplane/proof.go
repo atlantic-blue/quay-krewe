@@ -251,6 +251,10 @@ func (s *Server) CheckStep(ctx context.Context, req *quaycrewv1.CheckStepRequest
 	if err != nil {
 		return nil, storeError(err, "step")
 	}
+	// The run that saw this step's tests fail is what puts its session under the test gate, and the
+	// session is already running. Written here rather than left to the next exec, because the build
+	// the gate exists for starts in the same conversation the moment this verdict comes back.
+	s.markTheSessionBuilding(ctx, feature.GetProject(), written)
 	// The word done, where krewe earned it. The step and the design both move in that write, so both
 	// are answered as it left them rather than as they were read before the run.
 	closed := false
@@ -262,6 +266,31 @@ func (s *Server) CheckStep(ctx context.Context, req *quaycrewv1.CheckStepRequest
 	return &quaycrewv1.CheckStepResponse{
 		Step: written, Design: design, ClosedByKrewe: closed, Warnings: warnings,
 	}, nil
+}
+
+// markTheSessionBuilding puts the session holding this step under the test gate, or takes it out
+// from under it, as soon as the run that decides it is recorded.
+//
+// Nothing here fails a check. The run happened and the verdict is recorded, so a mark that could not
+// be written is a warning in the log and a gate that comes on at the session's next exec instead.
+// Refusing the check would report a run that failed when it passed and the record holds it.
+func (s *Server) markTheSessionBuilding(ctx context.Context, project string, step *quaycrewv1.Step) {
+	if step.GetSession() == "" {
+		return
+	}
+	// By handle or by identifier, because the step records whichever the take wrote. It is the read
+	// the run above already made to find the same session.
+	session, err := s.sessionAt(ctx, "", project, step.GetSession())
+	if err != nil {
+		slog.Warn("the session holding the step was not put under the test gate",
+			"step", step.GetNumber(), "error", err)
+		return
+	}
+	dirs := s.storage.MyDirs(boxOf(session))
+	if len(dirs) != 2 {
+		return
+	}
+	s.markBuilding(dirs[innerFile], step)
 }
 
 // kreweMayClose reports whether this verdict earns krewe the word done: the project stands at the
