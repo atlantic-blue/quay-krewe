@@ -25,8 +25,13 @@ import (
 // kept.
 const flagArtifact = "--artifact"
 
+// flagURL is where the artifact was published, so an operator opens a page rather than reads the
+// json under it. The mockups stage is the one this exists for: the artifact is a flows.json, and
+// what a person approves is the flow map drawn from it.
+const flagURL = "--url"
+
 const stageUsage = "usage: krewe stage show [<address>]" +
-	"\n       krewe stage set [<address>] <stage> " + flagFile + " <path> [" + flagArtifact + " <path>]" +
+	"\n       krewe stage set [<address>] <stage> " + flagFile + " <path> [" + flagArtifact + " <path>] [" + flagURL + " <address>]" +
 	"\n       krewe stage approve [<address>] <stage>"
 
 func runStage(ctx context.Context, client quaycrewv1.ControlPlaneServiceClient, args []string, out io.Writer) error {
@@ -181,7 +186,7 @@ func stageNamed(held []*quaycrewv1.DesignStage, name string) *quaycrewv1.DesignS
 // is what makes the write repeatable. The artifact is a second file rather than json on the command
 // line, because it is a document too and usually a large one.
 func runStageSet(ctx context.Context, client quaycrewv1.ControlPlaneServiceClient, args []string, out io.Writer) error {
-	rest, path, artifactPath, err := stageFilesOutOf(args)
+	rest, path, artifactPath, address, err := stageFilesOutOf(args)
 	if err != nil {
 		return err
 	}
@@ -212,7 +217,7 @@ func runStageSet(ctx context.Context, client quaycrewv1.ControlPlaneServiceClien
 		artifact = string(read)
 	}
 	resp, err := client.SetDesignStage(ctx, &quaycrewv1.SetDesignStageRequest{
-		Project: located.ProjectID, Stage: stage, Body: string(body), Artifact: artifact,
+		Project: located.ProjectID, Stage: stage, Body: string(body), Artifact: artifact, ArtifactUrl: address,
 	})
 	if err != nil {
 		return fmt.Errorf("%w\n\nnothing was written", err)
@@ -222,6 +227,11 @@ func runStageSet(ctx context.Context, client quaycrewv1.ControlPlaneServiceClien
 	if artifactPath != "" {
 		fmt.Fprintf(out, "it carries an artifact: %s\n",
 			contextsize.Characters(utf8.RuneCountInString(artifact)))
+	}
+	// The address is printed back because it is the thing the operator opens to read the stage. A
+	// mockups stage whose page moved is a stage nobody can approve.
+	if address != "" {
+		fmt.Fprintf(out, "the artifact is published at %s\n", address)
 	}
 	// Said on every write, whether or not this stage carried the word before it. A person who reads
 	// it twice learns the rule, which is that approval is a statement about one text.
@@ -271,28 +281,34 @@ func stageAndAddress(args []string) (typed, stage string, err error) {
 	return "", args[0], nil
 }
 
-// stageFilesOutOf takes the body and the artifact out of the arguments, and hands back everything
-// else in the order it was typed. It is the shape fileOutOf has, for the reason that one has it: the
-// address and the stage are positions, and a flag may sit anywhere among them.
-func stageFilesOutOf(args []string) (rest []string, path, artifact string, err error) {
+// stageFilesOutOf takes the body, the artifact and the address out of the arguments, and hands back
+// everything else in the order it was typed. It is the shape fileOutOf has, for the reason that one
+// has it: the address and the stage are positions, and a flag may sit anywhere among them.
+func stageFilesOutOf(args []string) (rest []string, path, artifact, url string, err error) {
 	rest = make([]string, 0, len(args))
 	for at := 0; at < len(args); at++ {
 		switch args[at] {
 		case flagFile:
 			if at+1 >= len(args) {
-				return nil, "", "", fmt.Errorf("%s needs a path\n\n%s", flagFile, stageUsage)
+				return nil, "", "", "", fmt.Errorf("%s needs a path\n\n%s", flagFile, stageUsage)
 			}
 			path = args[at+1]
 			at++
 		case flagArtifact:
 			if at+1 >= len(args) {
-				return nil, "", "", fmt.Errorf("%s needs a path\n\n%s", flagArtifact, stageUsage)
+				return nil, "", "", "", fmt.Errorf("%s needs a path\n\n%s", flagArtifact, stageUsage)
 			}
 			artifact = args[at+1]
+			at++
+		case flagURL:
+			if at+1 >= len(args) {
+				return nil, "", "", "", fmt.Errorf("%s needs an address\n\n%s", flagURL, stageUsage)
+			}
+			url = args[at+1]
 			at++
 		default:
 			rest = append(rest, args[at])
 		}
 	}
-	return rest, path, artifact, nil
+	return rest, path, artifact, url, nil
 }

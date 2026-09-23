@@ -1,0 +1,136 @@
+{
+  "project": "Tide",
+  "readAt": {
+    "commit": "0000000",
+    "date": "2026-09-23",
+    "repository": "https://github.com/atlantic-blue/tide"
+  },
+  "tokens": {
+    "colour": {
+      "surface": "#fdfbf7",
+      "surface-low": "#f1ece4",
+      "ink": "#1d1c1a",
+      "muted": "#5f5a52",
+      "line": "#ded5c8",
+      "primary": "#1b6b57",
+      "on-primary": "#ffffff",
+      "frame": "#211f1c"
+    },
+    "font": {
+      "sans": "Inter, system-ui, sans-serif",
+      "mono": "JetBrains Mono, monospace"
+    },
+    "radius": {
+      "screen": "24px",
+      "control": "12px",
+      "card": "10px"
+    },
+    "space": {
+      "gap": "9px",
+      "pad": "14px"
+    }
+  },
+  "screens": {
+    "sign-in": {
+      "name": "Sign in",
+      "surface": "web",
+      "status": "built",
+      "route": "/sign-in",
+      "source": "apps/web/src/routes/SignIn.tsx",
+      "ref": "step 1.1",
+      "el": [
+        { "t": "nav", "component": "TopNav", "active": "Sign in", "v": [{ "v": "Tide" }, { "v": "Sign in" }] },
+        { "t": "h", "component": "Heading", "v": "Sign in to Tide" },
+        { "t": "p", "component": "Text", "v": "Your tides, on every machine you use." },
+        { "t": "fields", "component": "TextField", "v": ["Email address", "Password"] },
+        { "t": "btn", "component": "Button", "v": "Sign in", "to": "dashboard" },
+        { "t": "link", "component": "Link", "v": "I forgot my password" }
+      ]
+    },
+    "dashboard": {
+      "name": "Dashboard",
+      "surface": "web",
+      "status": "designed",
+      "route": "/dashboard",
+      "source": "docs/design/web.md",
+      "ref": "step 1.2",
+      "el": [
+        { "t": "nav", "component": "TopNav", "active": "Dashboard", "v": [{ "v": "Tide" }, { "v": "Dashboard" }, { "v": "Places" }] },
+        { "t": "h", "component": "Heading", "v": "This week" },
+        { "t": "table", "component": "DataTable", "head": ["Day", "High", "Low"], "rows": [["Monday", "06:12", "12:30"], ["Tuesday", "07:02", "13:18"]] },
+        { "t": "btn2", "component": "Button", "v": "Add a place" }
+      ],
+      "notes": ["The table reads the same rows the phone reads."]
+    },
+    "home": {
+      "name": "Today",
+      "surface": "mobile",
+      "status": "built",
+      "route": "/",
+      "source": "apps/mobile/src/screens/Today.tsx",
+      "ref": "step 2.1",
+      "el": [
+        { "t": "top", "component": "AppBar", "v": "Tuesday", "right": "Places" },
+        { "t": "h", "component": "Heading", "v": "High water at 07:02" },
+        { "t": "stat", "component": "StatBlock", "v": "4.1m", "sub": "Two hours from now" },
+        { "t": "rows", "component": "ListRow", "v": [{ "v": "Log this tide", "sub": "Nothing written yet", "to": "log" }] },
+        { "t": "dock", "component": "TabBar", "active": "Today", "v": [{ "v": "Today" }, { "v": "Log", "to": "log" }] }
+      ]
+    },
+    "log": {
+      "name": "Log a tide",
+      "surface": "mobile",
+      "status": "designed",
+      "route": "/log",
+      "source": "docs/design/mobile.md",
+      "ref": "step 2.4",
+      "el": [
+        { "t": "top", "component": "AppBar", "v": "Log a tide", "right": "Close", "to": "home" },
+        { "t": "h", "component": "Heading", "v": "What did the water do?" },
+        { "t": "chips", "component": "Chip", "v": ["Calm", "Choppy", "Heavy"] },
+        { "t": "opts", "component": "RadioGroup", "on": [0], "v": ["I swam", "I watched", "I fished"] },
+        { "t": "btn", "component": "Button", "v": "Save this tide", "to": "home" },
+        { "t": "dock", "component": "TabBar", "active": "Log", "v": [{ "v": "Today", "to": "home" }, { "v": "Log" }] }
+      ],
+      "defects": ["Nothing says what happens when the tide is already logged."]
+    }
+  },
+  "stories": [
+    {
+      "id": "sign-in-on-the-web",
+      "title": "An operator signs in on the web",
+      "steps": "2 screens",
+      "story": "The operator opens Tide in a browser, signs in, and reads the week.",
+      "start": "sign-in",
+      "nodes": [["sign-in", 0, 0], ["dashboard", 1, 0]],
+      "edges": [["sign-in", "dashboard", "Sign in", "built"]]
+    },
+    {
+      "id": "log-a-tide-on-the-phone",
+      "title": "A person logs a tide on the phone",
+      "steps": "2 screens",
+      "story": "She opens the phone at the water, logs what it did, and lands back on today.",
+      "start": "home",
+      "nodes": [["home", 0, 0], ["log", 1, 0]],
+      "edges": [["home", "log", "Log this tide", "built"], ["log", "home", "Save this tide", "designed"]]
+    }
+  ],
+  "dataModel": {
+    "intro": "Tide keeps one table on the phone and one on the server.",
+    "zones": [
+      {
+        "title": "On the phone",
+        "sub": "SQLite in the application's own storage",
+        "tables": [
+          {
+            "name": "tide_log",
+            "status": "designed",
+            "role": "One row for each tide a person logged.",
+            "fields": [["id", "text", "primary key"], ["day", "text", "YYYY-MM-DD"], ["water", "text", "calm, choppy or heavy"]]
+          }
+        ]
+      }
+    ],
+    "decisions": ["Does a logged tide sync, or stay on the phone?"]
+  }
+}
