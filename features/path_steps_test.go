@@ -1815,15 +1815,40 @@ func recordAVerdict(ctx context.Context, number int32, state string) error {
 
 // recordAVerdictOf writes one run's verdict onto a step of the feature it names, which is what the
 // scenarios running two features need.
+//
+// A passing verdict lays down a run that failed before it, because that is the only state a real
+// project reaches: krewe refuses the word done on a step whose tests nobody saw fail, so a step
+// carrying a passing run and nothing else could never be finished. The scenarios about that gate
+// write their runs one at a time, in redrun.feature.
 func recordAVerdictOf(ctx context.Context, feature string, number int32, state string) error {
-	output := "1 scenarios (1 passed)"
-	if state == store.ProofFailing {
-		output = "1 scenarios (0 passed, 1 failed)"
+	if state == store.ProofPassing {
+		if err := writeOneRun(ctx, feature, number, store.ProofFailing, 1); err != nil {
+			return err
+		}
 	}
+	return writeOneRun(ctx, feature, number, state, 1)
+}
+
+// writeOneRun writes what one run of a step's scenario reported, where krewe's own check writes it.
+//
+// It goes straight into the store, past the control plane, because a real check needs the session
+// holding the step, a container under it and a proof command on the project. The scenarios about the
+// run itself take the whole way there and check for real.
+func writeOneRun(ctx context.Context, feature string, number int32, state string, scenarios int32) error {
 	_, err := worldFrom(ctx).store.RecordProof(ctx, feature, number, store.ProofResult{
-		State: state, ScenariosRun: 1, Output: output,
+		State: state, ScenariosRun: scenarios, Output: whatTheRunnerPrinted(state, scenarios),
 	})
 	return err
+}
+
+// whatTheRunnerPrinted is the line a runner prints for that verdict and that count, so the output a
+// step keeps reads like a run rather than like a fixture. The path document a session reads carries
+// it, and a scenario about that file would otherwise carry a line nothing ever wrote.
+func whatTheRunnerPrinted(state string, scenarios int32) string {
+	if state == store.ProofFailing {
+		return fmt.Sprintf("%d scenarios (0 passed, %d failed)", scenarios, scenarios)
+	}
+	return fmt.Sprintf("%d scenarios (%d passed)", scenarios, scenarios)
 }
 
 // theStepAgreement reads one step back and holds its record of the operator's word to what the

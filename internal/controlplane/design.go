@@ -1823,6 +1823,9 @@ func (s *Server) FinishStep(ctx context.Context, req *quaycrewv1.FinishStepReque
 	if errors.Is(err, store.ErrNotChecked) {
 		return nil, status.Error(codes.FailedPrecondition, nothingCheckedItYet(req.GetNumber()))
 	}
+	if errors.Is(err, store.ErrNoRedRun) {
+		return nil, status.Error(codes.FailedPrecondition, nobodySawItFail(req.GetNumber()))
+	}
 	if err != nil {
 		return nil, storeError(err, "step")
 	}
@@ -1877,6 +1880,22 @@ func nothingCheckedItYet(number int32) string {
 	return fmt.Sprintf(
 		"nothing checked step %d yet. Run krewe step check [<address>] <feature>.<number>, "+
 			"read the verdict, then say done", number)
+}
+
+// nobodySawItFail is the refusal for a step whose tests nobody ever saw fail: the tests go in first,
+// and the run on them goes red, before any code makes them pass.
+//
+// It names the two moves in the order they happen, because a session reading it has usually written
+// the code already and has to be told what to do with the state it is in rather than only what was
+// wrong.
+//
+// A run that failed with no scenario in it is not what this lets through. Zero scenarios never fails
+// any more than it passes, and a step could otherwise reach the word done with no line of it run.
+func nobodySawItFail(number int32) string {
+	return fmt.Sprintf(
+		"nobody saw step %d's tests fail, so nothing says they can. "+
+			"Write the tests first, run krewe step check [<address>] <feature>.<number> "+
+			"and watch the run go red, then write the code and check it again", number)
 }
 
 // ReopenStep takes a step back off krewe, and makes the correction cost the level.

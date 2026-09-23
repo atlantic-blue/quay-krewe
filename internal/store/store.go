@@ -172,6 +172,35 @@ var ErrNoScenarioNamed = errors.New("store: this step names no scenario")
 // so a step whose check failed still closes and the row records the disagreement.
 var ErrNotChecked = errors.New("store: nobody read a verdict on this step yet")
 
+// ErrNoRedRun says nothing on this step was ever seen to fail, so the word done is refused. This is
+// the gate the record of a red run exists for.
+//
+// A test nobody saw fail proves nothing. It passes on code that is right, and it passes on an
+// assertion that is empty, and the two read the same from outside. So a step carries the moment a run
+// of its scenario failed with at least one scenario in it, and the finish reads that moment.
+//
+// It is a different refusal from ErrNotChecked, because it is a different move: a step nobody checked
+// is told to run the check, and a step whose tests nobody saw fail is told to write the tests first.
+var ErrNoRedRun = errors.New("store: nobody saw this step's tests fail")
+
+// WhyDoneIsRefused is the rule both stores refuse the word done with, and nil where the step may
+// close.
+//
+// Both gates read a moment and never a verdict. A failing run is a record: a step whose check failed
+// closes, and the row keeps the disagreement, because the word done belongs to the operator.
+//
+// The order is the order the two runs happen in, so the operator is told the move they are on rather
+// than the one after it.
+func WhyDoneIsRefused(step *quaycrewv1.Step) error {
+	if step.GetProofRanAt() == nil {
+		return ErrNotChecked
+	}
+	if step.GetRedRunAt() == nil {
+		return ErrNoRedRun
+	}
+	return nil
+}
+
 // ErrNoProofCommand says the project carries no proof command, so krewe has nothing to run a scenario
 // with.
 var ErrNoProofCommand = errors.New("store: this project has no proof command")
@@ -344,6 +373,19 @@ type ProofResult struct {
 	State        string
 	ScenariosRun int32
 	Output       string
+}
+
+// ARedRun says whether this run is one a step's tests were seen to fail on: it failed, and at least
+// one scenario ran.
+//
+// The count is read because zero never fails any more than it passes. A name filter that matches
+// nothing, and a command the shell cannot start, both report a failure that executed no test, and a
+// step could otherwise reach the word done with no line of it run.
+//
+// Both stores call it, so the two cannot disagree about which run is the red one. Postgres takes the
+// answer as a parameter rather than saying the rule again in its statement.
+func ARedRun(result ProofResult) bool {
+	return result.State == ProofFailing && result.ScenariosRun > 0
 }
 
 // KeptProofOutput is the output as a step keeps it: whole while it fits, and otherwise the last
@@ -544,7 +586,7 @@ func protectedSteps(held []*quaycrewv1.Step, incoming []Step) []ProtectedStep {
 
 // keepTheRecord carries what the system owns from the step as it stands onto the step the document
 // declares: the state, the session that took it, the result, who closed it, the stamps, what the
-// session restated and what the last run of its scenario reported.
+// session restated, what the last run of its scenario reported, and the run that was seen to fail.
 //
 // The document is what a caller may set, and none of these are on it. A write that took them from
 // the document would let somebody declare work that never happened, and one that left them behind
@@ -564,6 +606,8 @@ func keepTheRecord(writing, held *quaycrewv1.Step) {
 	writing.ProofScenariosRun = held.GetProofScenariosRun()
 	writing.ProofOutput = held.GetProofOutput()
 	writing.ProofRanAt = held.GetProofRanAt()
+	writing.RedRunScenarios = held.GetRedRunScenarios()
+	writing.RedRunAt = held.GetRedRunAt()
 }
 
 // Step is what a caller may set about one step of a path.
@@ -1177,10 +1221,13 @@ type Store interface {
 	// The store writes the state it is given. Whether done and stopped are the only two words is the
 	// control plane's question, the way a permission mode already is.
 	//
-	// The word done is refused with ErrNotChecked while the step carries no moment of a run. This is
-	// gate 3, and it reads that moment rather than the verdict: a failing run is a record, and the
-	// row keeps the disagreement rather than refusing the word. A stop reads nothing at all, because
-	// a step nobody will finish has to be closable whatever ran on it.
+	// The word done is refused with ErrNotChecked while the step carries no moment of a run, and with
+	// ErrNoRedRun while no run of it was ever seen to fail with a scenario in it. WhyDoneIsRefused
+	// holds both, in the order the two runs happen in, so the operator reads the move they are on.
+	//
+	// Both gates read a moment rather than a verdict: a failing run is a record, and the row keeps the
+	// disagreement rather than refusing the word. A stop reads neither, because a step nobody will
+	// finish has to be closable whatever ran on it.
 	//
 	// The same write records whether the operator agreed with krewe's last verdict, and the design
 	// row of the project holding this feature moves its counters in the same transaction. Agreed says
