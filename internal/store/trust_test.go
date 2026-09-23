@@ -59,6 +59,13 @@ func TestTheCloserDoesNotChangeWhatTheRowRecords(t *testing.T) {
 	m := NewMemory()
 	feature, _ := aPathToFinish(t, m)
 
+	// The run that goes red first, because the word done is refused on a step whose tests nobody saw
+	// fail. What this case is about is the closer column, and a step in that state is a step no
+	// project ever reaches.
+	if _, err := m.RecordProof(ctx, feature, 1, ProofResult{
+		State: ProofFailing, ScenariosRun: 1, Output: "1 scenarios (0 passed, 1 failed)"}); err != nil {
+		t.Fatalf("RecordProof on the run that went red: %v", err)
+	}
 	if _, err := m.RecordProof(ctx, feature, 1, ProofResult{
 		State: ProofPassing, ScenariosRun: 1, Output: "1 scenarios (1 passed)"}); err != nil {
 		t.Fatalf("RecordProof: %v", err)
