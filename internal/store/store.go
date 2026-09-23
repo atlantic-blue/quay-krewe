@@ -14,6 +14,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -628,6 +629,173 @@ const StepTaken = "taken"
 // the column.
 const FeatureOpen = "open"
 
+// The six stages a project is designed in, in the order they are written. A project starts from what
+// a person sees and reaches the data and the architecture last, which is the whole rule this list
+// holds: the position of a name is its position in the table, and the rule that refuses a write reads
+// the stages below it.
+//
+// They are here rather than in the control plane for the reason StepReady is: both stores write the
+// position directly from this list, and a list one of them kept for itself would put the same stage
+// at two positions.
+const (
+	StageDiscovery    = "discovery"
+	StageStories      = "stories"
+	StageDesignSystem = "design_system"
+	StageMockups      = "mockups"
+	StageDataModel    = "data_model"
+	StageArchitecture = "architecture"
+)
+
+// DesignStages returns the six names in order. The caller gets its own slice, so a caller that sorts
+// or truncates what it is given does not reorder the stages for everybody else.
+func DesignStages() []string {
+	return []string{
+		StageDiscovery, StageStories, StageDesignSystem,
+		StageMockups, StageDataModel, StageArchitecture,
+	}
+}
+
+// DesignStagePosition is where a stage sits in that order, counting from zero, and false for a name
+// outside the six.
+func DesignStagePosition(stage string) (int32, bool) {
+	for at, named := range DesignStages() {
+		if named == stage {
+			return int32(at), true
+		}
+	}
+	return 0, false
+}
+
+// DesignStagesBefore are the stages a write to this one has to get past, in order, which is every
+// stage above it in the list. Writing discovery gets an empty slice, because nothing comes before it.
+func DesignStagesBefore(stage string) []string {
+	position, known := DesignStagePosition(stage)
+	if !known {
+		return nil
+	}
+	return DesignStages()[:position]
+}
+
+// ErrUnknownDesignStage is returned when a write names something that is not one of the six.
+//
+// It is not the vocabulary check: the control plane refuses a name a person typed and names the six
+// in the refusal. This is the store saying it cannot work out which position the row sits at, which
+// is a column it has to compute rather than a word it is handed, so a row it wrote anyway would be a
+// stage in no order at all.
+var ErrUnknownDesignStage = errors.New("store: that is not one of the six design stages")
+
+// ErrStageNotApproved is returned when a stage is written while a stage before it carries no
+// approval. StageNotApprovedError names which one, and this is what errors.Is answers.
+var ErrStageNotApproved = errors.New("store: a stage before this one is not approved")
+
+// ErrNoStageToApprove is returned when a stage nobody wrote is approved. A stage with no body is
+// nothing to agree to, which is the rule ErrNothingToApprove holds for the design document.
+var ErrNoStageToApprove = errors.New("store: there is no stage body to approve")
+
+// ErrArtifactNotJSON is returned when a stage's artifact is not json. The column is jsonb, so
+// Postgres refuses it on the insert; both stores call CheckDesignStageArtifact before writing so the
+// memory store refuses exactly what the real one refuses.
+var ErrArtifactNotJSON = errors.New("store: the stage's artifact is not json")
+
+// StageNotApprovedError names the first stage without approval, which is the one the operator has to
+// go and approve.
+//
+// The first rather than the nearest, because an operator writing the data model with nothing approved
+// has one move and it is at the top of the list. A refusal naming the mockups would send them to a
+// stage they cannot write either.
+type StageNotApprovedError struct {
+	// Stage is the first stage, in the order the six are written, that is neither approved nor
+	// skipped.
+	Stage string
+	// Writing is the stage the caller was trying to write.
+	Writing string
+}
+
+func (e *StageNotApprovedError) Error() string {
+	return fmt.Sprintf("%s: %s is written before %s, and %s carries no approval",
+		ErrStageNotApproved.Error(), e.Stage, e.Writing, e.Stage)
+}
+
+// Is makes errors.Is(err, ErrStageNotApproved) answer, so a caller that only wants to know which rule
+// refused the write does not have to unwrap the stage.
+func (e *StageNotApprovedError) Is(target error) bool { return target == ErrStageNotApproved }
+
+// DesignStageApproved reports whether the operator's word still stands on a stage: they approved a
+// version, and it is the version the stage holds now.
+//
+// Both stores compute the flag they answer with from here, and so does every reader of a stage, so
+// the rule that an approval is about one text is written down once.
+func DesignStageApproved(version, approvedVersion int32) bool {
+	return approvedVersion > 0 && approvedVersion == version
+}
+
+// DesignStageSatisfied reports whether a stage counts as settled for the rule that orders the six:
+// the operator's word stands on the text it holds now, or the stage was skipped.
+//
+// A stage nobody wrote is not settled, which is what stops a project writing the architecture and
+// nothing else. A nil message reads as exactly that, so the caller hands over what it found without
+// a branch for the row that is not there.
+func DesignStageSatisfied(stage *quaycrewv1.DesignStage) bool {
+	return stage.GetSkipped() || DesignStageApproved(stage.GetVersion(), stage.GetApprovedVersion())
+}
+
+// BlockingDesignStage is the first stage before this one that is not settled, and the empty string
+// when every one of them is.
+//
+// The first rather than the nearest, because an operator writing the data model with nothing approved
+// has one move and it is at the top of the list. held may carry any stages at all, in any order: this
+// walks the six in their own order and reads what it finds.
+//
+// Both stores call it, so the rule that orders the six is written down once. A rule one of them held
+// for itself would refuse a write in Postgres and take it in memory, and the suite that holds them to
+// one behaviour would be green for both.
+func BlockingDesignStage(writing string, held []*quaycrewv1.DesignStage) string {
+	for _, before := range DesignStagesBefore(writing) {
+		var found *quaycrewv1.DesignStage
+		for _, one := range held {
+			if one.GetStage() == before {
+				found = one
+				break
+			}
+		}
+		if !DesignStageSatisfied(found) {
+			return before
+		}
+	}
+	return ""
+}
+
+// DesignStageWrite is what one write to a stage carries: the name, the prose, and the artifact
+// beside it.
+//
+// One struct rather than four arguments, because three of them are strings and a call that put the
+// artifact where the body goes would compile. It is the shape ProofResult is, for the same reason.
+type DesignStageWrite struct {
+	// Stage is one of the six names.
+	Stage string
+	// Body is the prose of the stage, kept whole however long it is.
+	Body string
+	// Artifact is json, or empty for a stage that carries none.
+	Artifact string
+	// ArtifactURL is where the artifact is published, when it is published somewhere a person opens.
+	ArtifactURL string
+}
+
+// CheckDesignStageArtifact refuses an artifact that is not json.
+//
+// An empty artifact is no artifact rather than an empty document: the column is null for it, and an
+// empty string is not json, so the two would otherwise be the same refusal. Both stores call this, so
+// the memory store cannot accept a document the jsonb column would throw out.
+func CheckDesignStageArtifact(artifact string) error {
+	if artifact == "" {
+		return nil
+	}
+	if !json.Valid([]byte(artifact)) {
+		return ErrArtifactNotJSON
+	}
+	return nil
+}
+
 // StatusReclaimed is the session status this store writes when the system takes a container back. The
 // control plane owns the whole vocabulary; this one is here because two queries below are written in
 // terms of it and the store must not depend on the package that calls it.
@@ -1120,6 +1288,59 @@ type Store interface {
 	// It touches no step and no milestone. A closed feature keeps its whole path, and a feature may be
 	// closed while steps under it are ready or taken: the operator decides when a feature is finished.
 	FinishFeature(ctx context.Context, feature string, state string) (*quaycrewv1.Feature, error)
+
+	// The six stages a project is designed in, before anything under it is built.
+	//
+	// ListDesignStages returns the stages a project has written, in the order the six are written. A
+	// project that has written none is an empty slice and not an error, and it is the answer that
+	// says this project is designed by its design document alone. The rows are made on the first
+	// write to a stage rather than when the project is made, so an empty answer and a project that
+	// never started staging are the same thing, which is what lets a project made before today keep
+	// working exactly as it did.
+	ListDesignStages(ctx context.Context, project string) ([]*quaycrewv1.DesignStage, error)
+	// SetDesignStage writes one stage's body and artifact, and returns the stage after the write. A
+	// project that does not exist is ErrNotFound, and a stage outside the six is
+	// ErrUnknownDesignStage.
+	//
+	// The order is the rule this call holds. A write to a stage is refused with a
+	// StageNotApprovedError while any stage before it is neither approved nor skipped, and the error
+	// names the first such stage, so the data model can never be written before the stories. The
+	// check and the write are one transaction, because an approval cleared between the two would
+	// leave a stage written under an order nobody held.
+	//
+	// The same write increases this stage's version and clears its approval, and clears the approval
+	// of every stage after it. Approval is a statement about one text: a stage whose body changed is
+	// a stage nobody has agreed to, and the stages after it were agreed under the text that changed.
+	// Nothing after it is emptied, because the words are still somebody's work and only the word on
+	// them is gone.
+	//
+	// Writing the same text again is allowed, and it still clears the approval, for the reason
+	// SetRestatement gives: the store cannot tell an unchanged text from a rewritten one that reads
+	// the same.
+	//
+	// An artifact that is not json is ErrArtifactNotJSON, in both stores, because the column is jsonb
+	// and a memory store that took it would make a suite green over a write Postgres refuses. An
+	// empty artifact is no artifact rather than an empty document.
+	//
+	// It comes back meaning what it was given and not spelled the way it was given. Postgres holds a
+	// jsonb document in its own form, so the spaces move and the keys of an object sort, and a caller
+	// that compared the bytes would pass in memory and fail against a database.
+	//
+	// No length refuses the body, for the reason SetRestatement takes any length: a cap here would
+	// lose work that exists only in the call being made.
+	SetDesignStage(ctx context.Context, project string, stage DesignStageWrite) (
+		*quaycrewv1.DesignStage, error)
+	// ApproveDesignStage records the operator's word on one stage as it stands, and returns the stage
+	// after the write. A project that does not exist is ErrNotFound, a stage outside the six is
+	// ErrUnknownDesignStage, and a stage nobody wrote is ErrNoStageToApprove.
+	//
+	// The version is read in the statement that writes the approval, so a stage rewritten between a
+	// read and a write cannot come back approved under a text nobody read. Approving one that is
+	// already approved is allowed, and it moves the stamp.
+	//
+	// Nothing before it and nothing after it moves. The order is held on the write rather than on the
+	// approval, because a write is what makes a text and an approval is only the word on one.
+	ApproveDesignStage(ctx context.Context, project, stage string) (*quaycrewv1.DesignStage, error)
 
 	// ImportSkill takes a skill into the system at the version its manifest declares.
 	//

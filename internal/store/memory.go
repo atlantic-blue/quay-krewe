@@ -45,6 +45,10 @@ type Memory struct {
 	// second map rather than a field on the feature, because the path write replaces both it and the
 	// steps whole and the feature row is untouched by that write.
 	milestones map[string][]*quaycrewv1.Milestone
+	// designStages is each project's design stages, keyed by project and held in position order. A
+	// project with no entry has written none, which is the normal state and the state every project
+	// made before the stages existed is in.
+	designStages map[string][]*quaycrewv1.DesignStage
 	// features is each project's narrowed parts, keyed by project and held in number order. A project
 	// with no entry has no feature, which is the normal state.
 	features map[string][]*quaycrewv1.Feature
@@ -1432,6 +1436,141 @@ func (m *Memory) featureLocked(feature string) (*quaycrewv1.Feature, error) {
 		}
 	}
 	return nil, ErrNotFound
+}
+
+// The six stages a project is designed in, before anything under it is built: the listing, the write
+// that holds the order, and the operator's word on one stage.
+
+// ListDesignStages returns the stages a project has written, in the order the six are written.
+func (m *Memory) ListDesignStages(_ context.Context, project string) ([]*quaycrewv1.DesignStage, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if _, err := m.getProjectLocked(project); err != nil {
+		return nil, err
+	}
+	return copyDesignStages(m.designStages[project]), nil
+}
+
+// SetDesignStage writes one stage's body and artifact, and holds the order while it does.
+//
+// The read of the stages before this one, the write, and the approvals taken away from the stages
+// after it all happen under the one lock, because Postgres does the three in one transaction and the
+// two stores have to answer the same thing to two callers writing at one moment.
+//
+// The artifact is refused here when it is not json, because the Postgres column is jsonb and would
+// refuse it. A memory store that took a document the real one throws out is a double that makes a
+// suite green over a write that fails in production.
+func (m *Memory) SetDesignStage(_ context.Context, project string, write DesignStageWrite) (
+	*quaycrewv1.DesignStage, error) {
+	position, known := DesignStagePosition(write.Stage)
+	if !known {
+		return nil, ErrUnknownDesignStage
+	}
+	if err := CheckDesignStageArtifact(write.Artifact); err != nil {
+		return nil, err
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, err := m.getProjectLocked(project); err != nil {
+		return nil, err
+	}
+	// The first stage before this one that is not settled, read through the rule both stores call.
+	if blocking := BlockingDesignStage(write.Stage, m.designStages[project]); blocking != "" {
+		return nil, &StageNotApprovedError{Stage: blocking, Writing: write.Stage}
+	}
+
+	if m.designStages == nil {
+		m.designStages = make(map[string][]*quaycrewv1.DesignStage)
+	}
+	now := time.Now().UTC()
+	written := designStageNamed(m.designStages[project], write.Stage)
+	if written == nil {
+		written = &quaycrewv1.DesignStage{
+			Id:        NewID(),
+			Project:   project,
+			Stage:     write.Stage,
+			Position:  position,
+			Version:   1,
+			CreatedAt: timestamppb.New(now),
+		}
+		m.designStages[project] = append(m.designStages[project], written)
+		sort.Slice(m.designStages[project], func(i, j int) bool {
+			return m.designStages[project][i].GetPosition() < m.designStages[project][j].GetPosition()
+		})
+	} else {
+		written.Version++
+	}
+	written.Body = write.Body
+	written.Artifact = write.Artifact
+	written.ArtifactUrl = write.ArtifactURL
+	written.ApprovedVersion = 0
+	written.ApprovedAt = nil
+	written.Approved = false
+	written.UpdatedAt = timestamppb.New(now)
+
+	// Every stage after this one loses its approval, because it was agreed under a text that has just
+	// moved. The words stay: only the word on them is gone.
+	for _, later := range m.designStages[project] {
+		if later.GetPosition() <= position || later.GetApprovedVersion() == 0 {
+			continue
+		}
+		later.ApprovedVersion = 0
+		later.ApprovedAt = nil
+		later.Approved = false
+		later.UpdatedAt = timestamppb.New(now)
+	}
+	return copyDesignStage(written), nil
+}
+
+// ApproveDesignStage records the operator's word on one stage as it stands.
+//
+// A stage with no body is nothing to agree to, which is the rule ApproveProjectDesign holds for the
+// design document. Nothing before it and nothing after it moves.
+func (m *Memory) ApproveDesignStage(_ context.Context, project, stage string) (
+	*quaycrewv1.DesignStage, error) {
+	if _, known := DesignStagePosition(stage); !known {
+		return nil, ErrUnknownDesignStage
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, err := m.getProjectLocked(project); err != nil {
+		return nil, err
+	}
+	held := designStageNamed(m.designStages[project], stage)
+	if held == nil || held.GetBody() == "" {
+		return nil, ErrNoStageToApprove
+	}
+	now := time.Now().UTC()
+	held.ApprovedVersion = held.GetVersion()
+	held.Approved = DesignStageApproved(held.GetVersion(), held.GetApprovedVersion())
+	held.ApprovedAt = timestamppb.New(now)
+	held.UpdatedAt = timestamppb.New(now)
+	return copyDesignStage(held), nil
+}
+
+// designStageNamed is one stage of a project's stages, or nil when that stage is not written. The
+// caller holds the lock.
+func designStageNamed(stages []*quaycrewv1.DesignStage, stage string) *quaycrewv1.DesignStage {
+	for _, held := range stages {
+		if held.GetStage() == stage {
+			return held
+		}
+	}
+	return nil
+}
+
+// copyDesignStages hands the caller its own messages, for the reason copySteps does.
+func copyDesignStages(stages []*quaycrewv1.DesignStage) []*quaycrewv1.DesignStage {
+	copied := make([]*quaycrewv1.DesignStage, 0, len(stages))
+	for _, stage := range stages {
+		copied = append(copied, copyDesignStage(stage))
+	}
+	return copied
+}
+
+func copyDesignStage(stage *quaycrewv1.DesignStage) *quaycrewv1.DesignStage {
+	return proto.Clone(stage).(*quaycrewv1.DesignStage)
 }
 
 // copyFeatures hands the caller its own messages, for the reason copySteps does.

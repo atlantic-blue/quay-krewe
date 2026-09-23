@@ -71,6 +71,9 @@ const (
 	ControlPlaneService_AddFeature_FullMethodName               = "/quaycrew.v1.ControlPlaneService/AddFeature"
 	ControlPlaneService_SetFeatureIntention_FullMethodName      = "/quaycrew.v1.ControlPlaneService/SetFeatureIntention"
 	ControlPlaneService_FinishFeature_FullMethodName            = "/quaycrew.v1.ControlPlaneService/FinishFeature"
+	ControlPlaneService_ListDesignStages_FullMethodName         = "/quaycrew.v1.ControlPlaneService/ListDesignStages"
+	ControlPlaneService_SetDesignStage_FullMethodName           = "/quaycrew.v1.ControlPlaneService/SetDesignStage"
+	ControlPlaneService_ApproveDesignStage_FullMethodName       = "/quaycrew.v1.ControlPlaneService/ApproveDesignStage"
 	ControlPlaneService_ReadSessionWork_FullMethodName          = "/quaycrew.v1.ControlPlaneService/ReadSessionWork"
 	ControlPlaneService_LocateDirectory_FullMethodName          = "/quaycrew.v1.ControlPlaneService/LocateDirectory"
 	ControlPlaneService_PutVolumeFile_FullMethodName            = "/quaycrew.v1.ControlPlaneService/PutVolumeFile"
@@ -219,6 +222,20 @@ type ControlPlaneServiceClient interface {
 	// Saying a feature finished, stopped, or is open again. It warns about the steps still open under
 	// it and refuses nothing: the operator decides when a feature is finished.
 	FinishFeature(ctx context.Context, in *FinishFeatureRequest, opts ...grpc.CallOption) (*FinishFeatureResponse, error)
+	// The six stages a project is designed in, before anything under it is built: discovery, stories,
+	// design_system, mockups, data_model, architecture.
+	//
+	// A write to a stage is refused while a stage before it carries no approval, so the data model is
+	// never written before the stories, and the same write clears the approval of every stage after
+	// it.
+	//
+	// The driver may write and read them, for the reason it may write a design: a design session is
+	// what writes the stages, and writing one grants it nothing. The word on a stage is the operator's,
+	// the way the word on a design is, and the refusal that holds a session to that lands beside the
+	// command that makes this call reachable from a session at all.
+	ListDesignStages(ctx context.Context, in *ListDesignStagesRequest, opts ...grpc.CallOption) (*ListDesignStagesResponse, error)
+	SetDesignStage(ctx context.Context, in *SetDesignStageRequest, opts ...grpc.CallOption) (*SetDesignStageResponse, error)
+	ApproveDesignStage(ctx context.Context, in *ApproveDesignStageRequest, opts ...grpc.CallOption) (*ApproveDesignStageResponse, error)
 	// Reads a file, or a listing, out of the work a session left behind, without attaching to it.
 	ReadSessionWork(ctx context.Context, in *ReadSessionWorkRequest, opts ...grpc.CallOption) (*ReadSessionWorkResponse, error)
 	// Says where an address is on the machine, so a person can put a file in it by hand. It reads the
@@ -785,6 +802,36 @@ func (c *controlPlaneServiceClient) FinishFeature(ctx context.Context, in *Finis
 	return out, nil
 }
 
+func (c *controlPlaneServiceClient) ListDesignStages(ctx context.Context, in *ListDesignStagesRequest, opts ...grpc.CallOption) (*ListDesignStagesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListDesignStagesResponse)
+	err := c.cc.Invoke(ctx, ControlPlaneService_ListDesignStages_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *controlPlaneServiceClient) SetDesignStage(ctx context.Context, in *SetDesignStageRequest, opts ...grpc.CallOption) (*SetDesignStageResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SetDesignStageResponse)
+	err := c.cc.Invoke(ctx, ControlPlaneService_SetDesignStage_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *controlPlaneServiceClient) ApproveDesignStage(ctx context.Context, in *ApproveDesignStageRequest, opts ...grpc.CallOption) (*ApproveDesignStageResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ApproveDesignStageResponse)
+	err := c.cc.Invoke(ctx, ControlPlaneService_ApproveDesignStage_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *controlPlaneServiceClient) ReadSessionWork(ctx context.Context, in *ReadSessionWorkRequest, opts ...grpc.CallOption) (*ReadSessionWorkResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ReadSessionWorkResponse)
@@ -1105,6 +1152,20 @@ type ControlPlaneServiceServer interface {
 	// Saying a feature finished, stopped, or is open again. It warns about the steps still open under
 	// it and refuses nothing: the operator decides when a feature is finished.
 	FinishFeature(context.Context, *FinishFeatureRequest) (*FinishFeatureResponse, error)
+	// The six stages a project is designed in, before anything under it is built: discovery, stories,
+	// design_system, mockups, data_model, architecture.
+	//
+	// A write to a stage is refused while a stage before it carries no approval, so the data model is
+	// never written before the stories, and the same write clears the approval of every stage after
+	// it.
+	//
+	// The driver may write and read them, for the reason it may write a design: a design session is
+	// what writes the stages, and writing one grants it nothing. The word on a stage is the operator's,
+	// the way the word on a design is, and the refusal that holds a session to that lands beside the
+	// command that makes this call reachable from a session at all.
+	ListDesignStages(context.Context, *ListDesignStagesRequest) (*ListDesignStagesResponse, error)
+	SetDesignStage(context.Context, *SetDesignStageRequest) (*SetDesignStageResponse, error)
+	ApproveDesignStage(context.Context, *ApproveDesignStageRequest) (*ApproveDesignStageResponse, error)
 	// Reads a file, or a listing, out of the work a session left behind, without attaching to it.
 	ReadSessionWork(context.Context, *ReadSessionWorkRequest) (*ReadSessionWorkResponse, error)
 	// Says where an address is on the machine, so a person can put a file in it by hand. It reads the
@@ -1306,6 +1367,15 @@ func (UnimplementedControlPlaneServiceServer) SetFeatureIntention(context.Contex
 }
 func (UnimplementedControlPlaneServiceServer) FinishFeature(context.Context, *FinishFeatureRequest) (*FinishFeatureResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method FinishFeature not implemented")
+}
+func (UnimplementedControlPlaneServiceServer) ListDesignStages(context.Context, *ListDesignStagesRequest) (*ListDesignStagesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListDesignStages not implemented")
+}
+func (UnimplementedControlPlaneServiceServer) SetDesignStage(context.Context, *SetDesignStageRequest) (*SetDesignStageResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetDesignStage not implemented")
+}
+func (UnimplementedControlPlaneServiceServer) ApproveDesignStage(context.Context, *ApproveDesignStageRequest) (*ApproveDesignStageResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ApproveDesignStage not implemented")
 }
 func (UnimplementedControlPlaneServiceServer) ReadSessionWork(context.Context, *ReadSessionWorkRequest) (*ReadSessionWorkResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ReadSessionWork not implemented")
@@ -2318,6 +2388,60 @@ func _ControlPlaneService_FinishFeature_Handler(srv interface{}, ctx context.Con
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ControlPlaneService_ListDesignStages_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListDesignStagesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ControlPlaneServiceServer).ListDesignStages(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ControlPlaneService_ListDesignStages_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ControlPlaneServiceServer).ListDesignStages(ctx, req.(*ListDesignStagesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ControlPlaneService_SetDesignStage_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetDesignStageRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ControlPlaneServiceServer).SetDesignStage(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ControlPlaneService_SetDesignStage_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ControlPlaneServiceServer).SetDesignStage(ctx, req.(*SetDesignStageRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ControlPlaneService_ApproveDesignStage_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ApproveDesignStageRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ControlPlaneServiceServer).ApproveDesignStage(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ControlPlaneService_ApproveDesignStage_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ControlPlaneServiceServer).ApproveDesignStage(ctx, req.(*ApproveDesignStageRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _ControlPlaneService_ReadSessionWork_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ReadSessionWorkRequest)
 	if err := dec(in); err != nil {
@@ -2838,6 +2962,18 @@ var ControlPlaneService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "FinishFeature",
 			Handler:    _ControlPlaneService_FinishFeature_Handler,
+		},
+		{
+			MethodName: "ListDesignStages",
+			Handler:    _ControlPlaneService_ListDesignStages_Handler,
+		},
+		{
+			MethodName: "SetDesignStage",
+			Handler:    _ControlPlaneService_SetDesignStage_Handler,
+		},
+		{
+			MethodName: "ApproveDesignStage",
+			Handler:    _ControlPlaneService_ApproveDesignStage_Handler,
 		},
 		{
 			MethodName: "ReadSessionWork",

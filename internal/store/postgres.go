@@ -1981,6 +1981,222 @@ func (p *Postgres) FinishFeature(ctx context.Context, feature, state string) (*q
 	return written, nil
 }
 
+// The six stages a project is designed in, before anything under it is built: the listing, the write
+// that holds the order, and the operator's word on one stage.
+
+// designStageColumns is what every stage read selects, in the order scanDesignStage reads them. The
+// two are written next to each other for the reason featureColumns and scanFeature are: a column
+// added to one and not the other reads as a zero rather than as a failure.
+//
+// The artifact comes back as text, because the wire carries json as a string. Postgres holds a jsonb
+// document in its own form rather than in the one it was typed in: the spaces move and the keys of an
+// object sort. So a caller compares what an artifact means and never its bytes, and the conformance
+// suite says so, because the memory store keeps the string exactly as it was given.
+//
+// Qualified, because every read joins the project and its workspace to hide a deleted project's
+// stages.
+const designStageColumns = `s.id, s.project, s.stage, s.position, s.body, ` +
+	`coalesce(s.artifact::text, ''), coalesce(s.artifact_url, ''), ` +
+	`s.version, coalesce(s.approved_version, 0), s.approved_at, s.skipped, ` +
+	`s.created_at, s.updated_at`
+
+// scanDesignStage reads one stage row.
+func scanDesignStage(row pgx.Row) (*quaycrewv1.DesignStage, error) {
+	var (
+		id, project, stage, body, artifact, artifactURL string
+		position, version, approvedVersion              int32
+		approvedAt                                      *time.Time
+		skipped                                         bool
+		createdAt, updatedAt                            time.Time
+	)
+	if err := row.Scan(&id, &project, &stage, &position, &body, &artifact, &artifactURL,
+		&version, &approvedVersion, &approvedAt, &skipped, &createdAt, &updatedAt); err != nil {
+		return nil, err
+	}
+	read := &quaycrewv1.DesignStage{
+		Id:              id,
+		Project:         project,
+		Stage:           stage,
+		Position:        position,
+		Body:            body,
+		Artifact:        artifact,
+		ArtifactUrl:     artifactURL,
+		Version:         version,
+		ApprovedVersion: approvedVersion,
+		Approved:        DesignStageApproved(version, approvedVersion),
+		Skipped:         skipped,
+		CreatedAt:       timestamppb.New(createdAt),
+		UpdatedAt:       timestamppb.New(updatedAt),
+	}
+	if approvedAt != nil {
+		read.ApprovedAt = timestamppb.New(*approvedAt)
+	}
+	return read, nil
+}
+
+// ListDesignStages returns the stages a project has written, in the order the six are written.
+//
+// The project is asked for first, the way every design read asks: a project here is deleted by a
+// stamp rather than by removing the row, so the foreign key cascade never fires for one, and a read
+// that only matched on the project identifier would answer for a project nobody can reach.
+func (p *Postgres) ListDesignStages(ctx context.Context, project string) ([]*quaycrewv1.DesignStage, error) {
+	if err := p.projectExists(ctx, project); err != nil {
+		return nil, err
+	}
+	rows, err := p.pool.Query(ctx, `
+		select `+designStageColumns+` from project_design_stages s
+		where s.project = $1
+		order by s.position`, project)
+	if err != nil {
+		return nil, fmt.Errorf("list design stages: %w", err)
+	}
+	defer rows.Close()
+
+	stages := make([]*quaycrewv1.DesignStage, 0)
+	for rows.Next() {
+		stage, err := scanDesignStage(rows)
+		if err != nil {
+			return nil, fmt.Errorf("read design stage: %w", err)
+		}
+		stages = append(stages, stage)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list design stages: %w", err)
+	}
+	return stages, nil
+}
+
+// designStagesBelow reads the stages of a project that sit above a position in the order, inside the
+// transaction the write is being made in.
+//
+// It reads the rows rather than asking the database to decide, because the rule that orders the six
+// is one function both stores call. A condition written in SQL here would be the same rule in a
+// second dialect, and the suite that holds the two stores to one behaviour would pass either way.
+func designStagesBelow(ctx context.Context, transaction pgx.Tx, project string, position int32) (
+	[]*quaycrewv1.DesignStage, error) {
+	rows, err := transaction.Query(ctx, `
+		select `+designStageColumns+` from project_design_stages s
+		where s.project = $1 and s.position < $2
+		order by s.position`, project, position)
+	if err != nil {
+		return nil, fmt.Errorf("read the stages before this one: %w", err)
+	}
+	defer rows.Close()
+
+	below := make([]*quaycrewv1.DesignStage, 0, position)
+	for rows.Next() {
+		stage, err := scanDesignStage(rows)
+		if err != nil {
+			return nil, fmt.Errorf("read a stage before this one: %w", err)
+		}
+		below = append(below, stage)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read the stages before this one: %w", err)
+	}
+	return below, nil
+}
+
+// SetDesignStage writes one stage's body and artifact, and holds the order while it does.
+//
+// One transaction covers the three statements: the stage before this one that carries no approval,
+// the write itself, and the approvals the write takes away from the stages after it. Split up, a
+// stage approved between the first and the second would let a write through that the rule refuses,
+// and a reader between the second and the third would see a later stage still reading approved over
+// a text that moved underneath it.
+//
+// The version goes up and the approval goes with it, in the statement that writes the body, for the
+// reason SetProjectDesign clears the approval in the statement that writes the design.
+func (p *Postgres) SetDesignStage(ctx context.Context, project string, write DesignStageWrite) (
+	*quaycrewv1.DesignStage, error) {
+	position, known := DesignStagePosition(write.Stage)
+	if !known {
+		return nil, ErrUnknownDesignStage
+	}
+	if err := CheckDesignStageArtifact(write.Artifact); err != nil {
+		return nil, err
+	}
+	if err := p.projectExists(ctx, project); err != nil {
+		return nil, err
+	}
+
+	transaction, err := p.pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin the design stage: %w", err)
+	}
+	defer func() { _ = transaction.Rollback(ctx) }()
+
+	// The first stage before this one that is not settled. The rows are read inside the transaction,
+	// so an approval that lands while this write is in flight waits for it rather than being read as
+	// though it had already happened.
+	before, err := designStagesBelow(ctx, transaction, project, position)
+	if err != nil {
+		return nil, err
+	}
+	if blocking := BlockingDesignStage(write.Stage, before); blocking != "" {
+		return nil, &StageNotApprovedError{Stage: blocking, Writing: write.Stage}
+	}
+
+	written, err := scanDesignStage(transaction.QueryRow(ctx, `
+		insert into project_design_stages as s
+			(id, project, stage, position, body, artifact, artifact_url)
+		values ($1, $2, $3, $4, $5, nullif($6::text, '')::jsonb, nullif($7::text, ''))
+		on conflict (project, stage) do update set
+			body = excluded.body,
+			artifact = excluded.artifact,
+			artifact_url = excluded.artifact_url,
+			version = s.version + 1,
+			approved_version = null,
+			approved_at = null,
+			updated_at = now()
+		returning `+designStageColumns,
+		NewID(), project, write.Stage, position, write.Body, write.Artifact, write.ArtifactURL))
+	if err != nil {
+		return nil, fmt.Errorf("set design stage: %w", err)
+	}
+
+	// Every stage after this one loses its approval, because it was agreed under a text that has just
+	// moved. The words stay: only the word on them is gone.
+	if _, err := transaction.Exec(ctx, `
+		update project_design_stages s set approved_version = null, approved_at = null, updated_at = now()
+		where s.project = $1 and s.position > $2 and s.approved_version is not null`,
+		project, position); err != nil {
+		return nil, fmt.Errorf("clear the approvals after %s: %w", write.Stage, err)
+	}
+
+	if err := transaction.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit the design stage: %w", err)
+	}
+	return written, nil
+}
+
+// ApproveDesignStage records the operator's word on one stage as it stands.
+//
+// The version is read in the statement that writes the approval, rather than in a read before it, so
+// a stage rewritten between the two cannot come back approved under a text nobody read. A row that is
+// not there, and a row with no body, both return no rows, and both mean there is nothing to approve.
+func (p *Postgres) ApproveDesignStage(ctx context.Context, project, stage string) (
+	*quaycrewv1.DesignStage, error) {
+	if _, known := DesignStagePosition(stage); !known {
+		return nil, ErrUnknownDesignStage
+	}
+	if err := p.projectExists(ctx, project); err != nil {
+		return nil, err
+	}
+	approved, err := scanDesignStage(p.pool.QueryRow(ctx, `
+		update project_design_stages s set
+			approved_version = s.version, approved_at = now(), updated_at = now()
+		where s.project = $1 and s.stage = $2 and s.body <> ''
+		returning `+designStageColumns, project, stage))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNoStageToApprove
+	}
+	if err != nil {
+		return nil, fmt.Errorf("approve design stage: %w", err)
+	}
+	return approved, nil
+}
+
 // sessionBy reads the single session matching a where clause.
 func (p *Postgres) sessionBy(ctx context.Context, where string, args ...any) (*quaycrewv1.Session, error) {
 	rows, err := p.pool.Query(ctx, `
