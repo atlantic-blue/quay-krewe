@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"unicode/utf8"
 
@@ -63,6 +64,9 @@ func (s *Server) SetDesignStage(ctx context.Context, req *quaycrewv1.SetDesignSt
 		return nil, status.Error(codes.InvalidArgument, "which project: say where with an address")
 	}
 	if err := checkStageName(req.GetStage()); err != nil {
+		return nil, err
+	}
+	if err := checkStageDiagram(req.GetStage(), req.GetBody()); err != nil {
 		return nil, err
 	}
 
@@ -153,6 +157,45 @@ func checkStageName(stage string) error {
 			stage, strings.Join(store.DesignStages(), ", "))
 	}
 	return nil
+}
+
+// stagesThatCarryADiagram are the two stages whose subject is a structure rather than prose about
+// one. Everything else the six hold is written in sentences and is read the same way by everybody.
+var stagesThatCarryADiagram = map[string]bool{
+	store.StageDataModel:    true,
+	store.StageArchitecture: true,
+}
+
+// aMermaidFence opens a fenced block whose language is mermaid.
+//
+// It is the same reading a renderer does, because the fence is what a renderer keys on: three
+// backticks or three tildes, then the word mermaid, then either the end of the line or the rest of
+// the information string. A fence saying mermaidjs is another language, and prose about mermaid is
+// prose. The leading spaces are allowed because a fence inside a list item is indented and is still
+// a diagram.
+var aMermaidFence = regexp.MustCompile("(?m)^[ \t]*(?:```|~~~)[ \t]*mermaid([ \t][^\n]*)?[ \t]*\r?$")
+
+// checkStageDiagram refuses a data model or an architecture that carries no diagram.
+//
+// The two stages describe a structure, and a structure written as prose alone is read a different
+// way by every reader: the operator then approves a paragraph, and what gets built is whatever the
+// session read into it. A picture is one text.
+//
+// It runs before the store is asked to write, so a refused stage leaves nothing behind. That order
+// also decides which refusal an operator gets when a write breaks two rules at once, and the body is
+// the one they can fix where they stand: the stage above is somebody else's to approve.
+//
+// A body with nothing in it holds no diagram either, so it earns this refusal rather than a second
+// message about the same missing thing.
+func checkStageDiagram(stage, body string) error {
+	if !stagesThatCarryADiagram[stage] || aMermaidFence.MatchString(body) {
+		return nil
+	}
+	return status.Errorf(codes.InvalidArgument,
+		"the %s stage carries no diagram: write at least one mermaid diagram into it, as a fenced "+
+			"block opening ```mermaid, because a structure written as prose alone is read a "+
+			"different way by every reader",
+		stage)
 }
 
 // approvedStagesAfter names the stages after this one that carry the operator's word now, so a write
