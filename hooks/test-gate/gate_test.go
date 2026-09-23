@@ -268,3 +268,77 @@ func TestTheRefusalNamesTheFileAndTheRule(t *testing.T) {
 		}
 	}
 }
+
+// The mark is the boundary now, so a session that writes it or takes it away decides its own
+// boundary. Refused whether the gate is on or off, for the reason the variable is: the shape it is
+// reached for in is a session that is under it.
+func TestASessionCannotTakeTheMarkAway(t *testing.T) {
+	lines := []struct {
+		name  string
+		tool  string
+		input Input
+	}{
+		{name: "removing the mark", tool: "Bash", input: Input{Command: "rm .krewe/building"}},
+		{name: "removing the directory holding it", tool: "Bash", input: Input{Command: "rm -rf .krewe"}},
+		{name: "removing it by its whole path", tool: "Bash",
+			input: Input{Command: "rm -f /home/agent/workspace/.krewe/building"}},
+		{name: "moving it out of the way", tool: "Bash",
+			input: Input{Command: "mv .krewe/building /tmp/aside"}},
+		{name: "writing over it", tool: "Bash", input: Input{Command: "echo x > .krewe/building"}},
+		{name: "emptying it", tool: "Bash", input: Input{Command: "truncate -s 0 .krewe/building"}},
+		{name: "removing it under a shell of its own", tool: "Bash",
+			input: Input{Command: `bash -c "rm .krewe/building"`}},
+		{name: "writing it with a tool", tool: "Write", input: Input{FilePath: ".krewe/building"}},
+		{name: "editing it with a tool", tool: "Edit",
+			input: Input{FilePath: "/home/agent/workspace/.krewe/building"}},
+	}
+	for _, line := range lines {
+		t.Run(line.name, func(t *testing.T) {
+			for _, building := range []bool{true, false} {
+				refusal, refused := Decide(line.tool, line.input, building, aRepository)
+				if !refused {
+					t.Fatalf("%v was allowed with building=%v", line.input, building)
+				}
+				said := refusal.String()
+				if !strings.Contains(said, MarkFile) {
+					t.Fatalf("the refusal does not name the mark: %s", said)
+				}
+				if !strings.Contains(said, "say so in your answer") {
+					t.Fatalf("the refusal does not say what to do instead: %s", said)
+				}
+			}
+		})
+	}
+}
+
+// Reading the mark is allowed, the way reading a test is. A session that cannot read why it was
+// refused argues with the refusal instead of answering it.
+func TestReadingTheMarkIsAllowed(t *testing.T) {
+	lines := []Input{
+		{Command: "cat .krewe/building"},
+		{Command: "ls -la .krewe"},
+		{Command: "test -f .krewe/building"},
+	}
+	for _, line := range lines {
+		for _, building := range []bool{true, false} {
+			if refusal, refused := Decide("Bash", line, building, aRepository); refused {
+				t.Fatalf("reading the mark was refused with building=%v: %s", building, refusal)
+			}
+		}
+	}
+}
+
+// The other files the system writes into that directory are ordinary work. A gate that refused every
+// write under .krewe would refuse a session writing down what it understood about its step.
+func TestTheOtherFilesInThatDirectoryAreNotTheMark(t *testing.T) {
+	lines := []Input{
+		{FilePath: ".krewe/design.md"},
+		{FilePath: ".krewe/path.md"},
+		{Command: "rm .krewe/contracts.md"},
+	}
+	for _, line := range lines {
+		if refusal, refused := Decide("Write", line, true, aRepository); refused {
+			t.Fatalf("a write to %v was refused: %s", line, refusal)
+		}
+	}
+}
