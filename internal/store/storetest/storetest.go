@@ -2019,6 +2019,7 @@ func RunConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 
 	runHookConformance(t, newDataset)
 	runSessionLifecycleConformance(t, newDataset)
+	runDesignStageConformance(t, newDataset)
 	runDesignConformance(t, newDataset)
 	runPathConformance(t, newDataset)
 	runTakeConformance(t, newDataset)

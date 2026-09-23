@@ -707,6 +707,7 @@ func initializeScenario(sc *godog.ScenarioContext) {
 	initializeContextSteps(sc)
 	initializeDesignSteps(sc)
 	initializeDesignRenderSteps(sc)
+	initializeStageSteps(sc)
 	initializePathSteps(sc)
 	initializePathRenderSteps(sc)
 	initializeContextSizeSteps(sc)

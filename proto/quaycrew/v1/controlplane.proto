@@ -1150,6 +1150,79 @@ message FinishFeatureResponse {
   repeated string warnings = 2;
 }
 
+// DesignStage is one of the six stages a project is designed in, before anything under it is built.
+//
+// A project holds a row for a stage from the first write to it, so a project with no stages at all is
+// a project designed by its design document alone.
+message DesignStage {
+  string id = 1;
+  string project = 2;
+  // stage is one of discovery, stories, design_system, mockups, data_model, architecture.
+  string stage = 3;
+  // position is where the stage sits in that order, counting from zero, so discovery is 0 and
+  // architecture is 5.
+  int32 position = 4;
+  // body is the prose of the stage, whole.
+  string body = 5;
+  // artifact is the structured document a stage carries beside its prose, as json, and empty for a
+  // stage that carries none.
+  string artifact = 6;
+  // artifact_url is where the artifact is published, when it is published somewhere a person opens.
+  string artifact_url = 7;
+  // version goes up on every write to the body or the artifact.
+  int32 version = 8;
+  // approved_version is the version the operator approved, and zero for a stage nobody approved. A
+  // version counts from one, so zero is never a version somebody agreed to.
+  int32 approved_version = 9;
+  // approved says whether that word still stands: the operator approved a version, and it is the
+  // version this stage holds now. The server computes it, so no reader has to compare the two and
+  // none of them can read the rule differently.
+  bool approved = 10;
+  google.protobuf.Timestamp approved_at = 11;
+  // skipped says the stage is not being written at all, which only discovery may be. A skipped stage
+  // satisfies the rule that refuses a write to the stages after it.
+  bool skipped = 12;
+  google.protobuf.Timestamp created_at = 13;
+  google.protobuf.Timestamp updated_at = 14;
+}
+
+// SetDesignStageRequest writes one stage's prose and the artifact beside it.
+message SetDesignStageRequest {
+  string project = 1;
+  // stage is one of the six names. Anything else is refused, and the refusal names the six.
+  string stage = 2;
+  string body = 3;
+  // artifact is json, and empty for a stage that carries none. Writing a stage with an empty
+  // artifact takes away whatever artifact it had, the way an empty brief clears a brief.
+  string artifact = 4;
+  string artifact_url = 5;
+}
+message SetDesignStageResponse {
+  DesignStage stage = 1;
+  // warnings say what the write did beyond writing: which later stages lost their approval, and a
+  // body long enough to be worth saying so.
+  repeated string warnings = 2;
+}
+
+// ApproveDesignStageRequest records the operator's word on one stage as it stands.
+message ApproveDesignStageRequest {
+  string project = 1;
+  string stage = 2;
+}
+message ApproveDesignStageResponse {
+  DesignStage stage = 1;
+}
+
+// ListDesignStagesRequest reads the stages a project has written, in the order the six are written.
+message ListDesignStagesRequest {
+  string project = 1;
+}
+message ListDesignStagesResponse {
+  // stages are the ones this project has written. A project that has written none answers with an
+  // empty list, which is how it says it is designed by its design document alone.
+  repeated DesignStage stages = 1;
+}
+
 // SessionWorkEntry is one thing in a session's work: a file or a directory, with the size of a file.
 message SessionWorkEntry {
   string name = 1;
@@ -1825,6 +1898,21 @@ service ControlPlaneService {
   // Saying a feature finished, stopped, or is open again. It warns about the steps still open under
   // it and refuses nothing: the operator decides when a feature is finished.
   rpc FinishFeature(FinishFeatureRequest) returns (FinishFeatureResponse);
+
+  // The six stages a project is designed in, before anything under it is built: discovery, stories,
+  // design_system, mockups, data_model, architecture.
+  //
+  // A write to a stage is refused while a stage before it carries no approval, so the data model is
+  // never written before the stories, and the same write clears the approval of every stage after
+  // it.
+  //
+  // The driver may write and read them, for the reason it may write a design: a design session is
+  // what writes the stages, and writing one grants it nothing. The word on a stage is the operator's,
+  // the way the word on a design is, and the refusal that holds a session to that lands beside the
+  // command that makes this call reachable from a session at all.
+  rpc ListDesignStages(ListDesignStagesRequest) returns (ListDesignStagesResponse);
+  rpc SetDesignStage(SetDesignStageRequest) returns (SetDesignStageResponse);
+  rpc ApproveDesignStage(ApproveDesignStageRequest) returns (ApproveDesignStageResponse);
   // Reads a file, or a listing, out of the work a session left behind, without attaching to it.
   rpc ReadSessionWork(ReadSessionWorkRequest) returns (ReadSessionWorkResponse);
   // Says where an address is on the machine, so a person can put a file in it by hand. It reads the
