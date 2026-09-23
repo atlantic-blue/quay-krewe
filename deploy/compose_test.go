@@ -214,6 +214,7 @@ type composeStack struct {
 
 type composeService struct {
 	Networks    map[string]composeEndpoint `yaml:"networks"`
+	Ports       []string                   `yaml:"ports"`
 	Environment map[string]string          `yaml:"environment"`
 }
 
@@ -309,5 +310,50 @@ func TestTheComposeProjectDoesNotMove(t *testing.T) {
 	if told := makeVariable(t, "COMPOSE_PROJECT"); told != project {
 		t.Fatalf("make runs compose under the project %q and the file says %q, so which volume the stack "+
 			"mounts depends on how it was started", told, project)
+	}
+}
+
+// TestEveryPortTheControlPlanePublishesStaysOnLoopback refuses the whole class rather than the port
+// that broke. The control plane's port is the whole system: its token guards a caller and not the
+// network, so a port published to every interface hands the system to the network the machine is on.
+//
+// The site is the second such port, and it carries no token at all, which is why this holds every
+// port the service publishes instead of the two that exist today.
+func TestEveryPortTheControlPlanePublishesStaysOnLoopback(t *testing.T) {
+	published := composeFile(t).Services["controlplane"].Ports
+	if len(published) == 0 {
+		t.Fatal("the control plane publishes no port, so nothing on the machine can reach the system")
+	}
+
+	for _, port := range published {
+		if !strings.HasPrefix(port, "127.0.0.1:") {
+			t.Errorf("the control plane publishes %q, which every interface on the machine answers on",
+				port)
+		}
+	}
+}
+
+// TestTheSiteIsPublishedAndBoundWhereThePublishedPortCanReachIt.
+//
+// Two halves of one thing. In a container loopback is the container, so a service that binds
+// 127.0.0.1 answers nothing through a published port: the connection is refused and the page never
+// loads. So the container binds every interface it has, and the host side alone is held to loopback.
+func TestTheSiteIsPublishedAndBoundWhereThePublishedPortCanReachIt(t *testing.T) {
+	controlPlane := composeFile(t).Services["controlplane"]
+
+	var found bool
+	for _, port := range controlPlane.Ports {
+		if port == "127.0.0.1:50052:50052" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("the control plane publishes %v, and the site is not among them on loopback",
+			controlPlane.Ports)
+	}
+
+	if told := controlPlane.Environment["QC_SITE_ADDR"]; told != ":50052" {
+		t.Errorf("the control plane is told to serve the site on %q, and a container that binds "+
+			"loopback answers nothing through the published port", told)
 	}
 }
