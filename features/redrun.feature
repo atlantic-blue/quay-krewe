@@ -79,3 +79,27 @@ Feature: A step cannot finish without a red run before its green run
     When the operator finishes step 1 with "shipped"
     Then the control plane refuses it as the wrong state
     And the refusal suggests "nobody saw step 1's tests fail"
+
+  # The rule arrived after some work had started. A step whose row was written before it carries no
+  # requirement, so the word done reads that row as a step the rule never bound and lets it close on
+  # a check alone. Without this, every step a session was holding at the upgrade could never finish:
+  # its code is written and its tests pass, so no run of it can go red any more.
+  #
+  # The row is the one a take under the rule never reached. Only a take writes the requirement, and
+  # this suite holds its rows in memory and runs no migration, so a step the path wrote and nobody
+  # took is the same row an upgrade leaves behind.
+  Scenario: A step taken before the red run rule finishes without a red run
+    Given the path holds step 2, whose row carries no red run requirement
+    And krewe ran step 2's scenario, and it passed
+    When the operator finishes step 2 with "shipped"
+    Then step 2 is still done
+
+  # The other half of the rule, read off the same path: step 1 was taken under it, so it is bound
+  # whatever step 2 beside it is allowed to do.
+  Scenario: A step taken under the rule is bound while a step beside it is not
+    Given the path holds step 2, whose row carries no red run requirement
+    And krewe ran step 1's scenario, and it passed
+    When the operator finishes step 1 with "shipped"
+    Then the control plane refuses it as the wrong state
+    And the refusal suggests "nobody saw step 1's tests fail"
+    And step 1 is still taken

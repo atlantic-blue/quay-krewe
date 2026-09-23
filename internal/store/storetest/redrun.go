@@ -200,3 +200,117 @@ func oneRun(t *testing.T, s store.Store, feature, state string, scenarios int32)
 	}
 	return written
 }
+
+// runRedRunScopeConformance holds both stores to which steps the rule binds.
+//
+// The rule arrived after work had started. A step a session was holding then has its code written
+// and its tests passing, so no run of it can go red any more, and a rule that bound every row would
+// leave that step unable to close at all. So the row says whether the take that started it happened
+// under the rule, and the word done reads that.
+//
+// A row that carries no requirement is one no take under the rule reached. These cases stand one up
+// the way the upgrade leaves one: the path writes the step and nothing takes it.
+func runRedRunScopeConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
+	t.Helper()
+
+	// The case the scope exists for. The step is checked, nothing was ever seen to fail, and the word
+	// done is given rather than refused.
+	t.Run("a step the rule never bound finishes with no red run", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		feature := aFeatureHoldingOneStep(t, s)
+		writePath(t, s, feature,
+			store.Step{Number: 1, Title: "the first"},
+			store.Step{Number: 2, Title: "the second"})
+		if _, err := s.RecordProof(ctx, feature, 2, store.ProofResult{
+			State: store.ProofPassing, ScenariosRun: 1, Output: "what the run printed",
+		}); err != nil {
+			t.Fatalf("RecordProof: %v", err)
+		}
+
+		written, _, err := s.FinishStep(ctx, feature, 2, store.Finish{
+			State: store.StepDone, Result: "shipped", ClosedBy: "operator",
+		})
+		if err != nil {
+			t.Fatalf("finishing a step the rule never bound: %v", err)
+		}
+		if written.GetState() != store.StepDone {
+			t.Fatalf("the step came back in state %q, want %q", written.GetState(), store.StepDone)
+		}
+	})
+
+	// The check that some run was read stays on every step, bound or not. A step nobody checked says
+	// nothing about its tests either way, and that refusal is older than this rule.
+	t.Run("a step the rule never bound is still refused while nobody checked it", func(t *testing.T) {
+		s := newDataset(t)(t)
+		feature := aFeatureHoldingOneStep(t, s)
+		writePath(t, s, feature,
+			store.Step{Number: 1, Title: "the first"},
+			store.Step{Number: 2, Title: "the second"})
+
+		if _, _, err := s.FinishStep(context.Background(), feature, 2, store.Finish{
+			State: store.StepDone, Result: "shipped", ClosedBy: "operator",
+		}); !errors.Is(err, store.ErrNotChecked) {
+			t.Fatalf("finishing an unbound step nobody checked answered %v, want ErrNotChecked", err)
+		}
+	})
+
+	// The two steps sit in one path, so a step the rule bound is refused beside a step it did not.
+	// Read per step rather than per project, because the rule arrives while one path is part built.
+	t.Run("a step the take bound is refused beside a step the rule never bound", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		feature := aFeatureHoldingOneStep(t, s)
+		writePath(t, s, feature,
+			store.Step{Number: 1, Title: "the first"},
+			store.Step{Number: 2, Title: "the second"})
+		oneRun(t, s, feature, store.ProofPassing, 1)
+
+		if _, _, err := s.FinishStep(ctx, feature, 1, store.Finish{
+			State: store.StepDone, Result: "shipped", ClosedBy: "operator",
+		}); !errors.Is(err, store.ErrNoRedRun) {
+			t.Fatalf("finishing the taken step answered %v, want ErrNoRedRun", err)
+		}
+	})
+
+	// A path rewrite keeps what the system owns, and the requirement is the system's: a document a
+	// session writes could otherwise take a step out of the rule by saying its title again.
+	t.Run("a path rewrite keeps the requirement the take wrote", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		feature := aFeatureHoldingOneStep(t, s)
+		oneRun(t, s, feature, store.ProofPassing, 1)
+
+		writePath(t, s, feature, store.Step{Number: 1, Title: "the first", Intention: "said again"})
+		if _, _, err := s.FinishStep(ctx, feature, 1, store.Finish{
+			State: store.StepDone, Result: "shipped", ClosedBy: "operator",
+		}); !errors.Is(err, store.ErrNoRedRun) {
+			t.Fatalf("finishing after the rewrite answered %v, want ErrNoRedRun", err)
+		}
+	})
+
+	// A second attempt is a take, so it binds a step the rule never reached. The row the upgrade left
+	// is the record of one attempt, and the attempt that starts now builds under the rule.
+	t.Run("taking a step the rule never bound binds it", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		feature := aFeatureHoldingOneStep(t, s)
+		writePath(t, s, feature,
+			store.Step{Number: 1, Title: "the first"},
+			store.Step{Number: 2, Title: "the second"})
+		if _, _, err := s.TakeStep(ctx, feature, 2, "session-two"); err != nil {
+			t.Fatalf("taking the second step: %v", err)
+		}
+		if _, err := s.RecordProof(ctx, feature, 2, store.ProofResult{
+			State: store.ProofPassing, ScenariosRun: 1, Output: "what the run printed",
+		}); err != nil {
+			t.Fatalf("RecordProof: %v", err)
+		}
+
+		if _, _, err := s.FinishStep(ctx, feature, 2, store.Finish{
+			State: store.StepDone, Result: "shipped", ClosedBy: "operator",
+		}); !errors.Is(err, store.ErrNoRedRun) {
+			t.Fatalf("finishing the step this take bound answered %v, want ErrNoRedRun", err)
+		}
+	})
+}

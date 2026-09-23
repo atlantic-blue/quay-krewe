@@ -2,6 +2,7 @@ package features_test
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/atlantic-blue/quay-krewe/internal/store"
 	"github.com/cucumber/godog"
@@ -28,6 +29,27 @@ func initializeRedRunSteps(sc *godog.ScenarioContext) {
 	sc.Step(`^krewe ran step (\d+)'s scenario, and it failed with no scenario in it$`,
 		func(ctx context.Context, number int) error {
 			return recordOneRun(ctx, int32(number), store.ProofFailing, 0)
+		})
+
+	// A step whose row says nothing about a red run, which is what every row said when the rule
+	// arrived.
+	//
+	// The take writes the requirement and nothing else does, so a step the path wrote and no take
+	// reached carries none. That is the row a session was holding at the upgrade. This suite keeps
+	// its rows in memory and runs no migration, so it is the only way to stand one up here, and the
+	// migration that adds the column proves the same row in Postgres, where those rows live.
+	//
+	// The document carries step 1 as well, because the path the background wrote holds it and a
+	// document that drops a step a session is holding is refused.
+	sc.Step(`^the path holds step (\d+), whose row carries no red run requirement$`,
+		func(ctx context.Context, number int) error {
+			held, err := theFeature(ctx)
+			if err != nil {
+				return err
+			}
+			return setPathOf(ctx, held.GetId(), fmt.Sprintf(
+				"## 1. The store holds a project's brief\n\n## %d. The store holds a project's design\n",
+				number))
 		})
 }
 
