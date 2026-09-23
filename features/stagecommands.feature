@@ -60,7 +60,15 @@ Feature: The operator writes and approves the design stages from the command lin
   # and approve, and it says nothing was written, because somebody who thinks half a write landed
   # goes looking for it.
   Scenario: A stage written out of order is refused and nothing is written
-    Given a stage file saying "one table for each bill"
+    Given a stage file saying:
+      """
+      one table for each bill
+
+      ```mermaid
+      erDiagram
+        BILL ||--o{ PAYMENT : has
+      ```
+      """
     When the caller writes the "data_model" design stage from that file
     Then the command fails
     And standard error says "discovery"

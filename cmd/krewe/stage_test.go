@@ -31,10 +31,22 @@ func aFileSaying(t *testing.T, name, body string) string {
 }
 
 // settle writes a stage and approves it, which is the only way past the rule that orders the six.
+//
+// The data model and the architecture are refused without a diagram, so the file written for those
+// two holds one.
 func settle(t *testing.T, client quaycrewv1.ControlPlaneServiceClient, stage string) {
 	t.Helper()
-	mustRun(t, client, "stage", "set", stage, flagFile, aFileSaying(t, stage+".md", "the "+stage+"\n"))
+	mustRun(t, client, "stage", "set", stage, flagFile, aFileSaying(t, stage+".md", stageFileFor(stage)))
 	mustRun(t, client, "stage", "approve", stage)
+}
+
+// stageFileFor is what the settle helper writes into the file for one stage.
+func stageFileFor(stage string) string {
+	text := "the " + stage + "\n"
+	if stage == store.StageDataModel || stage == store.StageArchitecture {
+		return text + "\n```mermaid\nflowchart TD\n  one --> two\n```\n"
+	}
+	return text
 }
 
 // The listing says where the project is up to, so it names all six. A listing of the stages that
@@ -132,10 +144,14 @@ func TestApprovingAStageRecordsTheWord(t *testing.T) {
 // The refusal the whole feature exists for, read from the command line. It names the stage to go and
 // approve, and it says nothing was written, because an operator who thinks half a write landed goes
 // looking for it.
+//
+// The file carries a diagram because the data model is refused without one, and a file with neither
+// would be answered about the diagram rather than about the order.
 func TestWritingAStageOutOfOrderIsRefusedAndNamesTheStageToApprove(t *testing.T) {
 	client := aStagedProject(t)
 
-	err := refused(t, client, "stage", "set", "data_model", flagFile, aFileSaying(t, "m.md", "one table\n"))
+	err := refused(t, client, "stage", "set", "data_model", flagFile,
+		aFileSaying(t, "m.md", stageFileFor(store.StageDataModel)))
 
 	for _, want := range []string{"discovery", "krewe stage approve", "nothing was written"} {
 		if !strings.Contains(err.Error(), want) {

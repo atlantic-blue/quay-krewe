@@ -12,6 +12,10 @@ Feature: A project is designed in stages before it is built
   every stage after it, because those were agreed under the text that just changed. The words stay:
   only the word on them is gone.
 
+  Two of the six describe a structure. The data model and the architecture are refused until the
+  body holds a diagram, written as a fenced block marked mermaid, so the operator approves a picture
+  rather than a paragraph. The other four are prose and carry whatever they carry.
+
   A project that has written no stage holds none, which is how every project made before this
   existed reads, and it keeps working exactly as it did.
 
@@ -32,8 +36,19 @@ Feature: A project is designed in stages before it is built
 
   # The refusal this whole feature exists for. It names the stage to go and approve, because an
   # operator told only no has to work out which of five stages they are missing.
+  #
+  # The body carries a diagram because the data model is one of the two stages that must, and a body
+  # without one is refused before the order is read at all.
   Scenario: A stage is refused while the stage before it is not approved
-    When the operator writes the "data_model" design stage as "one table for each bill"
+    When the operator writes the "data_model" design stage as:
+      """
+      one table for each bill
+
+      ```mermaid
+      erDiagram
+        BILL ||--o{ PAYMENT : has
+      ```
+      """
     Then the control plane refuses it as the wrong state
     And the refusal suggests "discovery"
     And the project holds no design stages
@@ -115,3 +130,44 @@ Feature: A project is designed in stages before it is built
       """
     Then the control plane refuses it as invalid
     And the project holds no design stages
+
+  # A data model and an architecture each describe a structure. Prose about a structure is read a
+  # different way by every reader, so these two stages carry a picture of it. The write is refused
+  # until the body holds a fenced block marked mermaid, and the operator then approves a diagram
+  # rather than a paragraph.
+  Scenario: An architecture stage with no diagram is refused
+    Given the first 5 design stages are written and approved
+    When the operator writes the "architecture" design stage as "the control plane holds the store, and a session talks to the control plane"
+    Then the control plane refuses it as invalid
+    And the refusal suggests "mermaid"
+    And the project holds no "architecture" design stage
+
+  Scenario: An architecture stage with a diagram goes in
+    Given the first 5 design stages are written and approved
+    When the operator writes the "architecture" design stage as:
+      """
+      the control plane holds the store
+
+      ```mermaid
+      flowchart LR
+        session --> controlplane --> store
+      ```
+      """
+    And the operator reads the project's design stages
+    Then the "architecture" design stage carries a diagram
+    And the "architecture" design stage is not approved
+
+  Scenario: A data model with no diagram is refused
+    Given the first 4 design stages are written and approved
+    When the operator writes the "data_model" design stage as "one table for each bill, and one row for each payment"
+    Then the control plane refuses it as invalid
+    And the refusal suggests "data_model"
+    And the project holds no "data_model" design stage
+
+  # The rule is about the two stages that carry a structure. The other four are written as prose, and
+  # a rule over all six would refuse a discovery nobody can draw.
+  Scenario: A stage that is not the data model or the architecture needs no diagram
+    Given the "discovery" design stage is written and approved
+    When the operator writes the "stories" design stage as "I want to see what is due"
+    And the operator reads the project's design stages
+    Then the "stories" design stage reads "I want to see what is due"
