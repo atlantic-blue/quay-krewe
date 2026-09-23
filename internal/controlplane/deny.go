@@ -37,6 +37,12 @@ import (
 // has produced a text somebody still has to read. A session that could approve its own text would be
 // agreeing with itself, and the gate would be a step in a script rather than a person's judgement.
 //
+// Approving a design stage is refused on the same line as approving the design. The six stages are
+// the design, written in an order, so the word on each of them is the same word: a session writes a
+// stage, the write clears the approval, and somebody still has to read it. A session that could
+// approve its own stage would agree with itself six times and then build from it. Writing a stage
+// and reading the six stay open, because a design session is what writes them.
+//
 // Approving a restatement is refused on the same line as approving a design. The gate exists so that
 // a person reads what a session understood before any code is built, and a session that could approve
 // its own text would be agreeing with itself and dispatching itself to build. Writing a restatement
@@ -100,6 +106,7 @@ func DeniedToDriver(fullMethod string, request any) error {
 		quaycrewv1.ControlPlaneService_ArchiveProjectSessions_FullMethodName,
 		quaycrewv1.ControlPlaneService_ArchiveSystemSessions_FullMethodName,
 		quaycrewv1.ControlPlaneService_ApproveDesign_FullMethodName,
+		quaycrewv1.ControlPlaneService_ApproveDesignStage_FullMethodName,
 		quaycrewv1.ControlPlaneService_ApproveRestatement_FullMethodName,
 		quaycrewv1.ControlPlaneService_SetStepsInFlightCap_FullMethodName,
 		quaycrewv1.ControlPlaneService_SetProofCommand_FullMethodName,
