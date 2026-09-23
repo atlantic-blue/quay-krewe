@@ -1540,6 +1540,20 @@ func (s *Server) TakeStep(ctx context.Context, req *quaycrewv1.TakeStepRequest) 
 				"Read it with krewe design [<address>]. Approve it with krewe design approve [<address>]")
 	}
 
+	// The second gate, for a project that is designed in stages. Every one of the six carries the
+	// operator's word before anything under it is built, which is the whole reason the stages exist:
+	// a step taken over a mockup nobody read is the thing they were added to stop.
+	//
+	// It reads before the path and before any session is minted, for the reason the approval above
+	// does: a refusal costs one line of output and starts nothing.
+	stage, written, err := s.unapprovedStage(ctx, feature.GetProject())
+	if err != nil {
+		return nil, err
+	}
+	if stage != "" {
+		return nil, status.Error(codes.FailedPrecondition, approveThatStageFirst(stage, written))
+	}
+
 	// The whole path, because the text says which step of how many this is, and because a refusal
 	// about a step nobody wrote has to say how many the path holds.
 	steps, err := s.store.ListSteps(ctx, req.GetFeature())
@@ -1602,6 +1616,65 @@ func (s *Server) TakeStep(ctx context.Context, req *quaycrewv1.TakeStepRequest) 
 		Step: taken, Session: started, Text: text,
 		InFlight: flying, StepsInFlightCap: design.GetStepsInFlightCap(),
 	}, nil
+}
+
+// unapprovedStage is the first of the six design stages a project has not settled, and the empty
+// string for a project that has settled all of them. written says whether that stage has a body, so
+// the refusal can say whether the next move is to write it or to read it.
+//
+// A project that wrote no stage holds none, and it is refused nothing. Every project made before the
+// stages existed reads that way, and each one stands on an approved design document instead, so a
+// gate that read a project holding nothing as a project holding six empty stages would stop all of
+// the work in flight in them.
+//
+// The order is the store's, and what counts as settled is the store's too, so this and the rule that
+// refuses a write to a stage cannot come to disagree about which stage an operator is missing.
+func (s *Server) unapprovedStage(ctx context.Context, project string) (stage string, written bool, err error) {
+	held, err := s.store.ListDesignStages(ctx, project)
+	if err != nil {
+		return "", false, storeError(err, "project")
+	}
+	if len(held) == 0 {
+		return "", false, nil
+	}
+	for _, named := range store.DesignStages() {
+		found := designStageNamed(held, named)
+		if !store.DesignStageSatisfied(found) {
+			return named, found.GetBody() != "", nil
+		}
+	}
+	return "", false, nil
+}
+
+// designStageNamed is one stage out of what a project holds, and nil for a stage it has not written.
+// A nil reads as a stage nobody settled, which is what a project part way through its six is.
+func designStageNamed(held []*quaycrewv1.DesignStage, stage string) *quaycrewv1.DesignStage {
+	for _, one := range held {
+		if one.GetStage() == stage {
+			return one
+		}
+	}
+	return nil
+}
+
+// approveThatStageFirst is what a staged project answers a take with while its design is not agreed.
+//
+// It names one stage rather than counting them, and it is the first of the six without the word
+// rather than the nearest, because that is where the operator's next move is: a refusal naming the
+// data model sends them to a stage they cannot write either.
+//
+// Which move it is depends on what is there. A stage nobody wrote is written and then approved, and a
+// stage sitting there unread is only approved, so an operator told to write a text that is already
+// in front of them does not go looking for what they missed.
+func approveThatStageFirst(stage string, written bool) string {
+	if !written {
+		return fmt.Sprintf("this project is designed in stages, and its %s stage is not written, "+
+			"so no step can be taken. Write it with krewe stage set [<address>] %s --file <path>, "+
+			"then approve it with krewe stage approve [<address>] %s", stage, stage, stage)
+	}
+	return fmt.Sprintf("this project is designed in stages, and its %s stage is not approved, "+
+		"so no step can be taken. Read the stages with krewe stage show [<address>]. "+
+		"Approve it with krewe stage approve [<address>] %s", stage, stage)
 }
 
 // ApproveRestatement records the operator's word on what a session wrote about the step it holds,
