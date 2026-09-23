@@ -183,6 +183,44 @@ func TestAStageCarriesAnArtifactFromASecondFile(t *testing.T) {
 	}
 }
 
+// The artifact is json, and json is not what a person approves. The mockups stage is a flows.json
+// with a flow map drawn from it, so the stage carries the address of the page as well as the data,
+// and the write prints it back.
+func TestAStageRecordsWhereTheArtifactWasPublished(t *testing.T) {
+	client := aStagedProject(t)
+	published := "https://example.invalid/tide/flow-map/"
+
+	printed := mustRun(t, client, "stage", "set", "discovery",
+		flagFile, aFileSaying(t, "d.md", "what we asked\n"),
+		flagArtifact, aFileSaying(t, "flows.json", `{"screens":{}}`),
+		flagURL, published)
+
+	if held := stageHeld(t, client, "discovery"); held.GetArtifactUrl() != published {
+		t.Errorf("the stage was published at %q, want %q", held.GetArtifactUrl(), published)
+	}
+	if !strings.Contains(printed, published) {
+		t.Errorf("the write does not say where the artifact was published:\n%s", printed)
+	}
+}
+
+// The address may be given on its own. A discovery stage whose page is already up carries no
+// second file, and a flag that needed one would send somebody to write an empty artifact.
+func TestAnAddressIsKeptWithoutAnArtifact(t *testing.T) {
+	client := aStagedProject(t)
+
+	mustRun(t, client, "stage", "set", "discovery",
+		flagFile, aFileSaying(t, "d.md", "what we asked\n"),
+		flagURL, "https://example.invalid/tide/")
+
+	held := stageHeld(t, client, "discovery")
+	if held.GetArtifactUrl() != "https://example.invalid/tide/" {
+		t.Errorf("the address was not kept: %q", held.GetArtifactUrl())
+	}
+	if held.GetArtifact() != "" {
+		t.Errorf("an artifact appeared from nowhere: %q", held.GetArtifact())
+	}
+}
+
 // The system keeps an artifact as json so a reader can open it as json. The refusal is the control
 // plane's, and it has to reach the operator rather than be swallowed by the tool.
 func TestAnArtifactThatIsNotJsonIsRefused(t *testing.T) {
@@ -239,6 +277,7 @@ func TestTheShapesTheStageCommandRefuses(t *testing.T) {
 		{"stage", "set", "discovery"},
 		{"stage", "set", flagFile},
 		{"stage", "set", flagArtifact, "a.json", flagFile, file, "acme/house-bills", "discovery", "extra"},
+		{"stage", "set", "discovery", flagFile, file, flagURL},
 		{"stage", "approve"},
 		{"stage", "approve", "acme/house-bills", "discovery", "extra"},
 		{"stage", "show", "acme/house-bills", "extra"},
@@ -252,14 +291,14 @@ func TestTheShapesTheStageCommandRefuses(t *testing.T) {
 
 // A flag the command does not take is refused by name before the command reads anything, so the
 // allow list and the parser cannot disagree about which flags exist.
-func TestTheStageCommandTakesItsTwoFlagsAndNoOthers(t *testing.T) {
+func TestTheStageCommandTakesItsThreeFlagsAndNoOthers(t *testing.T) {
 	client := aStagedProject(t)
 
 	err := refused(t, client, "stage", "set", "discovery", "--body", "anything")
 	if !strings.Contains(err.Error(), "--body is not one") {
 		t.Errorf("the refusal does not name the flag: %v", err)
 	}
-	for _, flag := range []string{flagFile, flagArtifact} {
+	for _, flag := range []string{flagFile, flagArtifact, flagURL} {
 		if !takenFlags["stage"][flag] {
 			t.Errorf("krewe stage does not take %s, so the command never sees it", flag)
 		}

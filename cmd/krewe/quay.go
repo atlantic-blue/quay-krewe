@@ -214,8 +214,9 @@ var takenFlags = map[string]map[string]bool{
 	// types, and two optional values after it would be two positions nobody remembers the order of.
 	"design": {flagFile: true, flagPattern: true, flagTimeout: true},
 	// A stage's prose and the artifact beside it are documents, and each is named as a path for the
-	// reason a design body is: the file is the thing being kept.
-	"stage": {flagFile: true, flagArtifact: true},
+	// reason a design body is: the file is the thing being kept. The address is where the artifact
+	// was published, so an operator can open it rather than read the json.
+	"stage": {flagFile: true, flagArtifact: true, flagURL: true},
 	// A path is a document too, and it is written the same way for the same reason.
 	"path": {flagFile: true},
 }
