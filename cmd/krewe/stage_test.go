@@ -144,10 +144,14 @@ func TestApprovingAStageRecordsTheWord(t *testing.T) {
 // The refusal the whole feature exists for, read from the command line. It names the stage to go and
 // approve, and it says nothing was written, because an operator who thinks half a write landed goes
 // looking for it.
+//
+// The file carries a diagram because the data model is refused without one, and a file with neither
+// would be answered about the diagram rather than about the order.
 func TestWritingAStageOutOfOrderIsRefusedAndNamesTheStageToApprove(t *testing.T) {
 	client := aStagedProject(t)
 
-	err := refused(t, client, "stage", "set", "data_model", flagFile, aFileSaying(t, "m.md", "one table\n"))
+	err := refused(t, client, "stage", "set", "data_model", flagFile,
+		aFileSaying(t, "m.md", stageFileFor(store.StageDataModel)))
 
 	for _, want := range []string{"discovery", "krewe stage approve", "nothing was written"} {
 		if !strings.Contains(err.Error(), want) {
