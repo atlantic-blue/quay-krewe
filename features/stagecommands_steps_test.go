@@ -29,13 +29,13 @@ func initializeStageCommandSteps(sc *godog.ScenarioContext) {
 	})
 
 	sc.Step(`^a stage file saying "([^"]*)"$`, func(ctx context.Context, body string) error {
-		dir, err := os.MkdirTemp("", "krewe-stage-")
-		if err != nil {
-			return err
-		}
-		at := filepath.Join(dir, "stage.md")
-		stageCommandsFrom(ctx).file = at
-		return os.WriteFile(at, []byte(unescape(body)), 0o600)
+		return aStageFileSaying(ctx, unescape(body))
+	})
+
+	// A body that runs to more than one line arrives as a docstring, because a diagram is a fenced
+	// block and a fenced block is three lines at the shortest.
+	sc.Step(`^a stage file saying:$`, func(ctx context.Context, body *godog.DocString) error {
+		return aStageFileSaying(ctx, body.Content)
 	})
 
 	// The steps that run the real command line tool, as an operator runs it.
@@ -63,4 +63,15 @@ func initializeStageCommandSteps(sc *godog.ScenarioContext) {
 			return err
 		})
 	})
+}
+
+// aStageFileSaying is the file the operator points krewe stage set at.
+func aStageFileSaying(ctx context.Context, body string) error {
+	dir, err := os.MkdirTemp("", "krewe-stage-")
+	if err != nil {
+		return err
+	}
+	at := filepath.Join(dir, "stage.md")
+	stageCommandsFrom(ctx).file = at
+	return os.WriteFile(at, []byte(body), 0o600)
 }

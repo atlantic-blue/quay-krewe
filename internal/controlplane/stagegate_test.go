@@ -201,7 +201,7 @@ func newFeatureWithAStep(t *testing.T, s *controlplane.Server, projectID string)
 func writeStage(t *testing.T, s *controlplane.Server, projectID, stage string) {
 	t.Helper()
 	if _, err := s.SetDesignStage(context.Background(), &quaycrewv1.SetDesignStageRequest{
-		Project: projectID, Stage: stage, Body: "the " + stage + " body",
+		Project: projectID, Stage: stage, Body: stageBody(stage),
 	}); err != nil {
 		t.Fatalf("SetDesignStage %s: %v", stage, err)
 	}
