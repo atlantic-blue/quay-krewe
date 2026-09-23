@@ -342,11 +342,10 @@ func TestALongStageBodyIsKeptAndSaidOutLoud(t *testing.T) {
 	}
 }
 
-// The driver is what a session calls through, and this is what it may do with the stages today.
-// Writing and reading are open, for the reason writing a design is: a design session is what writes
-// them. Nothing here refuses the approval yet, and the command line that makes it reachable from a
-// session arrives with the refusal beside it.
-func TestWhatASessionMayDoWithTheStagesToday(t *testing.T) {
+// The driver is what a session calls through, and this is what it may do with the stages. Writing
+// and reading are open, for the reason writing a design is: a design session is what writes them.
+// The approval is refused, and internal/controlplane/deny_test.go holds that half.
+func TestWhatASessionMayDoWithTheStages(t *testing.T) {
 	for _, method := range []string{
 		quaycrewv1.ControlPlaneService_ListDesignStages_FullMethodName,
 		quaycrewv1.ControlPlaneService_SetDesignStage_FullMethodName,

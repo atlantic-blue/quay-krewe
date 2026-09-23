@@ -1,6 +1,7 @@
 package controlplane_test
 
 import (
+	"strings"
 	"testing"
 
 	quaycrewv1 "github.com/atlantic-blue/quay-krewe/gen/quaycrew/v1"
@@ -36,6 +37,33 @@ func TestTheDriverStillDoesWhatItExistsToDo(t *testing.T) {
 		quaycrewv1.ControlPlaneService_CreateWorkspace_FullMethodName,
 		quaycrewv1.ControlPlaneService_CreateProject_FullMethodName,
 		quaycrewv1.ControlPlaneService_ListSkills_FullMethodName,
+	} {
+		if err := controlplane.DeniedToDriver(method, nil); err != nil {
+			t.Errorf("%s was refused to the driver: %v", method, err)
+		}
+	}
+}
+
+// The word on a design stage is the operator's, and the six stages are the design. A session that
+// could approve one would agree with the text it wrote itself, which is the gate this call exists
+// behind.
+func TestTheDriverMayNotApproveADesignStage(t *testing.T) {
+	err := controlplane.DeniedToDriver(
+		quaycrewv1.ControlPlaneService_ApproveDesignStage_FullMethodName, nil)
+	if status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("approving a design stage answered %v, want PermissionDenied", status.Code(err))
+	}
+	if message := status.Convert(err).Message(); !strings.Contains(message, "ApproveDesignStage") {
+		t.Errorf("the refusal %q does not name the call", message)
+	}
+}
+
+// Writing a stage and reading the six stay open, because a design session is what writes them. A
+// deny list that took those would leave the stages with nobody to fill them in.
+func TestTheDriverStillWritesAndReadsTheStages(t *testing.T) {
+	for _, method := range []string{
+		quaycrewv1.ControlPlaneService_SetDesignStage_FullMethodName,
+		quaycrewv1.ControlPlaneService_ListDesignStages_FullMethodName,
 	} {
 		if err := controlplane.DeniedToDriver(method, nil); err != nil {
 			t.Errorf("%s was refused to the driver: %v", method, err)

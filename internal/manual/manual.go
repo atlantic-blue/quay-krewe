@@ -206,6 +206,19 @@ commands:
                                           one group around the number. It is the operator's word: a
                                           session is refused this call, because a session that could
                                           set it would choose what proves its own work
+  stage show [<address>]                  the six stages a project is designed in, in order, with
+                                          the state of each one: empty, written, approved or
+                                          skipped. The line under the listing names the one move the
+                                          project has
+  stage set [<address>] <stage>           write one stage from a file, and the artifact beside it
+    --file <path> [--artifact <path>]     from a second one. The six are discovery, stories,
+                                          design_system, mockups, data_model and architecture, in
+                                          that order, and a stage is refused while the stage before
+                                          it carries no approval. The write clears the approval of
+                                          this stage and of every stage after it, because each was
+                                          agreed under a text that just changed
+  stage approve [<address>] <stage>       say one stage as it stands is the one to build on. It is
+                                          the operator's word: a session is refused this call
   feature [<address>]                     the narrowed parts of a project, in number order, with the
                                           state of each one, how many of its steps are done, and what
                                           it narrows to. A project delivers several features at once,

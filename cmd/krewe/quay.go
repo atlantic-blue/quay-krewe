@@ -213,6 +213,9 @@ var takenFlags = map[string]map[string]bool{
 	// The pattern and the budget of a proof run are flags because the command is the thing a person
 	// types, and two optional values after it would be two positions nobody remembers the order of.
 	"design": {flagFile: true, flagPattern: true, flagTimeout: true},
+	// A stage's prose and the artifact beside it are documents, and each is named as a path for the
+	// reason a design body is: the file is the thing being kept.
+	"stage": {flagFile: true, flagArtifact: true},
 	// A path is a document too, and it is written the same way for the same reason.
 	"path": {flagFile: true},
 }
@@ -309,6 +312,8 @@ func run(ctx context.Context, client quaycrewv1.ControlPlaneServiceClient, args 
 		return runContext(ctx, client, args[1:], out)
 	case "design":
 		return runDesign(ctx, client, args[1:], out)
+	case "stage":
+		return runStage(ctx, client, args[1:], out)
 	case "feature":
 		return runFeature(ctx, client, args[1:], out)
 	case "path":
