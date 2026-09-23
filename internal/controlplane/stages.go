@@ -66,6 +66,18 @@ func (s *Server) SetDesignStage(ctx context.Context, req *quaycrewv1.SetDesignSt
 		return nil, err
 	}
 
+	// The mockups carry one more rule than the other five: a session has to be able to build the
+	// screens from them. It is read before the write, so a mockup nobody could build from never
+	// reaches the operator to approve.
+	var mockupWarnings []string
+	if req.GetStage() == store.StageMockups {
+		said, err := s.checkMockupArtifact(ctx, req.GetProject(), req.GetArtifact())
+		if err != nil {
+			return nil, err
+		}
+		mockupWarnings = said
+	}
+
 	// What still carried the operator's word before the write, so the response can say which words
 	// the write took away. Read before rather than after, because after the write they are gone and
 	// nothing can say what went. A read that fails says nothing: the write is what matters and a
@@ -95,7 +107,7 @@ func (s *Server) SetDesignStage(ctx context.Context, req *quaycrewv1.SetDesignSt
 
 	return &quaycrewv1.SetDesignStageResponse{
 		Stage:    written,
-		Warnings: stageWarnings(req.GetStage(), req.GetBody(), approvedBefore),
+		Warnings: append(stageWarnings(req.GetStage(), req.GetBody(), approvedBefore), mockupWarnings...),
 	}, nil
 }
 

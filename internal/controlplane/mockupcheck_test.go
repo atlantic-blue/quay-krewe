@@ -1,0 +1,392 @@
+package controlplane_test
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"testing"
+
+	quaycrewv1 "github.com/atlantic-blue/quay-krewe/gen/quaycrew/v1"
+	"github.com/atlantic-blue/quay-krewe/internal/controlplane"
+	"github.com/atlantic-blue/quay-krewe/internal/model"
+	"github.com/atlantic-blue/quay-krewe/internal/store"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+)
+
+// The two contracts the mockups stage adds to a write.
+//
+// FLOW-3: a mockups artifact whose screen holds a shape with no component is refused, and the
+// refusal names the screen and the shape.
+//
+// FLOW-4: a mockups artifact drawn in a colour or a font that the approved design_system stage
+// does not name is refused.
+//
+// Both are read at the call, because that is where an operator meets them. A mockup nobody could
+// build from never reaches the person who would otherwise approve it.
+
+// The colours and fonts the design system names in these tests. The mockup below is drawn in the
+// same values, so a test about a component is not quietly a test about a colour.
+const designSystemArtifact = `{"tokens": {
+	"colour": {
+		"surface": "#fdfbf7", "surface-low": "#f1ece4", "ink": "#1d1c1a", "muted": "#5f5a52",
+		"line": "#ded5c8", "primary": "#1b6b57", "on-primary": "#ffffff", "frame": "#211f1c"
+	},
+	"font": {"sans": "Inter, system-ui, sans-serif", "mono": "JetBrains Mono, monospace"}
+}}`
+
+// mockupTokens is the tokens block of a flows.json, drawn in the values above.
+const mockupTokens = `"tokens": {
+	"colour": {
+		"surface": "#fdfbf7", "surface-low": "#f1ece4", "ink": "#1d1c1a", "muted": "#5f5a52",
+		"line": "#ded5c8", "primary": "#1b6b57", "on-primary": "#ffffff", "frame": "#211f1c"
+	},
+	"font": {"sans": "Inter, system-ui, sans-serif", "mono": "JetBrains Mono, monospace"},
+	"radius": {"screen": "24px", "control": "12px", "card": "10px"},
+	"space": {"gap": "9px", "pad": "14px"}
+}`
+
+// aMockup is a whole flows.json the schema accepts, with the shapes of its one screen written in.
+func aMockup(elements string) string {
+	return fmt.Sprintf(`{
+		"readAt": {"commit": "0000000", "date": "2026-09-23"},
+		%s,
+		"screens": {
+			"sign-in": {"name": "Sign in", "surface": "web", "status": "designed", "el": [%s]}
+		},
+		"stories": [
+			{"id": "sign-in", "title": "A person signs in", "start": "sign-in", "nodes": [["sign-in", 0, 0]]}
+		]
+	}`, mockupTokens, elements)
+}
+
+// aMockupWith is the same file with one token group replaced, which is how a mockup comes to be
+// drawn in a colour the design system never named.
+func aMockupWith(tokens, elements string) string {
+	return strings.Replace(aMockup(elements), mockupTokens, tokens, 1)
+}
+
+const namedShapes = `{"t": "h", "component": "Heading", "v": "Sign in"},
+	{"t": "btn", "component": "Button", "v": "Sign in", "to": "sign-in"}`
+
+// designedUpToMockups walks a project to the point a mockup may be written: the three stages
+// before the mockups are written and approved, and the design system carries the tokens above.
+func designedUpToMockups(t *testing.T, s *controlplane.Server, project string) {
+	t.Helper()
+	ctx := context.Background()
+	for _, stage := range []struct{ name, artifact string }{
+		{store.StageDiscovery, ""},
+		{store.StageStories, ""},
+		{store.StageDesignSystem, designSystemArtifact},
+	} {
+		if _, err := s.SetDesignStage(ctx, &quaycrewv1.SetDesignStageRequest{
+			Project: project, Stage: stage.name, Body: "the " + stage.name + " body", Artifact: stage.artifact,
+		}); err != nil {
+			t.Fatalf("SetDesignStage %s: %v", stage.name, err)
+		}
+		if _, err := s.ApproveDesignStage(ctx, &quaycrewv1.ApproveDesignStageRequest{
+			Project: project, Stage: stage.name,
+		}); err != nil {
+			t.Fatalf("ApproveDesignStage %s: %v", stage.name, err)
+		}
+	}
+}
+
+// writeMockups is the call under test, with the artifact the caller wants to try.
+func writeMockups(s *controlplane.Server, project, artifact string) (*quaycrewv1.SetDesignStageResponse, error) {
+	return s.SetDesignStage(context.Background(), &quaycrewv1.SetDesignStageRequest{
+		Project: project, Stage: store.StageMockups, Body: "the screens", Artifact: artifact,
+	})
+}
+
+// mockupsHeld is what the project holds as its mockups stage, so a test can prove a refusal left
+// nothing behind.
+func mockupsHeld(t *testing.T, s *controlplane.Server, project string) *quaycrewv1.DesignStage {
+	t.Helper()
+	listed, err := s.ListDesignStages(context.Background(), &quaycrewv1.ListDesignStagesRequest{Project: project})
+	if err != nil {
+		t.Fatalf("ListDesignStages: %v", err)
+	}
+	for _, stage := range listed.GetStages() {
+		if stage.GetStage() == store.StageMockups {
+			return stage
+		}
+	}
+	return nil
+}
+
+// FLOW-3. The refusal this step exists for. It has to name the screen and the shape: a mockup runs
+// to dozens of screens, and an operator told only that a component is missing has to read the
+// whole file to find out where.
+func TestAMockupWithAShapeThatNamesNoComponentIsRefused(t *testing.T) {
+	s := newServer(&model.FakeRunner{})
+	_, project := newProject(t, s)
+	designedUpToMockups(t, s, project)
+
+	_, err := writeMockups(s, project, aMockup(
+		`{"t": "h", "component": "Heading", "v": "Sign in"},
+		 {"t": "btn", "v": "Sign in"}`))
+
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("a shape with no component answered %v, want InvalidArgument", err)
+	}
+	said := status.Convert(err).Message()
+	for _, want := range []string{"sign-in", "component", "el 1", "btn"} {
+		if !strings.Contains(said, want) {
+			t.Errorf("the refusal reads %q, and it has to say %q", said, want)
+		}
+	}
+	if held := mockupsHeld(t, s, project); held != nil {
+		t.Fatalf("the refused write left a mockups stage behind, holding %q", held.GetArtifact())
+	}
+}
+
+// An empty component is the same fault as no component at all. A session reads the name to pick a
+// component, and there is nothing to read either way.
+func TestAMockupWithAnEmptyComponentIsRefused(t *testing.T) {
+	s := newServer(&model.FakeRunner{})
+	_, project := newProject(t, s)
+	designedUpToMockups(t, s, project)
+
+	_, err := writeMockups(s, project, aMockup(`{"t": "btn", "component": "   ", "v": "Sign in"}`))
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("a shape whose component is spaces answered %v, want InvalidArgument", err)
+	}
+	if said := status.Convert(err).Message(); !strings.Contains(said, "sign-in") {
+		t.Errorf("the refusal reads %q, and it has to name the screen", said)
+	}
+}
+
+// The other half of the contract. A mockup that names a component on every shape is kept, so the
+// check refuses a fault rather than refusing the stage.
+func TestAMockupThatNamesEveryComponentGoesIn(t *testing.T) {
+	s := newServer(&model.FakeRunner{})
+	_, project := newProject(t, s)
+	designedUpToMockups(t, s, project)
+
+	written, err := writeMockups(s, project, aMockup(namedShapes))
+	if err != nil {
+		t.Fatalf("a mockup naming every component was refused: %v", err)
+	}
+	if written.GetStage().GetArtifact() == "" {
+		t.Fatal("the mockups stage came back with no artifact")
+	}
+	if said := strings.Join(written.GetWarnings(), " "); strings.Contains(said, "design_system") {
+		t.Errorf("the write warned %q, and the design system named every value it was drawn in", said)
+	}
+}
+
+// Two screens, both wrong. A map is read in whatever order the runtime feels like, so a refusal
+// that read one would name a different screen on a different day and two operators comparing
+// notes would disagree about what the file says.
+func TestTheRefusalNamesTheSameShapeEveryTime(t *testing.T) {
+	s := newServer(&model.FakeRunner{})
+	_, project := newProject(t, s)
+	designedUpToMockups(t, s, project)
+
+	two := strings.Replace(aMockup(`{"t": "btn", "v": "Sign in"}`),
+		`"screens": {`,
+		`"screens": {
+			"account": {"name": "Account", "surface": "web", "status": "designed",
+				"el": [{"t": "h", "v": "Account"}]},`, 1)
+
+	for attempt := range 8 {
+		_, err := writeMockups(s, project, two)
+		said := status.Convert(err).Message()
+		if !strings.Contains(said, `"account"`) {
+			t.Fatalf("attempt %d read %q, want the first screen in name order", attempt, said)
+		}
+	}
+}
+
+// The schema is the backstop. A document that is json and is not a flows.json is refused against
+// the file the skill tells a session to write from, rather than being kept for somebody to find.
+func TestAnArtifactThatIsNotAFlowsFileIsRefused(t *testing.T) {
+	s := newServer(&model.FakeRunner{})
+	_, project := newProject(t, s)
+	designedUpToMockups(t, s, project)
+
+	_, err := writeMockups(s, project, `{"screens": {}}`)
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("a document that is not a flows.json answered %v, want InvalidArgument", err)
+	}
+	said := status.Convert(err).Message()
+	if !strings.Contains(said, "schema") {
+		t.Errorf("the refusal reads %q, and it has to send the reader to the schema", said)
+	}
+	if !strings.Contains(said, "at /") && !strings.Contains(said, "the whole file") {
+		t.Errorf("the refusal reads %q, and it has to say where in the file the fault is", said)
+	}
+}
+
+// FLOW-4. The tokens are what every screen is drawn in, so a colour the design system never named
+// is a second design system nobody approved.
+func TestAMockupDrawnInAColourTheDesignSystemDoesNotNameIsRefused(t *testing.T) {
+	s := newServer(&model.FakeRunner{})
+	_, project := newProject(t, s)
+	designedUpToMockups(t, s, project)
+
+	_, err := writeMockups(s, project, aMockupWith(
+		strings.Replace(mockupTokens, `"primary": "#1b6b57"`, `"primary": "#ff0000"`, 1), namedShapes))
+
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("a colour outside the design system answered %v, want InvalidArgument", err)
+	}
+	said := status.Convert(err).Message()
+	for _, want := range []string{"#ff0000", "primary", "design_system"} {
+		if !strings.Contains(said, want) {
+			t.Errorf("the refusal reads %q, and it has to say %q", said, want)
+		}
+	}
+}
+
+// FLOW-4, the font half. A font is one value rather than a pattern, so it is compared whole and
+// through whatever spacing the writer used.
+func TestAMockupDrawnInAFontTheDesignSystemDoesNotNameIsRefused(t *testing.T) {
+	s := newServer(&model.FakeRunner{})
+	_, project := newProject(t, s)
+	designedUpToMockups(t, s, project)
+
+	_, err := writeMockups(s, project, aMockupWith(
+		strings.Replace(mockupTokens, `"sans": "Inter, system-ui, sans-serif"`,
+			`"sans": "Comic Sans MS, cursive"`, 1), namedShapes))
+
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("a font outside the design system answered %v, want InvalidArgument", err)
+	}
+	if said := status.Convert(err).Message(); !strings.Contains(said, "Comic Sans MS") {
+		t.Errorf("the refusal reads %q, and it has to name the font", said)
+	}
+}
+
+// One value written in two ways is one value. A design system naming "#FDFBF7" and a mockup drawn
+// in "#fdfbf7" agree, and a gate that refused them would be refusing a capital letter.
+func TestAColourIsTheSameColourInEitherCase(t *testing.T) {
+	s := newServer(&model.FakeRunner{})
+	_, project := newProject(t, s)
+	designedUpToMockups(t, s, project)
+
+	upper := strings.Replace(mockupTokens, `"surface": "#fdfbf7"`, `"surface": "#FDFBF7"`, 1)
+	if _, err := writeMockups(s, project, aMockupWith(upper, namedShapes)); err != nil {
+		t.Fatalf("the same colour in capitals was refused: %v", err)
+	}
+}
+
+// A colour written onto one screen, rather than into the tokens. The refusal names that screen,
+// because the fault is on it and not on the file.
+func TestAColourWrittenOntoAScreenIsRefused(t *testing.T) {
+	s := newServer(&model.FakeRunner{})
+	_, project := newProject(t, s)
+	designedUpToMockups(t, s, project)
+
+	_, err := writeMockups(s, project, aMockup(
+		`{"t": "btn", "component": "Button", "v": "Sign in", "style": "background: #ff0000"}`))
+
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("a colour written onto a screen answered %v, want InvalidArgument", err)
+	}
+	said := status.Convert(err).Message()
+	for _, want := range []string{"sign-in", "#ff0000"} {
+		if !strings.Contains(said, want) {
+			t.Errorf("the refusal reads %q, and it has to say %q", said, want)
+		}
+	}
+}
+
+// What a screen says is what a person reads. A gate that searched every string for something
+// shaped like a colour would refuse the words on the screen, which is worse than missing a colour
+// nobody wrote in a field meant for one.
+func TestWordsOnAScreenAreNotColours(t *testing.T) {
+	s := newServer(&model.FakeRunner{})
+	_, project := newProject(t, s)
+	designedUpToMockups(t, s, project)
+
+	if _, err := writeMockups(s, project, aMockup(
+		`{"t": "p", "component": "Text", "v": "Your bill reference is #dedbee and it moves on Monday"}`,
+	)); err != nil {
+		t.Fatalf("prose carrying a hash word was refused as a colour: %v", err)
+	}
+}
+
+// A design system written as prose alone names nothing, so there is nothing to hold the mockup to.
+// The write goes through and says so, because refusing every mockup would block a project whose
+// design system is a paragraph.
+func TestADesignSystemWithNoTokensTurnsTheColourCheckOffAndSaysSo(t *testing.T) {
+	s := newServer(&model.FakeRunner{})
+	ctx := context.Background()
+	_, project := newProject(t, s)
+	for _, stage := range []string{store.StageDiscovery, store.StageStories, store.StageDesignSystem} {
+		if _, err := s.SetDesignStage(ctx, &quaycrewv1.SetDesignStageRequest{
+			Project: project, Stage: stage, Body: "one accent colour, and plenty of white space",
+		}); err != nil {
+			t.Fatalf("SetDesignStage %s: %v", stage, err)
+		}
+		if _, err := s.ApproveDesignStage(ctx, &quaycrewv1.ApproveDesignStageRequest{
+			Project: project, Stage: stage,
+		}); err != nil {
+			t.Fatalf("ApproveDesignStage %s: %v", stage, err)
+		}
+	}
+
+	written, err := writeMockups(s, project, aMockupWith(
+		strings.Replace(mockupTokens, `"primary": "#1b6b57"`, `"primary": "#ff0000"`, 1), namedShapes))
+	if err != nil {
+		t.Fatalf("a mockup was refused against a design system that names nothing: %v", err)
+	}
+	said := strings.Join(written.GetWarnings(), " ")
+	if !strings.Contains(said, "design_system") {
+		t.Errorf("the write said %q, and it has to say the colour check did not run", said)
+	}
+
+	// The shape check is not the colour check, and it still holds.
+	if _, err := writeMockups(s, project, aMockup(`{"t": "btn", "v": "Sign in"}`)); status.Code(err) !=
+		codes.InvalidArgument {
+		t.Errorf("a shape with no component answered %v, want it refused whatever the design system names", err)
+	}
+}
+
+// The mockups stage is the only one this reads. The other five carry whatever json they carry, and
+// a check that reached them would refuse the discovery stage for not being a flows.json.
+func TestAStageThatIsNotTheMockupsCarriesAnyJSON(t *testing.T) {
+	s := newServer(&model.FakeRunner{})
+	_, project := newProject(t, s)
+
+	written, err := s.SetDesignStage(context.Background(), &quaycrewv1.SetDesignStageRequest{
+		Project: project, Stage: store.StageDiscovery, Body: "what we asked",
+		Artifact: `{"asked": ["when does it move"]}`,
+	})
+	if err != nil {
+		t.Fatalf("the discovery stage was refused for not being a flows.json: %v", err)
+	}
+	if written.GetStage().GetArtifact() == "" {
+		t.Fatal("the discovery stage came back with no artifact")
+	}
+}
+
+// Prose first and the page after is how a stage is written. A mockups stage with nothing to read
+// has nothing to refuse.
+func TestAMockupsStageWithNoArtifactIsNotRefused(t *testing.T) {
+	s := newServer(&model.FakeRunner{})
+	_, project := newProject(t, s)
+	designedUpToMockups(t, s, project)
+
+	if _, err := writeMockups(s, project, ""); err != nil {
+		t.Fatalf("a mockups stage carrying prose alone was refused: %v", err)
+	}
+}
+
+// An artifact that is not json at all is the store's refusal, and it says the artifact is not
+// json. Two messages about one fault send the reader two ways, so this check stands aside.
+func TestAnArtifactThatIsNotJSONKeepsTheStoresOwnRefusal(t *testing.T) {
+	s := newServer(&model.FakeRunner{})
+	_, project := newProject(t, s)
+	designedUpToMockups(t, s, project)
+
+	_, err := writeMockups(s, project, "the flows are over there")
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("an artifact that is not json answered %v, want InvalidArgument", err)
+	}
+	if said := status.Convert(err).Message(); !strings.Contains(said, "not json") {
+		t.Errorf("the refusal reads %q, want the store's own words about json", said)
+	}
+}
