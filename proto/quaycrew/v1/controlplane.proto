@@ -899,6 +899,19 @@ message Step {
   // that breaks that. Nothing checks that an identifier names a contract that exists: krewe never
   // reads the project's contracts document, and the session opens it for itself.
   string contract_scope = 26;
+  // red_run_scenarios is how many scenarios the run that was seen to fail reported. Zero while no run
+  // of this step ever failed with a scenario in it.
+  //
+  // Zero is why the count is kept rather than a flag. A name filter that matches nothing, and a
+  // command the shell cannot start, both report a failure that executed no test, and a step could
+  // otherwise pass the gate on a run that proved nothing.
+  int32 red_run_scenarios = 27;
+  // red_run_at is when a run of this step's scenario was last seen to fail with at least one scenario
+  // in it, unset while none was. The word done is refused while it is unset.
+  //
+  // The take clears it, the way it clears the restatement and the verdict: a second attempt sees its
+  // own tests fail rather than standing on the record of the attempt that stopped.
+  google.protobuf.Timestamp red_run_at = 28;
 }
 
 // Milestone is one group of a feature's steps. A feature is delivered in milestones, and a milestone

@@ -952,12 +952,13 @@ func (m *Memory) predecessorLocked(feature string, after int32) *PredecessorErro
 }
 
 // startClean puts a step back to the state a step nobody checked is in: no restatement, no approval
-// and no verdict.
+// and no verdict, and no run seen to fail.
 //
 // It runs on every take rather than only on a retake, because a step nobody took carries none of
 // these anyway and one path is one thing to read. What it is for is the retake: a stopped step that
 // kept its approval would send its second session straight past the gate that reads one, building
-// against a text nobody agreed to this time.
+// against a text nobody agreed to this time, and a red run kept from it would let that session write
+// its code first.
 //
 // The result, the moment it finished and who closed it are left where they are. They are the record
 // of the attempt that stopped, and the new attempt does not undo it.
@@ -970,6 +971,8 @@ func startClean(step *quaycrewv1.Step) {
 	step.ProofScenariosRun = 0
 	step.ProofOutput = ""
 	step.ProofRanAt = nil
+	step.RedRunScenarios = 0
+	step.RedRunAt = nil
 }
 
 // stepsInFlightLocked is every step of one project in state taken, with the feature each one sits in
@@ -1123,10 +1126,12 @@ func (m *Memory) FinishStep(_ context.Context, feature string, number int32, fin
 	if err != nil {
 		return nil, nil, err
 	}
-	// The moment of the last run, never its verdict. A failing run opens this gate, and the row
-	// records the disagreement below.
-	if finish.State == StepDone && step.GetProofRanAt() == nil {
-		return nil, nil, ErrNotChecked
+	// The moment of the last run, and the moment a run was seen to fail. Neither is a verdict: a
+	// failing run opens the first gate, and the row records the disagreement below.
+	if finish.State == StepDone {
+		if why := WhyDoneIsRefused(step); why != nil {
+			return nil, nil, why
+		}
 	}
 	step.State = finish.State
 	step.Result = finish.Result
@@ -1283,6 +1288,13 @@ func (m *Memory) RecordProof(_ context.Context, feature string, number int32, re
 	held.ProofScenariosRun = result.ScenariosRun
 	held.ProofOutput = KeptProofOutput(result.Output)
 	held.ProofRanAt = timestamppb.New(time.Now().UTC())
+	// The run that was seen to fail, kept beside the verdict rather than read back out of it. The
+	// verdict is the last run and this is the run that went red, and once a step passes they are two
+	// different runs. ARedRun says which one this is, and Postgres asks the same function.
+	if ARedRun(result) {
+		held.RedRunScenarios = result.ScenariosRun
+		held.RedRunAt = held.GetProofRanAt()
+	}
 	return proto.Clone(held).(*quaycrewv1.Step), nil
 }
 

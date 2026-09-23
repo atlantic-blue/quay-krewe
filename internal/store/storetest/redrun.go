@@ -164,7 +164,7 @@ func runRedRunConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 		oneRun(t, s, feature, store.ProofFailing, 1)
 		oneRun(t, s, feature, store.ProofPassing, 1)
 
-		writePath(t, s, feature, store.Step{Number: 1, Title: "the first, said again"})
+		writePath(t, s, feature, store.Step{Number: 1, Title: "the first", Intention: "said again"})
 		read, err := s.GetStep(ctx, feature, 1)
 		if err != nil {
 			t.Fatalf("GetStep after the rewrite: %v", err)

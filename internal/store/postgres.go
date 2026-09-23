@@ -1022,7 +1022,8 @@ const stepColumns = `s.feature, s.number, s.title, s.intention, s.touches, s.pro
 	`s.proof_scenario, s.after, s.milestone, s.contracts, s.contract_scope, ` +
 	`s.state, s.session, s.result, s.closed_by, s.operator_agreed, s.taken_at, s.finished_at, ` +
 	`s.restatement, s.restated_at, s.restatement_approved, s.restatement_approved_at, ` +
-	`s.proof_state, s.proof_scenarios_run, s.proof_output, s.proof_ran_at`
+	`s.proof_state, s.proof_scenarios_run, s.proof_output, s.proof_ran_at, ` +
+	`s.red_run_scenarios, s.red_run_at`
 
 // stepJoins is the join every path read goes through: a step to its feature, that feature to its
 // project, and that project to its workspace.
@@ -1043,15 +1044,18 @@ func scanStep(row pgx.Row) (*quaycrewv1.Step, error) {
 		operatorAgreed                            string
 		restatement, proofState, proofOutput      string
 		number, after, milestone, scenariosRun    int32
+		redRunScenarios                           int32
 		approved                                  bool
 		takenAt, finishedAt                       *time.Time
 		restatedAt, approvedAt, proofRanAt        *time.Time
+		redRunAt                                  *time.Time
 	)
 	if err := row.Scan(&feature, &number, &title, &intention, &touches, &proof,
 		&scenario, &after, &milestone, &contracts, &contractScope,
 		&state, &session, &result, &closedBy, &operatorAgreed, &takenAt, &finishedAt,
 		&restatement, &restatedAt, &approved, &approvedAt,
-		&proofState, &scenariosRun, &proofOutput, &proofRanAt); err != nil {
+		&proofState, &scenariosRun, &proofOutput, &proofRanAt,
+		&redRunScenarios, &redRunAt); err != nil {
 		return nil, err
 	}
 	step := &quaycrewv1.Step{
@@ -1078,6 +1082,8 @@ func scanStep(row pgx.Row) (*quaycrewv1.Step, error) {
 		ProofState:        proofState,
 		ProofScenariosRun: scenariosRun,
 		ProofOutput:       proofOutput,
+
+		RedRunScenarios: redRunScenarios,
 	}
 	if takenAt != nil {
 		step.TakenAt = timestamppb.New(*takenAt)
@@ -1093,6 +1099,9 @@ func scanStep(row pgx.Row) (*quaycrewv1.Step, error) {
 	}
 	if proofRanAt != nil {
 		step.ProofRanAt = timestamppb.New(*proofRanAt)
+	}
+	if redRunAt != nil {
+		step.RedRunAt = timestamppb.New(*redRunAt)
 	}
 	return step, nil
 }
@@ -1424,14 +1433,16 @@ func (p *Postgres) TakeStep(ctx context.Context, feature string, number int32, s
 	}
 
 	// The take starts the step clean, so a stopped step taken again carries no restatement, no
-	// approval and no verdict from the attempt that stopped. The result, the moment it finished and
-	// who closed it stay where they are: they are the record of that attempt.
+	// approval, no verdict and no red run from the attempt that stopped. The second session sees its
+	// own tests fail. The result, the moment it finished and who closed it stay where they are: they
+	// are the record of that attempt.
 	step, err := scanStep(transaction.QueryRow(ctx, `
 		update feature_steps s
 		set state = $4, session = $3, taken_at = now(), updated_at = now(),
 			restatement = '', restated_at = null,
 			restatement_approved = false, restatement_approved_at = null,
-			proof_state = $6, proof_scenarios_run = 0, proof_output = '', proof_ran_at = null
+			proof_state = $6, proof_scenarios_run = 0, proof_output = '', proof_ran_at = null,
+			red_run_scenarios = 0, red_run_at = null
 		where s.feature = $1 and s.number = $2 and s.state = any($5)
 		returning `+stepColumns, feature, number, session, StepTaken, TakeableStates(), ProofUnproven))
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -1566,13 +1577,14 @@ func (p *Postgres) FinishStep(ctx context.Context, feature string, number int32,
 		return nil, nil, fmt.Errorf("hold the project: %w", err)
 	}
 
-	// The moment of the last run is read in the statement that writes the word, rather than in a read
-	// before it, so a step checked between the two cannot be closed under a gate nobody passed. The
-	// step is read again only to say which refusal a write of no rows earned: a step that is not
-	// there, and a step nobody checked, are two different things to the person who typed the command.
+	// The two moments the word done stands on are read in the statement that writes the word, rather
+	// than in a read before it, so a step checked between the two cannot be closed under a gate nobody
+	// passed. The step is read again only to say which refusal a write of no rows earned: a step that
+	// is not there, a step nobody checked, and a step nobody saw fail are three different things to
+	// the person who typed the command.
 	//
-	// The column read for the gate is proof_ran_at and never proof_state. A failing run carries a
-	// moment, so it opens this gate and the row keeps the disagreement.
+	// The columns read for the gates are proof_ran_at and red_run_at, and never proof_state. A failing
+	// run carries a moment, so it opens the first gate and the row keeps the disagreement.
 	step, err := scanStep(transaction.QueryRow(ctx, `
 		update feature_steps s
 		set state = $3, result = $4, closed_by = $5,
@@ -1582,13 +1594,20 @@ func (p *Postgres) FinishStep(ctx context.Context, feature string, number int32,
 				else $12 end,
 			finished_at = now(), updated_at = now()
 		where s.feature = $1 and s.number = $2
-			and (not $6::boolean or s.proof_ran_at is not null)
+			and (not $6::boolean or (s.proof_ran_at is not null and s.red_run_at is not null))
 		returning `+stepColumns,
 		feature, number, finish.State, finish.Result, finish.ClosedBy, finish.State == StepDone,
 		StepDone, ProofPassing, StepStopped, AgreedYes, ProofFailing, AgreedNo))
 	if errors.Is(err, pgx.ErrNoRows) {
-		if _, missing := p.GetStep(ctx, feature, number); missing != nil {
+		read, missing := p.GetStep(ctx, feature, number)
+		if missing != nil {
 			return nil, nil, missing
+		}
+		// WhyDoneIsRefused reads the row as it stands now, and the write was refused a moment ago. A
+		// run landing between the two leaves a row that opens the gate, and the finish then answers
+		// with the gate the write met rather than with no error at all.
+		if why := WhyDoneIsRefused(read); why != nil {
+			return nil, nil, why
 		}
 		return nil, nil, ErrNotChecked
 	}
@@ -1796,6 +1815,11 @@ func (p *Postgres) ApproveRestatement(ctx context.Context, feature string, numbe
 // beside them. A run that failed is a record: the gate that refuses a finish before anybody read a
 // verdict asks whether a run happened, not whether it passed.
 //
+// A run that was seen to fail writes two more columns in that same statement, and a run that passed
+// leaves them where they are. The verdict is the last run and the red run is the run that went red,
+// and once the code lands they are two different runs. Which one this is comes in as a parameter
+// rather than as a rule said again here, so the two stores cannot disagree about it.
+//
 // The output is trimmed through the function the memory store also calls, rather than in the
 // statement, so a long run reads back the same out of either store.
 //
@@ -1809,10 +1833,14 @@ func (p *Postgres) RecordProof(ctx context.Context, feature string, number int32
 	step, err := scanStep(p.pool.QueryRow(ctx, `
 		update feature_steps s
 		set proof_state = $3, proof_scenarios_run = $4, proof_output = $5,
-			proof_ran_at = now(), updated_at = now()
+			proof_ran_at = now(),
+			red_run_scenarios = case when $6::boolean then $4 else s.red_run_scenarios end,
+			red_run_at = case when $6::boolean then now() else s.red_run_at end,
+			updated_at = now()
 		where s.feature = $1 and s.number = $2
 		returning `+stepColumns,
-		feature, number, result.State, result.ScenariosRun, KeptProofOutput(result.Output)))
+		feature, number, result.State, result.ScenariosRun, KeptProofOutput(result.Output),
+		ARedRun(result)))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
