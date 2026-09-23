@@ -6,9 +6,11 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -49,6 +51,9 @@ func main() {
 	// published to the network by default. The compose stack overrides this, because in a container
 	// loopback is the container, and binds the host side to loopback instead.
 	grpcAddr := envOr("QC_GRPC_ADDR", "127.0.0.1:50051")
+	// The site is the same decision again: a read only page of a project design, on loopback, and
+	// published no wider than the port above it.
+	siteAddr := envOr("QC_SITE_ADDR", controlplane.SiteAddr)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -245,6 +250,18 @@ func main() {
 		os.Exit(1)
 	}
 
+	// The second listener: the design of a project, over plain http, for a person with a browser.
+	// It is beside the gRPC server rather than behind it because it answers a different reader, and
+	// it starts nothing, writes nothing and asks nobody who they are.
+	siteListener, err := net.Listen("tcp", siteAddr)
+	if err != nil {
+		logger.Error("site listen failed", "addr", siteAddr, "error", err)
+		os.Exit(1)
+	}
+	// A header nobody finishes sending holds a connection open, and this listener answers anybody who
+	// can reach the address, so the read has a bound on it.
+	site := &http.Server{Handler: server.Site(), ReadHeaderTimeout: 10 * time.Second}
+
 	go func() {
 		logger.Info("control plane serving", "grpc", grpcAddr, "otel_endpoint", otelEndpoint)
 		if err := grpcServer.Serve(listener); err != nil {
@@ -252,9 +269,20 @@ func main() {
 		}
 	}()
 
+	go func() {
+		logger.Info("site serving", "http", siteAddr)
+		// A closed listener is the shutdown below, which is the ordinary way this ends.
+		if err := site.Serve(siteListener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logger.Error("site serve stopped", "error", err)
+		}
+	}()
+
 	<-ctx.Done()
 	logger.Info("shutting down")
 	grpcServer.GracefulStop()
+	if err := site.Close(); err != nil {
+		logger.Error("site shutdown error", "error", err)
+	}
 
 	// Draining requests is not draining execs: a detached exec is a goroutine nobody is calling, so
 	// without this the process exits mid exec and the session comes back up settled as failed. Given a
