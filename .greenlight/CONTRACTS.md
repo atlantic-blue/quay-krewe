@@ -3911,11 +3911,11 @@ Errors:
 Invariants:
 - It reads the embedded files, never the installed ones. It says what this binary would write.
 - The one line summary comes from the file, so the file and the listing cannot disagree.
-- The order is the order of `SLASH-4` to `SLASH-7`: init, design, status, then trust.
+- The order is the order the commands are met in: init, discover, design, status, then trust.
 
 Verification: verify
 Acceptance criteria:
-- It names four commands, each in the form `/krewe:<name>`.
+- It names five commands, each in the form `/krewe:<name>`.
 - It answers on a machine where nothing was installed.
 
 ### COMMAND-24: `krewe feature [<address>]`
@@ -4367,7 +4367,7 @@ Invariants:
 
 Verification: verify
 Acceptance criteria:
-- The embedded set holds exactly four files.
+- The embedded set holds exactly five files.
 - Every embedded file carries the marker on line one.
 - Every embedded file carries a description of one line.
 Steps:

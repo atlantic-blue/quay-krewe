@@ -513,6 +513,7 @@ var writingCommands = []string{
 	"krewe context set", "krewe context edit", "krewe context clear",
 	"krewe design brief", "krewe design set", "krewe design edit", "krewe design contracts",
 	"krewe design approve", "krewe design proof",
+	"krewe stage set", "krewe stage approve",
 	"krewe feature add", "krewe feature intention", "krewe feature done", "krewe feature stop",
 	"krewe feature open",
 	"krewe path set",

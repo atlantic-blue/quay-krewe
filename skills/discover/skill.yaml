@@ -1,0 +1,4 @@
+name: discover
+version: 1
+summary: Read a repository that already exists and write down what it holds, before anybody designs something new.
+binaries: [krewe]

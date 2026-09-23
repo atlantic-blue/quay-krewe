@@ -15,8 +15,8 @@ import (
 // file per slice, and what holds at every size is that every file in the set obeys the rules.
 
 // The two places a count is the point. An embed that matched nothing would make every rule below
-// hold over no files at all, and report a clean run. And the set is the four commands SLASH-1 names,
-// so a fifth file shipped without a contract behind it is caught here rather than by an operator
+// hold over no files at all, and report a clean run. And the set is the five commands SLASH-1 names,
+// so a sixth file shipped without a contract behind it is caught here rather than by an operator
 // reading a listing.
 func TestTheEmbeddedSetIsNotEmpty(t *testing.T) {
 	if len(commands.All()) == 0 {
@@ -24,9 +24,9 @@ func TestTheEmbeddedSetIsNotEmpty(t *testing.T) {
 	}
 }
 
-func TestTheEmbeddedSetHoldsTheFourCommandsOfTheContract(t *testing.T) {
-	if held := len(commands.All()); held != 4 {
-		t.Fatalf("this build carries %d commands, and the contract names four", held)
+func TestTheEmbeddedSetHoldsTheFiveCommandsOfTheContract(t *testing.T) {
+	if held := len(commands.All()); held != 5 {
+		t.Fatalf("this build carries %d commands, and the contract names five", held)
 	}
 }
 
@@ -88,10 +88,11 @@ func TestEveryCommandHasAPlaceInTheListing(t *testing.T) {
 	}
 }
 
-// The order the commands are met in: a project is started, then designed, then read back. A
-// directory read would give back design, init, status, which is why the order is declared rather
-// than read. The list here is written out rather than taken from commands.Order, so a wrong order
-// declared in the package fails here instead of agreeing with itself.
+// The order the commands are met in: a project is started, what its repository already holds is
+// written down, then it is designed, then it is read back. A directory read would give back design,
+// discover, init, status, which is why the order is declared rather than read. The list here is
+// written out rather than taken from commands.Order, so a wrong order declared in the package fails
+// here instead of agreeing with itself.
 func TestTheListingNamesTheCommandsInTheOrderTheyAreMetIn(t *testing.T) {
 	at := func(want string) int {
 		for i, one := range commands.All() {
@@ -102,7 +103,7 @@ func TestTheListingNamesTheCommandsInTheOrderTheyAreMetIn(t *testing.T) {
 		return -1
 	}
 
-	met := []string{"init", "design", "status", "trust"}
+	met := []string{"init", "discover", "design", "status", "trust"}
 	for _, name := range met {
 		if at(name) < 0 {
 			t.Fatalf("this build carries no %s command", name)
@@ -176,10 +177,15 @@ func leadingWords(line string) string {
 // The design work belongs to a session in a sandbox, where the record keeps it. A command file that
 // wrote a design body or a path would be the operator's own session doing the work the record is
 // supposed to hold.
+//
+// A design stage is the same work one stage at a time, so the write that puts one on a project is
+// here beside the other four. The operator's terminal asks the questions and reads the answer back;
+// the session in the sandbox is what writes.
 func TestNoCommandWritesADesignBodyOrAPath(t *testing.T) {
 	for _, one := range commands.All() {
 		for _, writing := range []string{
 			"krewe design set", "krewe design edit", "krewe design contracts", "krewe path set",
+			"krewe stage set",
 		} {
 			if strings.Contains(one.Body, writing) {
 				t.Errorf("%s runs %q, and a command never writes the design or the path", one.FileName(), writing)
@@ -208,6 +214,7 @@ var writingCommands = []string{
 	"krewe context set", "krewe context edit", "krewe context clear",
 	"krewe design brief", "krewe design set", "krewe design edit", "krewe design contracts",
 	"krewe design approve", "krewe design proof",
+	"krewe stage set", "krewe stage approve",
 	"krewe feature add", "krewe feature intention", "krewe feature done", "krewe feature stop",
 	"krewe feature open",
 	"krewe path set",
