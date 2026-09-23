@@ -2025,6 +2025,7 @@ func RunConformance(t *testing.T, newDataset func(t *testing.T) Opener) {
 	runTakeConformance(t, newDataset)
 	runRestatementConformance(t, newDataset)
 	runProofResultConformance(t, newDataset)
+	runRedRunConformance(t, newDataset)
 	runTrustConformance(t, newDataset)
 	runFeatureConformance(t, newDataset)
 }
@@ -5247,9 +5248,23 @@ func offerAStandingLevel(t *testing.T, s store.Store, project *quaycrewv1.Projec
 	}
 }
 
-// recordProof stands one run's verdict on a step, which is what gate 3 reads before it lets the word
-// done through.
+// recordProof stands one run's verdict on a step, which is what the gates on a finish read before
+// they let the word done through.
+//
+// A passing verdict lays down a run that failed before it, because that is the only state a real
+// project reaches: the word done is refused on a step whose tests nobody saw fail, so a step carrying
+// a passing run and nothing else could never be finished. The cases about that gate write their runs
+// one at a time, in redrun.go.
 func recordProof(t *testing.T, s store.Store, feature string, number int32, state string) {
+	t.Helper()
+	if state == store.ProofPassing {
+		writeProof(t, s, feature, number, store.ProofFailing)
+	}
+	writeProof(t, s, feature, number, state)
+}
+
+// writeProof writes one run of one scenario, with the line a runner prints for that verdict.
+func writeProof(t *testing.T, s store.Store, feature string, number int32, state string) {
 	t.Helper()
 	output := "1 scenarios (1 passed)"
 	if state == store.ProofFailing {
