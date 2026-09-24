@@ -28,6 +28,17 @@ const flagFile = "--file"
 // substituted line back, so the two copies cannot drift apart in silence.
 const scenarioToken = "{scenario}"
 
+// flagPrint asks for the address of a page and nothing else, for a person who wants to paste it
+// somewhere, or who is on a machine with no screen to open it on.
+const flagPrint = "--print"
+
+// openPage puts an address in front of the operator. It is a variable so a test can stand in for the
+// machine: opening a page is done to somebody's screen, and no test may do that for real.
+var openPage = func(address string) error { return nil }
+
+// openCommandFor is the command that opens an address on one system.
+func openCommandFor(system string) string { return "" }
+
 const designUsage = "usage: krewe design [<address>]" +
 	"\n       krewe design brief [<address>] \"<text>\"" +
 	"\n       krewe design set [<address>] --file <path>" +

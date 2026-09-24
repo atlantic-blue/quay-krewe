@@ -391,3 +391,33 @@ func stageHeld(t *testing.T, client quaycrewv1.ControlPlaneServiceClient, stage 
 	}
 	return stageNamed(resp.GetStages(), stage)
 }
+
+// TestTheStageListingEndsWithTheAddressOfTheDesign. The listing is where an operator looks first,
+// and the six states are a summary of prose that is read on the page. The address goes last, under
+// the one move the project has, because a person reads down.
+func TestTheStageListingEndsWithTheAddressOfTheDesign(t *testing.T) {
+	client := aStagedProject(t)
+
+	printed := mustRun(t, client, "stage", "show", "acme/house-bills")
+	lines := strings.Split(strings.TrimRight(printed, "\n"), "\n")
+	last := strings.TrimSpace(lines[len(lines)-1])
+	if last != "http://127.0.0.1:50052/p/acme/house-bills/" {
+		t.Fatalf("the listing ends with %q:\n%s", last, printed)
+	}
+}
+
+// The advice is still there, and still above the address: it names the one move the project has, and
+// a line added under it must not push it out of the listing.
+func TestTheStageListingKeepsItsAdviceAboveTheAddress(t *testing.T) {
+	client := aStagedProject(t)
+
+	printed := mustRun(t, client, "stage", "show", "acme/house-bills")
+	advice := strings.Index(printed, "krewe stage set acme/house-bills discovery")
+	address := strings.Index(printed, "http://127.0.0.1:50052/p/acme/house-bills/")
+	if advice < 0 {
+		t.Fatalf("the listing lost the advice:\n%s", printed)
+	}
+	if address < advice {
+		t.Fatalf("the address is above the advice:\n%s", printed)
+	}
+}
