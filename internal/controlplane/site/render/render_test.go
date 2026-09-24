@@ -185,3 +185,49 @@ func stateOf(t *testing.T, markup string) string {
 	}
 	return found[1]
 }
+
+// SITE-5, at the page: what the site rendered is what the operator reads. A page that drew the marks
+// instead would show a heading as a hash and a list as a row of dashes.
+func TestTheBodyOfAStageIsDrawnFromTheDocumentTheSiteRendered(t *testing.T) {
+	document := stagesJSON(t, "", map[string]any{
+		"stage":     store.StageDiscovery,
+		"body":      "# Four bills\n\n- the rent moves\n",
+		"body_html": "<h1>Four bills</h1>\n<ul>\n<li>the rent moves</li>\n</ul>\n",
+		"version":   1, "approved_version": 1,
+	})
+	drawn, err := script(t).Body(document, store.StageDiscovery)
+	if err != nil {
+		t.Fatalf("drawing the body: %v", err)
+	}
+	if !strings.Contains(drawn, "<li>the rent moves</li>") {
+		t.Errorf("the page draws no list, so the operator reads the marks:\n%s", drawn)
+	}
+	if strings.Contains(drawn, "# Four bills") {
+		t.Errorf("the page draws the marks beside the document:\n%s", drawn)
+	}
+}
+
+// The design is written as markdown too, so the operator reads it the same way.
+func TestTheDesignIsDrawnFromTheDocumentTheSiteRendered(t *testing.T) {
+	document, err := json.Marshal(map[string]any{
+		"design": map[string]any{
+			"brief":      "four bills, and two of them move",
+			"brief_html": "<p>four bills, and two of them move</p>",
+			"body":       "## The bills\n",
+			"body_html":  "<h2>The bills</h2>",
+		},
+		"stages": []any{},
+	})
+	if err != nil {
+		t.Fatalf("writing the stages document: %v", err)
+	}
+	drawn, err := script(t).Body(string(document), "design")
+	if err != nil {
+		t.Fatalf("drawing the design: %v", err)
+	}
+	for _, want := range []string{"<p>four bills, and two of them move</p>", "<h2>The bills</h2>"} {
+		if !strings.Contains(drawn, want) {
+			t.Errorf("the page draws no %s:\n%s", want, drawn)
+		}
+	}
+}

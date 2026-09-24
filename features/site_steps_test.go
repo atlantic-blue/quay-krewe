@@ -39,6 +39,7 @@ type siteStageRow struct {
 	Version         int    `json:"version"`
 	ApprovedVersion int    `json:"approved_version"`
 	Skipped         bool   `json:"skipped"`
+	BodyHTML        string `json:"body_html"`
 }
 
 // siteAnswer is the whole of stages.json: what the project is for, and the stages written under it.
@@ -243,6 +244,63 @@ func initializeSiteSteps(sc *godog.ScenarioContext) {
 			return nil
 		})
 
+	// The body as a document. What is read is the html the site answered, because that is what the
+	// operator's browser is handed: a body that reached the page as marks would read as one long line.
+	sc.Step(`^the "([^"]*)" stage reads as a document, with its heading, its list and its code$`,
+		func(ctx context.Context, stage string) error {
+			held, err := siteStage(ctx, stage)
+			if err != nil {
+				return err
+			}
+			for _, want := range []struct {
+				what string
+				mark *regexp.Regexp
+			}{
+				{"heading", regexp.MustCompile(`<h[12][ >]`)},
+				{"list", regexp.MustCompile(`<[ou]l[ >]`)},
+				{"second line of the list", regexp.MustCompile(`<li>the water moves</li>`)},
+				{"code in a block of its own", regexp.MustCompile(`(?s)<pre[ >].*fmt\.Println`)},
+			} {
+				if !want.mark.MatchString(held.BodyHTML) {
+					return fmt.Errorf("the %s stage carries no %s: it reads %q", stage, want.what, held.BodyHTML)
+				}
+			}
+			return nil
+		})
+
+	// The other half of reading a body: everything a browser would run is gone, whatever the session
+	// wrote. An element that runs, and an attribute that runs when a picture fails to load.
+	sc.Step(`^the "([^"]*)" stage runs nothing in the operator's browser$`,
+		func(ctx context.Context, stage string) error {
+			held, err := siteStage(ctx, stage)
+			if err != nil {
+				return err
+			}
+			if strings.Contains(strings.ToLower(held.BodyHTML), "<script") {
+				return fmt.Errorf("the %s stage carries a script element: %q", stage, held.BodyHTML)
+			}
+			if found := eventAttribute.FindString(held.BodyHTML); found != "" {
+				return fmt.Errorf("the %s stage carries the event attribute %q: %q", stage, found, held.BodyHTML)
+			}
+			return nil
+		})
+
+	// The page's own renderer, run over the document the site answered, so what this reads is what an
+	// operator sees rather than what the answer holds.
+	sc.Step(`^the page shows the operator that document$`, func(ctx context.Context) error {
+		drawn, err := siteBody(ctx, store.StageDiscovery)
+		if err != nil {
+			return err
+		}
+		if !strings.Contains(drawn, "<li>the water moves</li>") {
+			return fmt.Errorf("the page shows the marks rather than the document: %s", drawn)
+		}
+		if strings.Contains(strings.ToLower(drawn), "<script") {
+			return fmt.Errorf("the page carries a script element, so what a session wrote would run: %s", drawn)
+		}
+		return nil
+	})
+
 	sc.Step(`^the site's default address is "([^"]*)"$`, func(want string) error {
 		if controlplane.SiteAddr != want {
 			return fmt.Errorf("the site binds %q by default, want %q", controlplane.SiteAddr, want)
@@ -337,6 +395,27 @@ func siteMenu(ctx context.Context) (string, error) {
 	drawn, err := script.Menu(body)
 	if err != nil {
 		return "", fmt.Errorf("drawing the menu: %w", err)
+	}
+	return drawn, nil
+}
+
+// eventAttribute is an attribute a browser runs: on, a word and an equals sign, inside a tag.
+var eventAttribute = regexp.MustCompile(`(?i)<[^>]*\son[a-z]+\s*=`)
+
+// siteBody draws what one entry of the menu shows, with the page's own renderer, over the document
+// the site last answered.
+func siteBody(ctx context.Context, entry string) (string, error) {
+	body := siteFrom(ctx).body
+	if !json.Valid([]byte(body)) {
+		return "", fmt.Errorf("the site last answered %q, and a body is drawn over stages.json", body)
+	}
+	script, err := render.ReadSite()
+	if err != nil {
+		return "", fmt.Errorf("reading the page's renderer: %w", err)
+	}
+	drawn, err := script.Body(body, entry)
+	if err != nil {
+		return "", fmt.Errorf("drawing the body: %w", err)
 	}
 	return drawn, nil
 }
