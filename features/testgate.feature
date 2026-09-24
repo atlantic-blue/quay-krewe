@@ -22,7 +22,7 @@ Feature: After its red run, a building session cannot change a test
     And a workspace named "acme"
     And a project named "house-bills"
     And a step taken, restated and approved, naming the scenario "a project carries a brief"
-    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the project's proof command is "go test ./features/... -run {scenario}"
 
   # The whole step in one scenario. The run goes red, and the session that watched it go red is
   # refused the edit that would make it green.

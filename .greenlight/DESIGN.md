@@ -666,8 +666,9 @@ design, which is the normal state.
   who wrote the design must survive that.
 - `proof_command` text not null default ''. The command krewe runs inside the session's sandbox to
   run one scenario. It must carry the token `{scenario}`, which krewe replaces with the step's
-  scenario name. For this repository the value is
-  `go test ./features/... -run 'TestFeatures/{scenario}' -v -count=1`.
+  scenario name as one shell word. The token carries no quotes of its own, because krewe supplies
+  them. For this repository the value is
+  `go test ./features/ -count=1 -v -run TestFeatures/{scenario}'$'`.
 - `proof_count_pattern` text not null default '([0-9]+) scenarios'. A regular expression with one
   capture group, read against the run output to get the number of scenarios that ran. The default
   matches the runner this repository uses.
@@ -697,6 +698,9 @@ Rules, each proved by a scenario:
   None of them changes what the design says.
 - A `proof_command` without the token `{scenario}` is refused. The refusal says why: a command that
   runs everything proves nothing about one step.
+- A `proof_command` whose `{scenario}` sits inside a single quoted or a double quoted span is
+  refused. Krewe quotes the name itself, so a second pair of quotes splits the name and the shell
+  reads the rest of it as code. The refusal shows the same command with the token outside the quotes.
 - A `proof_count_pattern` that does not compile is refused, naming the position of the fault.
 - A `proof_timeout_seconds` below 1 or above 3600 is refused.
 - Approving a design whose `body` is empty is refused. There is nothing to approve.

@@ -1665,7 +1665,7 @@ Feature: A project holds a numbered path of steps
   Scenario: The text tells the session to write no code and to restate the step
     Given the project's design is "# Bills\n"
     And the operator approved the project's design
-    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the project's proof command is "go test ./features/... -run {scenario}"
     And the project's path is:
       """
       ## 1. The store holds a project's brief
@@ -1705,7 +1705,7 @@ Feature: A project holds a numbered path of steps
   Scenario: The take text tells the session to stop for the red run and the green run checks
     Given the project's design is "# Bills\n"
     And the operator approved the project's design
-    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the project's proof command is "go test ./features/... -run {scenario}"
     And the project's path is:
       """
       ## 1. The store holds a project's brief
@@ -1732,7 +1732,7 @@ Feature: A project holds a numbered path of steps
   Scenario: A session that takes a step finds its working tree made and keeps its folder there
     Given the project's design is "# Bills\n"
     And the operator approved the project's design
-    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the project's proof command is "go test ./features/... -run {scenario}"
     And the project works in "atlantic-blue/bills"
     And the session's sandbox holds no checkout yet
     And the project's path is:
@@ -1750,7 +1750,7 @@ Feature: A project holds a numbered path of steps
   Scenario: An exec that finds the working tree there runs no git command
     Given the project's design is "# Bills\n"
     And the operator approved the project's design
-    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the project's proof command is "go test ./features/... -run {scenario}"
     And the project works in "atlantic-blue/bills"
     And the project's path is:
       """
@@ -1766,7 +1766,7 @@ Feature: A project holds a numbered path of steps
   Scenario: Only the session holding the step is given a folder to work in
     Given the project's design is "# Bills\n"
     And the operator approved the project's design
-    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the project's proof command is "go test ./features/... -run {scenario}"
     And the project works in "atlantic-blue/bills"
     And the project's path is:
       """
@@ -1782,7 +1782,7 @@ Feature: A project holds a numbered path of steps
   Scenario: A working tree that cannot be made fails the exec and starts no model
     Given the project's design is "# Bills\n"
     And the operator approved the project's design
-    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the project's proof command is "go test ./features/... -run {scenario}"
     And the project works in "atlantic-blue/bills"
     And the session's sandbox holds no checkout yet
     And adding the working tree fails, saying "fatal: could not create work tree"
@@ -3084,7 +3084,7 @@ Feature: A project holds a numbered path of steps
     Given the system listens on an address the tool can dial
     And the project's design is "# Bills\n"
     And the operator approved the project's design
-    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the project's proof command is "go test ./features/... -run {scenario}"
     And the project's path is:
       """
       ## 1. The store holds a project's brief
@@ -3524,7 +3524,7 @@ Feature: A project holds a numbered path of steps
 
   Scenario: A check runs the named scenario and keeps what the run reported
     Given a step taken, restated and approved, naming the scenario "a project carries a brief"
-    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the project's proof command is "go test ./features/... -run {scenario}"
     And the run answers "1 scenarios (1 passed)" and exits 0
     When the operator checks step 1
     Then the run was given "go test ./features/... -run 'a project carries a brief'"
@@ -3538,7 +3538,7 @@ Feature: A project holds a numbered path of steps
   # at all, which is what a scenario name nobody wrote looks like from outside.
   Scenario: A run that exits zero and reports no scenario is failing
     Given a step taken, restated and approved, naming the scenario "a name nobody wrote"
-    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the project's proof command is "go test ./features/... -run {scenario}"
     And the run answers "0 scenarios (0 passed)\nok  	quay-krewe/features	0.4s" and exits 0
     When the operator checks step 1
     Then step 1 reads back as failing
@@ -3546,7 +3546,7 @@ Feature: A project holds a numbered path of steps
 
   Scenario: A run that exits zero and reports one scenario is passing
     Given a step taken, restated and approved, naming the scenario "a project carries a brief"
-    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the project's proof command is "go test ./features/... -run {scenario}"
     And the run answers "1 scenarios (1 passed)" and exits 0
     When the operator checks step 1
     Then step 1 reads back as passing
@@ -3556,7 +3556,7 @@ Feature: A project holds a numbered path of steps
   # sent back to read.
   Scenario: A run that exits one is failing, and the output is kept
     Given a step taken, restated and approved, naming the scenario "a project carries a brief"
-    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the project's proof command is "go test ./features/... -run {scenario}"
     And the run answers "1 scenarios (0 passed, 1 failed)\nthe brief read back empty" and exits 1
     When the operator checks step 1
     Then step 1 reads back as failing
@@ -3567,7 +3567,7 @@ Feature: A project holds a numbered path of steps
   # because a step that reads failing with nothing under it sends somebody to run it again by hand.
   Scenario: A run that passes its budget is failing, and says the budget it passed
     Given a step taken, restated and approved, naming the scenario "a project carries a brief"
-    And the project's proof command is "go test ./features/... -run '{scenario}'" inside 1 second
+    And the project's proof command is "go test ./features/... -run {scenario}" inside 1 second
     And the run never answers
     When the operator checks step 1
     Then step 1 reads back as failing
@@ -3577,7 +3577,7 @@ Feature: A project holds a numbered path of steps
   # move is, because a person who reads it is about to go and make it.
   Scenario: A check on a step that names no scenario is refused, and says where to name one
     Given a step taken, restated and approved, naming the scenario ""
-    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the project's proof command is "go test ./features/... -run {scenario}"
     When the operator checks step 1
     Then the control plane refuses it as the wrong state
     And the refusal suggests "The scenario that proves it"
@@ -3585,7 +3585,7 @@ Feature: A project holds a numbered path of steps
 
   Scenario: A check before the restatement is approved is refused
     Given a step taken and restated, naming the scenario "a project carries a brief"
-    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the project's proof command is "go test ./features/... -run {scenario}"
     When the operator checks step 1
     Then the control plane refuses it as the wrong state
     And the refusal suggests "krewe step approve"
@@ -3604,7 +3604,7 @@ Feature: A project holds a numbered path of steps
   # above it says what is missing, so nobody reads a cut output as the whole of it.
   Scenario: A run of 12,000 characters keeps its last 4,000 and says how much was cut
     Given a step taken, restated and approved, naming the scenario "a project carries a brief"
-    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the project's proof command is "go test ./features/... -run {scenario}"
     And the run answers 12000 characters and exits 1
     When the operator checks step 1
     Then step 1's output keeps 4000 characters of the run
@@ -3626,7 +3626,7 @@ Feature: A project holds a numbered path of steps
   # costs neither.
   Scenario: A check asks no model anything
     Given a step taken, restated and approved, naming the scenario "a project carries a brief"
-    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the project's proof command is "go test ./features/... -run {scenario}"
     And the run answers "1 scenarios (1 passed)" and exits 0
     When the operator checks step 1
     Then step 1 reads back as passing
@@ -3638,7 +3638,7 @@ Feature: A project holds a numbered path of steps
 
   Scenario: A check on a reclaimed session starts a container and runs the scenario in it
     Given a step taken, restated and approved, naming the scenario "a project carries a brief"
-    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the project's proof command is "go test ./features/... -run {scenario}"
     And the session holding the step was reclaimed
     And the run in the container krewe starts answers "1 scenarios (1 passed)" and exits 0
     When the operator checks step 1
@@ -3652,7 +3652,7 @@ Feature: A project holds a numbered path of steps
   # one session, and the next exec would adopt the wrong one or make a third.
   Scenario: A second check on the same session reuses that container and starts no second one
     Given a step taken, restated and approved, naming the scenario "a project carries a brief"
-    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the project's proof command is "go test ./features/... -run {scenario}"
     And the session holding the step was reclaimed
     And the run in the container krewe starts answers "1 scenarios (1 passed)" and exits 0
     When the operator checks step 1
@@ -3668,7 +3668,7 @@ Feature: A project holds a numbered path of steps
 
   Scenario: A check with no checkout in the session's working tree is refused and records nothing
     Given a step taken, restated and approved, naming the scenario "a project carries a brief"
-    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the project's proof command is "go test ./features/... -run {scenario}"
     And the session holding the step has no checkout in any place krewe reads
     When the operator checks step 1
     Then the control plane refuses it as the wrong state
@@ -3684,7 +3684,7 @@ Feature: A project holds a numbered path of steps
   # So a tree that cannot be restored stops the run rather than falling through into it.
   Scenario: A working tree that cannot be restored refuses, and nothing is run
     Given a step taken, restated and approved, naming the scenario "a project carries a brief"
-    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the project's proof command is "go test ./features/... -run {scenario}"
     And the session holding the step was reclaimed
     And the session's working directory cannot be made
     When the operator checks step 1
@@ -3695,7 +3695,7 @@ Feature: A project holds a numbered path of steps
 
   Scenario: A container that cannot be started refuses, naming what failed
     Given a step taken, restated and approved, naming the scenario "a project carries a brief"
-    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the project's proof command is "go test ./features/... -run {scenario}"
     And the session holding the step was reclaimed
     And no container can be started, saying "no room on this machine"
     When the operator checks step 1
@@ -3707,7 +3707,7 @@ Feature: A project holds a numbered path of steps
   # closes a step, the approval under it and the session that holds it all read as they did.
   Scenario: The step is still taken by the same session after a container is made for it
     Given a step taken, restated and approved, naming the scenario "a project carries a brief"
-    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the project's proof command is "go test ./features/... -run {scenario}"
     And the session holding the step was reclaimed
     And the run in the container krewe starts answers "1 scenarios (1 passed)" and exits 0
     When the operator checks step 1
@@ -3721,7 +3721,7 @@ Feature: A project holds a numbered path of steps
   Scenario: The caller checks a step on a reclaimed session and reads that krewe starts a container
     Given the system listens on an address the tool can dial
     And a step taken, restated and approved, naming the scenario "a project carries a brief"
-    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the project's proof command is "go test ./features/... -run {scenario}"
     And the session holding the step was reclaimed
     And the run in the container krewe starts answers "1 scenarios (1 passed)" and exits 0
     When the caller checks step "1.1"
@@ -3733,7 +3733,7 @@ Feature: A project holds a numbered path of steps
   # next session rather than in a listing somebody has to go and read.
   Scenario: A checked step carries its verdict in the path a session reads
     Given a step taken, restated and approved, naming the scenario "a project carries a brief"
-    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the project's proof command is "go test ./features/... -run {scenario}"
     And the run answers "2 scenarios (2 passed)" and exits 0
     When the operator checks step 1
     And the operator dispatches "and again" to the same session
@@ -3749,7 +3749,7 @@ Feature: A project holds a numbered path of steps
   Scenario: The caller checks a step and reads the command, the verdict and the count
     Given the system listens on an address the tool can dial
     And a step taken, restated and approved, naming the scenario "a project carries a brief"
-    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the project's proof command is "go test ./features/... -run {scenario}"
     And the run answers "1 scenarios (1 passed)" and exits 0
     When the caller checks step "1.1"
     Then standard output carries "go test ./features/... -run 'a project carries a brief'"
@@ -3761,7 +3761,7 @@ Feature: A project holds a numbered path of steps
   Scenario: A failing check prints the end of the output and exits non zero
     Given the system listens on an address the tool can dial
     And a step taken, restated and approved, naming the scenario "a project carries a brief"
-    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the project's proof command is "go test ./features/... -run {scenario}"
     And the run answers "1 scenarios (0 passed, 1 failed)\nthe brief read back empty" and exits 1
     When the caller checks step "1.1"
     Then standard output carries "verdict: failing"
@@ -3773,7 +3773,7 @@ Feature: A project holds a numbered path of steps
   Scenario: The path listing says what each step's last run reported
     Given the system listens on an address the tool can dial
     And a step taken, restated and approved, naming the scenario "a project carries a brief"
-    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the project's proof command is "go test ./features/... -run {scenario}"
     And the run answers "1 scenarios (1 passed)" and exits 0
     When the operator checks step 1
     And the caller reads the path of feature 1
@@ -3794,7 +3794,7 @@ Feature: A project holds a numbered path of steps
   # project that says nothing about how a scenario of it runs has nothing for krewe to check, and
   # redrun.feature holds what its steps do instead.
   Scenario: Finishing a step nothing checked is refused, and the refusal names the check
-    Given the project's proof command is "go test ./features/... -run '{scenario}'"
+    Given the project's proof command is "go test ./features/... -run {scenario}"
     And a step taken, restated and approved, naming the scenario "a project carries a brief"
     When the operator finishes step 1 with "shipped as pull request 733"
     Then the control plane refuses it as the wrong state
@@ -3804,7 +3804,7 @@ Feature: A project holds a numbered path of steps
 
   Scenario: Finishing a step whose check passed writes the word
     Given a step taken, restated and approved, naming the scenario "a project carries a brief"
-    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the project's proof command is "go test ./features/... -run {scenario}"
     And krewe ran step 1's scenario, and it failed
     And the run answers "1 scenarios (1 passed)" and exits 0
     And the operator checks step 1
@@ -3815,7 +3815,7 @@ Feature: A project holds a numbered path of steps
   # The point of the gate. Krewe says no, the operator says done, and the row keeps both.
   Scenario: Finishing a step whose check failed writes the word
     Given a step taken, restated and approved, naming the scenario "a project carries a brief"
-    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the project's proof command is "go test ./features/... -run {scenario}"
     And the run answers "1 scenarios (0 passed, 1 failed)" and exits 1
     And the operator checks step 1
     When the operator finishes step 1 with "the scenario is wrong, not the code"
@@ -3827,7 +3827,7 @@ Feature: A project holds a numbered path of steps
   Scenario: The caller marks a step done after a failing check and reads what the row records
     Given the system listens on an address the tool can dial
     And a step taken, restated and approved, naming the scenario "a project carries a brief"
-    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the project's proof command is "go test ./features/... -run {scenario}"
     And the run answers "1 scenarios (0 passed, 1 failed)" and exits 1
     And the operator checks step 1
     When the caller marks step "1.1" done with "the scenario is wrong, not the code"
@@ -3837,7 +3837,7 @@ Feature: A project holds a numbered path of steps
 
   Scenario: Stopping a step whose check failed is allowed
     Given a step taken, restated and approved, naming the scenario "a project carries a brief"
-    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the project's proof command is "go test ./features/... -run {scenario}"
     And the run answers "1 scenarios (0 passed, 1 failed)" and exits 1
     And the operator checks step 1
     When the operator stops step 1 with "the approach was wrong"
@@ -3860,7 +3860,7 @@ Feature: A project holds a numbered path of steps
 
   Scenario: Finishing a step after a passing check records an agreement
     Given a step taken, restated and approved, naming the scenario "a project carries a brief"
-    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the project's proof command is "go test ./features/... -run {scenario}"
     And krewe ran step 1's scenario, and it failed
     And the run answers "1 scenarios (1 passed)" and exits 0
     And the operator checks step 1
@@ -3871,7 +3871,7 @@ Feature: A project holds a numbered path of steps
 
   Scenario: Finishing a step after a failing check records a disagreement
     Given a step taken, restated and approved, naming the scenario "a project carries a brief"
-    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the project's proof command is "go test ./features/... -run {scenario}"
     And the run answers "1 scenarios (0 passed, 1 failed)" and exits 1
     And the operator checks step 1
     When the operator finishes step 1 with "the scenario is wrong, not the code"
@@ -3883,7 +3883,7 @@ Feature: A project holds a numbered path of steps
   # work is not there, and the operator stopped the work.
   Scenario: Stopping a step after a failing check records an agreement
     Given a step taken, restated and approved, naming the scenario "a project carries a brief"
-    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the project's proof command is "go test ./features/... -run {scenario}"
     And the run answers "1 scenarios (0 passed, 1 failed)" and exits 1
     And the operator checks step 1
     When the operator stops step 1 with "the approach was wrong"
@@ -3893,7 +3893,7 @@ Feature: A project holds a numbered path of steps
 
   Scenario: Stopping a step after a passing check records a disagreement
     Given a step taken, restated and approved, naming the scenario "a project carries a brief"
-    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the project's proof command is "go test ./features/... -run {scenario}"
     And the run answers "1 scenarios (1 passed)" and exits 0
     And the operator checks step 1
     When the operator stops step 1 with "the feature was dropped"
@@ -3905,7 +3905,7 @@ Feature: A project holds a numbered path of steps
   # disagreement and leaves the level alone: a level below zero is not a level.
   Scenario: A disagreement at level 0 leaves the level at 0
     Given a step taken, restated and approved, naming the scenario "a project carries a brief"
-    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the project's proof command is "go test ./features/... -run {scenario}"
     And the run answers "1 scenarios (0 passed, 1 failed)" and exits 1
     And the operator checks step 1
     When the operator finishes step 1 with "the scenario is wrong, not the code"
@@ -3917,7 +3917,7 @@ Feature: A project holds a numbered path of steps
   Scenario: The caller marks a step done after a failing check and reads the disagreement
     Given the system listens on an address the tool can dial
     And a step taken, restated and approved, naming the scenario "a project carries a brief"
-    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the project's proof command is "go test ./features/... -run {scenario}"
     And the run answers "1 scenarios (0 passed, 1 failed)" and exits 1
     And the operator checks step 1
     When the caller marks step "1.1" done with "the scenario is wrong, not the code"
@@ -3927,7 +3927,7 @@ Feature: A project holds a numbered path of steps
   Scenario: The caller marks a step done after a passing check and reads the agreement
     Given the system listens on an address the tool can dial
     And a step taken, restated and approved, naming the scenario "a project carries a brief"
-    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the project's proof command is "go test ./features/... -run {scenario}"
     And krewe ran step 1's scenario, and it failed
     And the run answers "1 scenarios (1 passed)" and exits 0
     And the operator checks step 1
@@ -3939,7 +3939,7 @@ Feature: A project holds a numbered path of steps
   Scenario: The caller stops a step after a failing check and reads the agreement
     Given the system listens on an address the tool can dial
     And a step taken, restated and approved, naming the scenario "a project carries a brief"
-    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the project's proof command is "go test ./features/... -run {scenario}"
     And the run answers "1 scenarios (0 passed, 1 failed)" and exits 1
     And the operator checks step 1
     When the caller stops step "1.1" with "the approach was wrong"
@@ -3963,7 +3963,7 @@ Feature: A project holds a numbered path of steps
   Scenario: Showing a step says who closed it and what the row records
     Given the system listens on an address the tool can dial
     And a step taken, restated and approved, naming the scenario "a project carries a brief"
-    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the project's proof command is "go test ./features/... -run {scenario}"
     And krewe ran step 1's scenario, and it failed
     And the run answers "1 scenarios (1 passed)" and exits 0
     And the operator checks step 1
@@ -3986,7 +3986,7 @@ Feature: A project holds a numbered path of steps
   Scenario: The path listing says who closed each step
     Given the system listens on an address the tool can dial
     And a step taken, restated and approved, naming the scenario "a project carries a brief"
-    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the project's proof command is "go test ./features/... -run {scenario}"
     And krewe ran step 1's scenario, and it failed
     And the run answers "1 scenarios (1 passed)" and exits 0
     And the operator checks step 1
@@ -3999,7 +3999,7 @@ Feature: A project holds a numbered path of steps
   # that: a step krewe closed was read by nobody.
   Scenario: A step the operator closed says so in the path a session reads
     Given a step taken, restated and approved, naming the scenario "a project carries a brief"
-    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the project's proof command is "go test ./features/... -run {scenario}"
     And krewe ran step 1's scenario, and it failed
     And the run answers "1 scenarios (1 passed)" and exits 0
     And the operator checks step 1
@@ -4013,7 +4013,7 @@ Feature: A project holds a numbered path of steps
   Scenario: The caller reads the trust record and it says the level, the run and both totals
     Given the system listens on an address the tool can dial
     And a step taken, restated and approved, naming the scenario "a project carries a brief"
-    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the project's proof command is "go test ./features/... -run {scenario}"
     And krewe ran step 1's scenario, and it failed
     And the run answers "1 scenarios (1 passed)" and exits 0
     And the operator checks step 1
@@ -4036,7 +4036,7 @@ Feature: A project holds a numbered path of steps
   Scenario: Reading the trust record records nothing
     Given the system listens on an address the tool can dial
     And a step taken, restated and approved, naming the scenario "a project carries a brief"
-    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the project's proof command is "go test ./features/... -run {scenario}"
     And krewe ran step 1's scenario, and it failed
     And the run answers "1 scenarios (1 passed)" and exits 0
     And the operator checks step 1
@@ -4173,7 +4173,7 @@ Feature: A project holds a numbered path of steps
 
   Scenario: Reopening a step krewe closed puts it back to taken and lowers the level by one
     Given krewe is at trust level 1, with step 2 taken, restated and approved, naming the scenario "a project carries a brief"
-    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the project's proof command is "go test ./features/... -run {scenario}"
     And krewe ran step 2's scenario, and it failed
     And the run answers "1 scenarios (1 passed)" and exits 0
     And the operator checks step 2
@@ -4189,7 +4189,7 @@ Feature: A project holds a numbered path of steps
   # are the ones the operator is taking back.
   Scenario: The reopen sets the run of agreements to zero and adds one to the disagreements
     Given krewe is at trust level 1, with step 2 taken, restated and approved, naming the scenario "a project carries a brief"
-    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the project's proof command is "go test ./features/... -run {scenario}"
     And krewe ran step 2's scenario, and it failed
     And the run answers "1 scenarios (1 passed)" and exits 0
     And the operator checks step 2
@@ -4250,7 +4250,7 @@ Feature: A project holds a numbered path of steps
   # the session prove itself again for something it did not do.
   Scenario: The reopened step keeps its session, its proof state and its restatement
     Given krewe is at trust level 1, with step 2 taken, restated and approved, naming the scenario "a project carries a brief"
-    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the project's proof command is "go test ./features/... -run {scenario}"
     And krewe ran step 2's scenario, and it failed
     And the run answers "1 scenarios (1 passed)" and exits 0
     And the operator checks step 2
@@ -4267,7 +4267,7 @@ Feature: A project holds a numbered path of steps
   Scenario: The caller reopens a step krewe closed and the path reads it as taken
     Given the system listens on an address the tool can dial
     And krewe is at trust level 1, with step 2 taken, restated and approved, naming the scenario "a project carries a brief"
-    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the project's proof command is "go test ./features/... -run {scenario}"
     And krewe ran step 2's scenario, and it failed
     And the run answers "1 scenarios (1 passed)" and exits 0
     And the operator checks step 2
@@ -4282,7 +4282,7 @@ Feature: A project holds a numbered path of steps
   Scenario: Why reads back through krewe step show while the step stays taken
     Given the system listens on an address the tool can dial
     And krewe is at trust level 1, with step 2 taken, restated and approved, naming the scenario "a project carries a brief"
-    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the project's proof command is "go test ./features/... -run {scenario}"
     And krewe ran step 2's scenario, and it failed
     And the run answers "1 scenarios (1 passed)" and exits 0
     And the operator checks step 2
@@ -4298,7 +4298,7 @@ Feature: A project holds a numbered path of steps
   Scenario: The output names the new trust level and says the run of agreements starts again
     Given the system listens on an address the tool can dial
     And krewe is at trust level 1, with step 2 taken, restated and approved, naming the scenario "a project carries a brief"
-    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the project's proof command is "go test ./features/... -run {scenario}"
     And krewe ran step 2's scenario, and it failed
     And the run answers "1 scenarios (1 passed)" and exits 0
     And the operator checks step 2
@@ -4444,7 +4444,7 @@ Feature: A project holds a numbered path of steps
 
   Scenario: At level 1, a check whose scenario passes closes the step and names krewe as the closer
     Given krewe is at trust level 1, with step 2 taken, restated and approved, naming the scenario "a project carries a brief"
-    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the project's proof command is "go test ./features/... -run {scenario}"
     And krewe ran step 2's scenario, and it failed
     And the run answers "1 scenarios (1 passed)" and exits 0
     When the operator checks step 2
@@ -4457,7 +4457,7 @@ Feature: A project holds a numbered path of steps
   # run did not pass, so the step stays taken and the operator reads why it did.
   Scenario: At level 1, a check whose scenario fails closes nothing, and the output says why
     Given krewe is at trust level 1, with step 2 taken, restated and approved, naming the scenario "a project carries a brief"
-    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the project's proof command is "go test ./features/... -run {scenario}"
     And the run answers "1 scenarios (0 passed, 1 failed)\nthe brief read back empty" and exits 1
     When the operator checks step 2
     Then krewe closed nothing
@@ -4470,7 +4470,7 @@ Feature: A project holds a numbered path of steps
   # every check did before the ladder had a second rung.
   Scenario: At level 0, a check whose scenario passes closes nothing
     Given a step taken, restated and approved, naming the scenario "a project carries a brief"
-    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the project's proof command is "go test ./features/... -run {scenario}"
     And the run answers "1 scenarios (1 passed)" and exits 0
     When the operator checks step 1
     Then krewe closed nothing
@@ -4482,7 +4482,7 @@ Feature: A project holds a numbered path of steps
   # something ran at all.
   Scenario: The result krewe wrote names the scenario and the count
     Given krewe is at trust level 1, with step 2 taken, restated and approved, naming the scenario "a project carries a brief"
-    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the project's proof command is "go test ./features/... -run {scenario}"
     And krewe ran step 2's scenario, and it failed
     And the run answers "2 scenarios (2 passed)" and exits 0
     When the operator checks step 2
@@ -4494,7 +4494,7 @@ Feature: A project holds a numbered path of steps
   # starts at zero because accepting the offer spent the agreements that bought the level.
   Scenario: A close by krewe adds one to the run and one to the agreements
     Given krewe is at trust level 1, with step 2 taken, restated and approved, naming the scenario "a project carries a brief"
-    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the project's proof command is "go test ./features/... -run {scenario}"
     And krewe ran step 2's scenario, and it failed
     And the run answers "1 scenarios (1 passed)" and exits 0
     And the run of agreements is 0
@@ -4509,7 +4509,7 @@ Feature: A project holds a numbered path of steps
   Scenario: The caller checks a step krewe closes and reads that krewe closed it
     Given the system listens on an address the tool can dial
     And krewe is at trust level 1, with step 2 taken, restated and approved, naming the scenario "a project carries a brief"
-    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the project's proof command is "go test ./features/... -run {scenario}"
     And krewe ran step 2's scenario, and it failed
     And the run answers "1 scenarios (1 passed)" and exits 0
     When the caller checks step "1.2"
@@ -4575,7 +4575,7 @@ Feature: A project holds a numbered path of steps
   Scenario: Showing a step that failed its check prints the last of the output
     Given the system listens on an address the tool can dial
     And a step taken, restated and approved, naming the scenario "a project carries a brief"
-    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the project's proof command is "go test ./features/... -run {scenario}"
     And the run answers "1 scenarios (0 passed, 1 failed)\nthe brief read back empty" and exits 1
     And the operator checks step 1
     When the caller shows step "1.1"
@@ -4600,7 +4600,7 @@ Feature: A project holds a numbered path of steps
   Scenario: Showing a step records nothing and runs no check
     Given the system listens on an address the tool can dial
     And a step taken, restated and approved, naming the scenario "a project carries a brief"
-    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the project's proof command is "go test ./features/... -run {scenario}"
     When the caller shows step "1.1"
     And the caller shows step "1.1"
     Then step 1 is still taken

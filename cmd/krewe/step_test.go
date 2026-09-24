@@ -50,7 +50,7 @@ func aStepToCheck(t *testing.T, answers sandbox.Reply) (
 	}
 	mustRun(t, client, "design", "set", flagFile, design)
 	mustRun(t, client, "design", "approve")
-	mustRun(t, client, "design", "proof", "go test ./features/... -run '{scenario}'")
+	mustRun(t, client, "design", "proof", "go test ./features/... -run {scenario}")
 	mustRun(t, client, "feature", "add", "the bills")
 
 	path := filepath.Join(t.TempDir(), "path.md")

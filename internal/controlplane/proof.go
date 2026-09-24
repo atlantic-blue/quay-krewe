@@ -13,6 +13,7 @@ import (
 
 	quaycrewv1 "github.com/atlantic-blue/quay-krewe/gen/quaycrew/v1"
 	"github.com/atlantic-blue/quay-krewe/internal/display"
+	"github.com/atlantic-blue/quay-krewe/internal/proofcommand"
 	"github.com/atlantic-blue/quay-krewe/internal/sandbox"
 	"github.com/atlantic-blue/quay-krewe/internal/store"
 	"google.golang.org/grpc/codes"
@@ -416,7 +417,7 @@ func (s *Server) runTheScenario(ctx context.Context, project string, held *quayc
 		return store.ProofResult{}, nil, err
 	}
 
-	command := strings.ReplaceAll(design.GetProofCommand(), scenarioToken, held.GetProofScenario())
+	command := proofcommand.Substitute(design.GetProofCommand(), held.GetProofScenario())
 	budget := time.Duration(design.GetProofTimeoutSeconds()) * time.Second
 	if budget <= 0 {
 		budget = time.Duration(store.DefaultProofTimeoutSeconds) * time.Second

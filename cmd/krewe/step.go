@@ -9,6 +9,7 @@ import (
 
 	quaycrewv1 "github.com/atlantic-blue/quay-krewe/gen/quaycrew/v1"
 	"github.com/atlantic-blue/quay-krewe/internal/display"
+	"github.com/atlantic-blue/quay-krewe/internal/proofcommand"
 	"github.com/atlantic-blue/quay-krewe/internal/workspace"
 )
 
@@ -469,7 +470,7 @@ func sayWhatWillRun(ctx context.Context, client quaycrewv1.ControlPlaneServiceCl
 		return
 	}
 	fmt.Fprintf(out, "the check runs:\n  %s\n",
-		strings.ReplaceAll(command, scenarioToken, read.GetStep().GetProofScenario()))
+		proofcommand.Substitute(command, read.GetStep().GetProofScenario()))
 	fmt.Fprintf(out, "\nthis waits for the run, and starts no model\n")
 	sayWhatTheWaitCosts(ctx, client, project, read.GetStep(), out)
 }

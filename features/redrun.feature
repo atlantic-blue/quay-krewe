@@ -37,7 +37,7 @@ Feature: A step cannot finish without a red run before its green run
   # The whole feature in one scenario. The code passes its tests on the first run, so nothing was ever
   # seen to fail, and the word done is refused.
   Scenario: A step with no red run cannot finish
-    Given the project's proof command is "go test ./features/... -run '{scenario}'"
+    Given the project's proof command is "go test ./features/... -run {scenario}"
     And the operator took step 1
     And krewe ran step 1's scenario, and it passed
     When the operator finishes step 1 with "shipped"
@@ -47,7 +47,7 @@ Feature: A step cannot finish without a red run before its green run
     And step 1 is still taken
 
   Scenario: A step whose tests were seen to fail first finishes
-    Given the project's proof command is "go test ./features/... -run '{scenario}'"
+    Given the project's proof command is "go test ./features/... -run {scenario}"
     And the operator took step 1
     And krewe ran step 1's scenario, and it failed
     And krewe ran step 1's scenario, and it passed
@@ -57,7 +57,7 @@ Feature: A step cannot finish without a red run before its green run
   # Zero scenarios never passes, and zero scenarios never fails either. A run that executed nothing
   # says nothing about the tests.
   Scenario: A run that failed with no scenario in it is not a red run
-    Given the project's proof command is "go test ./features/... -run '{scenario}'"
+    Given the project's proof command is "go test ./features/... -run {scenario}"
     And the operator took step 1
     And krewe ran step 1's scenario, and it failed with no scenario in it
     And krewe ran step 1's scenario, and it passed
@@ -69,7 +69,7 @@ Feature: A step cannot finish without a red run before its green run
   # The other refusal, so the operator reads the move they are on rather than one sentence for two
   # states.
   Scenario: A step nobody checked is told that nothing ran
-    Given the project's proof command is "go test ./features/... -run '{scenario}'"
+    Given the project's proof command is "go test ./features/... -run {scenario}"
     And the operator took step 1
     When the operator finishes step 1 with "shipped"
     Then the control plane refuses it as the wrong state
@@ -77,7 +77,7 @@ Feature: A step cannot finish without a red run before its green run
     And step 1 is still taken
 
   Scenario: Stopping a step needs no red run
-    Given the project's proof command is "go test ./features/... -run '{scenario}'"
+    Given the project's proof command is "go test ./features/... -run {scenario}"
     And the operator took step 1
     When the operator stops step 1 with "the approach was wrong"
     Then step 1 is still stopped
@@ -85,7 +85,7 @@ Feature: A step cannot finish without a red run before its green run
   # A second attempt proves itself again. A red run carried over from the attempt that stopped would
   # let the next session write the code first.
   Scenario: A step taken again must see its tests fail again
-    Given the project's proof command is "go test ./features/... -run '{scenario}'"
+    Given the project's proof command is "go test ./features/... -run {scenario}"
     And the operator took step 1
     And krewe ran step 1's scenario, and it failed
     And krewe ran step 1's scenario, and it passed
@@ -105,7 +105,7 @@ Feature: A step cannot finish without a red run before its green run
   # this suite holds its rows in memory and runs no migration, so a step the path wrote and nobody
   # took is the same row an upgrade leaves behind.
   Scenario: A step taken before the red run rule finishes without a red run
-    Given the project's proof command is "go test ./features/... -run '{scenario}'"
+    Given the project's proof command is "go test ./features/... -run {scenario}"
     And the operator took step 1
     And the path holds step 2, whose row carries no red run requirement
     And krewe ran step 2's scenario, and it passed
@@ -115,7 +115,7 @@ Feature: A step cannot finish without a red run before its green run
   # The other half of the rule, read off the same path: step 1 was taken under it, so it is bound
   # whatever step 2 beside it is allowed to do.
   Scenario: A step taken under the rule is bound while a step beside it is not
-    Given the project's proof command is "go test ./features/... -run '{scenario}'"
+    Given the project's proof command is "go test ./features/... -run {scenario}"
     And the operator took step 1
     And the path holds step 2, whose row carries no red run requirement
     And krewe ran step 1's scenario, and it passed
@@ -140,7 +140,7 @@ Feature: A step cannot finish without a red run before its green run
   # on, and it turns all three on together: the restatement in the take text, the check, and the run
   # that must be seen to fail.
   Scenario: A step in a project that proves its steps is refused until something checked it
-    Given the project's proof command is "go test ./features/... -run '{scenario}'"
+    Given the project's proof command is "go test ./features/... -run {scenario}"
     When the operator takes step 1
     Then the step text carries "Write no code. Change no file in the repository."
     When the operator finishes step 1 with "shipped"

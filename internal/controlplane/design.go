@@ -18,6 +18,7 @@ import (
 	quaycrewv1 "github.com/atlantic-blue/quay-krewe/gen/quaycrew/v1"
 	"github.com/atlantic-blue/quay-krewe/internal/contextsize"
 	"github.com/atlantic-blue/quay-krewe/internal/display"
+	"github.com/atlantic-blue/quay-krewe/internal/proofcommand"
 	"github.com/atlantic-blue/quay-krewe/internal/sandbox"
 	"github.com/atlantic-blue/quay-krewe/internal/store"
 	"google.golang.org/grpc/codes"
@@ -188,8 +189,9 @@ func (s *Server) SetStepsInFlightCap(ctx context.Context, req *quaycrewv1.SetSte
 }
 
 // scenarioToken is what a proof command carries where the name of one scenario goes. The run puts the
-// step's scenario there, so a command without it runs whatever the runner finds.
-const scenarioToken = "{scenario}"
+// step's scenario there, so a command without it runs whatever the runner finds. The value and the
+// quoting both live in one package, which the run, the preview and the printout all read.
+const scenarioToken = proofcommand.Token
 
 // proofTimeoutBounds are the shortest and longest budget a person may set for one proof run.
 //
@@ -226,6 +228,12 @@ func (s *Server) SetProofCommand(ctx context.Context, req *quaycrewv1.SetProofCo
 		return nil, status.Errorf(codes.InvalidArgument,
 			"%q: this command runs everything, so it proves nothing about one step. "+
 				"Put %s where the scenario name goes", command, scenarioToken)
+	}
+	if command := req.GetCommand(); proofcommand.TokenInsideQuotes(command) {
+		return nil, status.Errorf(codes.InvalidArgument,
+			"%q: krewe quotes the scenario name itself, so a token inside quotes puts the name "+
+				"inside a second pair, and the shell reads the rest of the name as code. "+
+				"Write it as: %s", command, proofcommand.TokenOutsideQuotes(command))
 	}
 	if err := checkProofPattern(req.GetCountPattern()); err != nil {
 		return nil, err

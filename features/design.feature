@@ -480,9 +480,9 @@ Feature: A project carries what it is for and what was designed
       After
       0
       """
-    When the caller sets the project's proof command to "go test ./features/... -run '{scenario}'"
+    When the caller sets the project's proof command to "go test ./features/... -run {scenario}"
     And the caller reads the project's proof command
-    Then standard output carries "go test ./features/... -run '{scenario}'"
+    Then standard output carries "go test ./features/... -run {scenario}"
     And standard output carries "go test ./features/... -run 'a project carries a brief'"
     And standard output carries "([0-9]+) scenarios"
     And standard output carries "900 seconds"
@@ -499,7 +499,7 @@ Feature: A project carries what it is for and what was designed
     And the project proves nothing
 
   Scenario: A count pattern that does not compile is refused, naming the fault
-    When the operator sets the project's proof command to "go test -run '{scenario}'" counting with "([0-9]+ scenarios"
+    When the operator sets the project's proof command to "go test -run {scenario}" counting with "([0-9]+ scenarios"
     Then the control plane refuses it as invalid
     And the refusal suggests "missing closing )"
     And the project proves nothing
@@ -507,7 +507,7 @@ Feature: A project carries what it is for and what was designed
   # A pattern that compiles and captures nothing fails later and quietly: the run matches, reads no
   # number, and reports a run that proved nothing.
   Scenario: A count pattern with no group is refused
-    When the operator sets the project's proof command to "go test -run '{scenario}'" counting with "[0-9]+ scenarios"
+    When the operator sets the project's proof command to "go test -run {scenario}" counting with "[0-9]+ scenarios"
     Then the control plane refuses it as invalid
     And the refusal suggests "needs one group around the number"
     And the project proves nothing
@@ -525,15 +525,15 @@ Feature: A project carries what it is for and what was designed
   # The gate is only real while nothing inside a sandbox can pass it. A session that could set the
   # command that checks its own work would choose what proves it.
   Scenario: A session cannot set the proof command
-    Given the project's proof command is "go test ./features/... -run '{scenario}'"
+    Given the project's proof command is "go test ./features/... -run {scenario}"
     When the driver asks to set the project's proof command
     Then the driver is refused, told the call is the operator's to make
-    And the project proves one scenario with "go test ./features/... -run '{scenario}'"
+    And the project proves one scenario with "go test ./features/... -run {scenario}"
 
   # An empty value is a caller saying nothing about that setting, so the command is set on its own
   # without losing the pattern the project already had.
   Scenario: An empty pattern leaves the pattern that was already set
-    Given the project's proof command is "go test -run '{scenario}'" counting with "ran ([0-9]+)"
+    Given the project's proof command is "go test -run {scenario}" counting with "ran ([0-9]+)"
     When the operator sets the project's proof command to "make one {scenario}"
     And the operator reads the project's design
     Then the project proves one scenario with "make one {scenario}"
@@ -542,7 +542,7 @@ Feature: A project carries what it is for and what was designed
   Scenario: Setting the proof command leaves the approval where it is
     Given the project's design is "# Bills\n"
     And the operator approved the project's design
-    When the operator sets the project's proof command to "go test -run '{scenario}'"
+    When the operator sets the project's proof command to "go test -run {scenario}"
     And the operator reads the project's design
     Then the design is approved
 

@@ -183,7 +183,7 @@ func aTakenStep(t *testing.T) (*controlplane.Server, store.Store, string) {
 	// these gates: krewe runs the command to reach a verdict, so a project that says nothing has
 	// nothing for krewe to run, and its steps close on the operator's word alone.
 	if _, err := s.SetProofCommand(ctx, &quaycrewv1.SetProofCommandRequest{
-		Project: projectID, Command: "go test ./features/... -run '{scenario}'",
+		Project: projectID, Command: "go test ./features/... -run {scenario}",
 	}); err != nil {
 		t.Fatalf("SetProofCommand: %v", err)
 	}
