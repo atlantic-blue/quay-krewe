@@ -212,7 +212,10 @@ var takenFlags = map[string]map[string]bool{
 	//
 	// The pattern and the budget of a proof run are flags because the command is the thing a person
 	// types, and two optional values after it would be two positions nobody remembers the order of.
-	"design": {flagFile: true, flagPattern: true, flagTimeout: true},
+	//
+	// Whether design open prints the address or opens the page. It says what the word does rather
+	// than where anything is, and the address still carries the where.
+	"design": {flagFile: true, flagPattern: true, flagTimeout: true, flagPrint: true},
 	// A stage's prose and the artifact beside it are documents, and each is named as a path for the
 	// reason a design body is: the file is the thing being kept. The address is where the artifact
 	// was published, so an operator can open it rather than read the json.

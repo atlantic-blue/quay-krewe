@@ -71,11 +71,14 @@ func runStageShow(ctx context.Context, client quaycrewv1.ControlPlaneServiceClie
 	fmt.Fprintf(out, "the six design stages of %s\n\n", located.Path.Project)
 	drawStages(out, held)
 	next := stageToWriteNext(held)
-	if next == "" {
+	if next != "" {
+		fmt.Fprintf(out, "\n%s\n", stageAdvice(next, stageNamed(held, next), typed))
+	} else {
 		fmt.Fprintf(out, "\nevery stage carries your word, so the project is ready to build\n")
-		return nil
 	}
-	fmt.Fprintf(out, "\n%s\n", stageAdvice(next, stageNamed(held, next), typed))
+	// Last, under the advice. The listing says where the project is up to in six words, and the
+	// prose behind those words is read on the page, so the address is the next thing a person wants.
+	fmt.Fprintln(out, siteAddressOf(located.Path))
 	return nil
 }
 
