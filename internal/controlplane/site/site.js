@@ -119,6 +119,85 @@ function bodyClass(map) {
   return map ? "body plays" : "body";
 }
 
+// STAGE_WITH_TOKENS is the one stage whose artifact is a design system. The others carry screens or
+// carry their pictures inside their own text.
+var STAGE_WITH_TOKENS = "design_system";
+
+// The four groups of a design system, in the order the page draws them, and what each one is drawn
+// with: a colour as a patch of that colour, a font as a line set in it, a radius as a corner it
+// rounds, a space as a bar of that width. The order is held here rather than taken from the artifact,
+// so two reads of one design system agree.
+var TOKEN_GROUPS = [
+  { group: "colour", title: "Colour", drawnBy: "background" },
+  { group: "font", title: "Font", drawnBy: "font-family" },
+  { group: "radius", title: "Radius", drawnBy: "border-radius" },
+  { group: "space", title: "Space", drawnBy: "width" }
+];
+
+// A value reaches a style attribute only when it is written the way that group's values are written.
+// A value carrying a quote closes the attribute it sits in, and then the rest of the element is
+// whatever that value says. So a value none of these matches is drawn as text and as nothing else.
+var TOKEN_SHAPES = {
+  colour: /^(#([0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})|(rgb|hsl)\([0-9.,%\s]+\))$/,
+  font: /^[A-Za-z0-9 ,.-]+$/,
+  radius: /^[0-9.]+(px|rem|em|%)$/,
+  space: /^[0-9.]+(px|rem|em|%)$/
+};
+
+// FONT_SAMPLE is the line a font is drawn in. A font is judged on words, so it is a sentence rather
+// than the name of the font again.
+var FONT_SAMPLE = "The rent moves on the first of the month";
+
+// tokensOf reads the tokens out of a stage's artifact.
+//
+// The artifact travels as a string, so it is parsed here. The skill pins neither shape: the four
+// groups may sit under a tokens key, the way the flow map writes them, or at the top of the document.
+// An artifact nothing can read answers nothing, and the stage then reads as it reads without one.
+function tokensOf(row) {
+  if (!row || !row.artifact) { return null; }
+  var doc;
+  try { doc = JSON.parse(row.artifact); } catch (err) { return null; }
+  if (!doc || typeof doc !== "object" || Array.isArray(doc)) { return null; }
+  var groups = (doc.tokens && typeof doc.tokens === "object") ? doc.tokens : doc;
+  return (groups && typeof groups === "object" && !Array.isArray(groups)) ? groups : null;
+}
+
+// renderToken draws one token: what it is, its name, and its value.
+//
+// A value this page cannot draw still reaches the operator as its name and its value, because a token
+// left off the page reads as a design system with one colour fewer in it.
+function renderToken(group, name, value, drawnBy) {
+  var text = String(value === null || value === undefined ? "" : value);
+  var shape = TOKEN_SHAPES[group];
+  var show = shape && shape.test(text)
+    ? '<span class="show" style="' + drawnBy + ":" + esc(text) + '">' +
+      (group === "font" ? esc(FONT_SAMPLE) : "") + "</span>"
+    : "";
+  return '<li class="token" data-group="' + esc(group) + '" data-token="' + esc(name) + '">' + show +
+    '<span class="name">' + esc(name) + "</span>" +
+    '<code class="value">' + esc(text) + "</code></li>";
+}
+
+// renderTokens draws the tokens of a design system, group by group, and the names inside a group in
+// one order. It is how the stage is agreed to: an operator approves a colour by seeing the colour.
+function renderTokens(row) {
+  var groups = tokensOf(row);
+  if (!groups) { return ""; }
+  var sections = [];
+  TOKEN_GROUPS.forEach(function (held) {
+    var group = groups[held.group];
+    if (!group || typeof group !== "object" || Array.isArray(group)) { return; }
+    var names = Object.keys(group).sort();
+    if (!names.length) { return; }
+    var drawn = names.map(function (name) {
+      return renderToken(held.group, name, group[name], held.drawnBy);
+    });
+    sections.push('<h2 class="group">' + esc(held.title) + "</h2>" +
+      '<ul class="tokens" data-group="' + esc(held.group) + '">' + drawn.join("") + "</ul>");
+  });
+  return sections.length ? '<section class="system">' + sections.join("") + "</section>" : "";
+}
+
 // renderBody draws what one entry shows when it is chosen. A body is markdown, so the operator reads
 // a document: its headings, its lists, its tables and its code, rather than the marks that make them.
 function renderBody(answer, entry) {
@@ -134,12 +213,13 @@ function renderBody(answer, entry) {
   var row = rowsByStage(answer)[entry];
   var state = stageState(row);
   var map = renderFlowMap(entry, row);
+  var tokens = entry === STAGE_WITH_TOKENS ? renderTokens(row) : "";
   if (!row || !row.body) {
     return '<article class="' + bodyClass(map) + '" data-entry="' + esc(entry) + '">' + head +
-      '<p class="empty">This stage is ' + esc(state) + ".</p>" + map + "</article>";
+      '<p class="empty">This stage is ' + esc(state) + ".</p>" + map + tokens + "</article>";
   }
   return '<article class="' + bodyClass(map) + '" data-entry="' + esc(entry) + '">' + head +
-    '<p class="state">' + esc(state) + " at version " + esc(row.version) + "</p>" + map +
+    '<p class="state">' + esc(state) + " at version " + esc(row.version) + "</p>" + map + tokens +
     renderDocument(row.body_html, row.body) + "</article>";
 }
 

@@ -70,3 +70,29 @@ button{font:inherit;color:inherit;cursor:pointer}
 @media (max-width:720px){.app{grid-template-columns:1fr;grid-template-rows:auto 1fr}
   .side{border-right:0;border-bottom:1px solid var(--line)}
   .menu{flex-direction:row;flex-wrap:wrap}}
+
+/* The tokens of a design system. A colour is agreed to when a person sees it, so each token draws
+   what it is beside its name and its value: the colour itself, a line set in the font, the corner a
+   radius rounds, and the room a space leaves. A value the page cannot draw keeps its name and its
+   value and draws nothing. */
+.system{margin:0 0 20px}
+.system .group{margin:20px 0 8px;font-size:11px;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--muted);font-weight:650}
+.system .group:first-child{margin-top:0}
+.tokens{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+.token{display:grid;grid-template-columns:132px 1fr auto;align-items:center;gap:6px 14px;
+  border:1px solid var(--line);border-radius:10px;background:var(--panel);padding:10px 14px;
+  min-height:44px}
+.token .show{justify-self:start}
+.token .name{font-weight:650}
+.token .value{font-family:var(--mono);font-size:12.5px;color:var(--muted)}
+.token[data-group="colour"] .show{width:48px;height:24px;border:1px solid var(--line);border-radius:6px}
+.token[data-group="radius"] .show{width:72px;height:48px;background:var(--panel2);
+  border:1px solid var(--line)}
+.token[data-group="space"] .show{height:28px;min-width:2px;background:var(--accent);border-radius:2px}
+
+/* A font is read as a line of words, so its sample takes the whole width and its name sits under it.
+   The other three groups draw something small enough to stand in a column. */
+.token[data-group="font"]{grid-template-columns:1fr auto}
+.token[data-group="font"] .show{grid-area:1 / 1 / 2 / 3;justify-self:stretch;font-size:15px;
+  line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
