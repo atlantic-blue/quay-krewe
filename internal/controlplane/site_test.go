@@ -272,9 +272,10 @@ func TestTheSiteRefusesANameTwoWorkspacesShare(t *testing.T) {
 	}
 }
 
-// A stage written again. The version moves and the word is gone, because the operator agreed to a
-// text that has just changed. Both numbers are on the row for that reason, and a document that
-// answered one of them twice would draw every written stage as an approved one.
+// A stage written again. The version moves, so the word no longer stands, and the version it was
+// given to stays. Both numbers travel for that reason: a document that answered one of them twice
+// would draw every written stage as an approved one, and one that dropped the second could not tell
+// a stage nobody agreed to from a stage that changed after the word was given.
 func TestTheSiteAnswersAStageWrittenAgainWithoutTheWordItHad(t *testing.T) {
 	s := newServer(&model.FakeRunner{})
 	_, projectID := newProject(t, s)
@@ -300,8 +301,8 @@ func TestTheSiteAnswersAStageWrittenAgainWithoutTheWordItHad(t *testing.T) {
 	if held.Version != 2 {
 		t.Errorf("the discovery stage is at version %d, want 2", held.Version)
 	}
-	if held.ApprovedVersion != 0 {
-		t.Errorf("the discovery stage is approved at version %d, and the write took that word away",
+	if held.ApprovedVersion != 1 {
+		t.Errorf("the discovery stage is approved at version %d, want the version the word was given to",
 			held.ApprovedVersion)
 	}
 	if held.Body != "four bills, and three of them move" {

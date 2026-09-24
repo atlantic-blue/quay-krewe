@@ -10,7 +10,8 @@ Feature: A project is designed in stages before it is built
 
   Approval is a statement about one text. A write to a stage takes the word off that stage, and off
   every stage after it, because those were agreed under the text that just changed. The words stay:
-  only the word on them is gone.
+  only the word on them is gone. The stage that was written keeps the version the word was given to,
+  so a reader can tell it from a stage nobody ever agreed to.
 
   Two of the six describe a structure. The data model and the architecture are refused until the
   body holds a diagram, written as a fenced block marked mermaid, so the operator approves a picture
@@ -82,11 +83,15 @@ Feature: A project is designed in stages before it is built
     Then the project holds 6 design stages, in order
     And every design stage is approved
 
+  # The text moved under the word, so the word stops standing. The version it was given to stays on
+  # the stage, because a stage that changed after it was agreed is a different thing from a stage
+  # nobody ever agreed to, and the page that lists the six says which of the two this is.
   Scenario: Rewriting a stage takes its own approval away
     Given the "discovery" design stage is written and approved
     When the operator writes the "discovery" design stage as "what we asked, the second time"
     And the operator reads the project's design stages
     Then the "discovery" design stage is not approved
+    And the "discovery" design stage reads approved at version 1, holding version 2
 
   # Every stage after the one that changed was agreed under a text that has just moved, so the word
   # on each of them is gone and the write says which ones by name.

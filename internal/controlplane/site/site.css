@@ -1,0 +1,39 @@
+/* The page's furniture. One palette, one accent, and the type the reader's own system carries, so a
+   design being read here is never mistaken for the design of the page around it. */
+:root{
+  --ground:#eceae6; --panel:#fbfaf8; --panel2:#f2f0ec; --ink:#1b1b19; --muted:#63605a; --line:#e0dcd6;
+  --accent:#2f5d8a;
+  --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:ui-monospace,"SF Mono",Menlo,monospace;
+}
+@media (prefers-color-scheme:dark){:root{color-scheme:dark;
+  --ground:#151514; --panel:#1f1e1c; --panel2:#272522; --ink:#f2f0ec; --muted:#b3aea6; --line:#37342f;
+  --accent:#8fbde8;}}
+*,*::before,*::after{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--ground);color:var(--ink);font-family:var(--sans);font-size:14px}
+button{font:inherit;color:inherit;cursor:pointer}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+.app{display:grid;grid-template-columns:280px 1fr;height:100%}
+.side{background:var(--panel);border-right:1px solid var(--line);overflow:auto;padding:16px}
+.menu{display:flex;flex-direction:column;gap:2px}
+
+.entry{display:grid;grid-template-columns:1fr auto;align-items:baseline;gap:4px 10px;
+  text-align:left;border:1px solid transparent;background:none;border-radius:10px;padding:10px 12px}
+.entry:hover{background:var(--panel2)}
+.entry[aria-current="true"]{background:var(--panel2);border-color:var(--line)}
+.entry .name{font-weight:650;font-size:13.5px}
+.entry .state{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);white-space:nowrap}
+.entry[data-state="approved"] .state{color:var(--accent)}
+
+.stage{overflow:auto;padding:28px 32px}
+.body{max-width:72ch}
+.body h1{margin:0 0 4px;font-size:20px;font-weight:750;letter-spacing:-.02em}
+.body .brief,.body .state,.body .empty{margin:0 0 18px;color:var(--muted)}
+.body .state{font-size:11px;letter-spacing:.06em;text-transform:uppercase}
+.body .text{font-family:var(--mono);font-size:13px;line-height:1.55;white-space:pre-wrap;margin:0}
+
+@media (max-width:720px){.app{grid-template-columns:1fr;grid-template-rows:auto 1fr}
+  .side{border-right:0;border-bottom:1px solid var(--line)}
+  .menu{flex-direction:row;flex-wrap:wrap}}

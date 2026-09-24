@@ -2216,9 +2216,9 @@ func (p *Postgres) SetDesignStage(ctx context.Context, project string, write Des
 			body = excluded.body,
 			artifact = excluded.artifact,
 			artifact_url = excluded.artifact_url,
+			-- The version rises, so approved_version no longer matches it and the word stops standing.
+			-- The number itself stays, for the reason the memory store keeps it.
 			version = s.version + 1,
-			approved_version = null,
-			approved_at = null,
 			updated_at = now()
 		returning `+designStageColumns,
 		NewID(), project, write.Stage, position, write.Body, write.Artifact, write.ArtifactURL))

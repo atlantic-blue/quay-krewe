@@ -42,16 +42,16 @@ Feature: A project's stages are read over http
     Then the site answers 404
     And the answer says "no-such-project"
 
-  # A stage written again. The version moves and the word is gone, because the operator agreed to a
-  # text that has just changed. Both numbers travel, so the page can tell a written stage from an
-  # approved one without asking a second question.
+  # A stage written again. The version moves, so the word no longer stands, and the version it was
+  # given to stays on the row. Both numbers travel, so the page can say which of the three a stage is:
+  # agreed, written and never agreed, or changed after the word was given.
   Scenario: A stage written again comes back without the word it had
     Given the "discovery" design stage is written and approved
     And the operator writes the "discovery" design stage as "four bills, and three of them move"
     And the site is served on a local address
     When the operator reads the site at "/p/acme/house-bills/stages.json"
     Then the site answers 200
-    And the answer carries the "discovery" stage at version 2, approved at version 0
+    And the answer carries the "discovery" stage at version 2, approved at version 1
     And the answer says the "discovery" stage reads "four bills, and three of them move"
 
   # The workspace, the project and the stage each name themselves when they are the part that is
