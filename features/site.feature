@@ -207,3 +207,16 @@ Feature: A project's stages are read over http
     When the operator opens the flow map of the "discovery" stage
     Then the site answers 404
     And the answer says "carries no artifact"
+
+  # The design system is the stage nobody approves by reading it. A colour is agreed to when a person
+  # sees it, so the page draws every token the stage names: the colour itself, a line set in the font,
+  # the corner a radius rounds and the room a space leaves, each beside its name and its value. A
+  # palette of the page's own would show the operator a design system nobody wrote.
+  Scenario: The design system stage draws a swatch for every colour it names
+    Given the stages up to the design system are approved, naming the project's colours and fonts
+    And the site is served on a local address
+    When the operator reads the site at "/p/acme/house-bills/stages.json"
+    Then the site answers 200
+    And the design system stage draws a swatch for every colour the project names, with its value
+    And the design system stage draws every font, radius and space the project names, with its value
+    And the design system stage draws no colour and no font the project does not name

@@ -130,3 +130,19 @@ func between(text, open, ending string) (string, error) {
 	}
 	return rest[:to], nil
 }
+
+// Fixture reads one document out of the site's own testdata directory.
+//
+// The path is found rather than written down, for the reason Dir is: a test of this package and a
+// scenario in features run from two different working directories.
+func Fixture(name string) (string, error) {
+	dir, err := Dir()
+	if err != nil {
+		return "", err
+	}
+	body, err := os.ReadFile(filepath.Join(dir, "testdata", name)) //nolint:gosec // the name is a fixture, named by a test
+	if err != nil {
+		return "", fmt.Errorf("site: reading the fixture %s: %w", name, err)
+	}
+	return string(body), nil
+}
