@@ -1722,6 +1722,78 @@ Feature: A project holds a numbered path of steps
     And the step text carries "Do not run krewe step check yourself"
     And the step text carries "Do not merge it. Report the address of the pull request."
 
+  # Where a step session builds. The check reads the working tree the git skill names, so a session
+  # that clones anywhere else leaves krewe nothing to read and its own work uncheckable. Two things
+  # took it elsewhere: a memory note that sends every session to /tmp, and the runtime putting the
+  # shell back in the start folder after each command, so a session told to move there does not stay.
+  #
+  # So krewe makes the tree before the session's first command, and names it as a folder the session
+  # may work in, which is what keeps the shell there.
+  Scenario: A session that takes a step finds its working tree made and keeps its folder there
+    Given the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the project works in "atlantic-blue/bills"
+    And the session's sandbox holds no checkout yet
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+      """
+    When the operator takes step 1
+    Then the session's working tree holds the project's repository
+    And the session may work in its own working tree
+    And the tree was made before the session was asked anything
+
+  # A later exec finds the tree the first one made. Nothing is cloned again, nothing is fetched again,
+  # and the branch the session works on is not touched, because a second add of one path is refused by
+  # git and would take the tree away.
+  Scenario: An exec that finds the working tree there runs no git command
+    Given the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the project works in "atlantic-blue/bills"
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+      """
+    When the operator takes step 1
+    Then no git command ran in the session's sandbox
+    And the session may work in its own working tree
+
+  # The tree is for the check, so a session nobody checks is left as it was, in the same project and
+  # with the same repository. Both sessions are here because the difference between them is the whole
+  # rule: an ordinary session handed a folder to work in is a session building in somebody else's tree.
+  Scenario: Only the session holding the step is given a folder to work in
+    Given the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the project works in "atlantic-blue/bills"
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+      """
+    When the operator takes step 1
+    And the operator dispatches "hello" to the project
+    Then the session that took the step may work in its own working tree
+    And the session that answered the dispatch was given no folder to work in
+
+  # A tree that cannot be made stops the exec. The alternative is a session that builds in its start
+  # folder, replies that the work is done, and leaves krewe reading a directory with nothing in it.
+  Scenario: A working tree that cannot be made fails the exec and starts no model
+    Given the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the project works in "atlantic-blue/bills"
+    And the session's sandbox holds no checkout yet
+    And adding the working tree fails, saying "fatal: could not create work tree"
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+      """
+    When the operator takes step 1
+    Then the exec failed, naming the command and "fatal: could not create work tree"
+    And no model was asked anything
+
   # A label with nothing under it is text the model has to read for nothing.
   Scenario: A step with no proof produces text with no proof label in it
     Given the project's design is "# Bills\n"

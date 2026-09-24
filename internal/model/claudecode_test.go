@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"slices"
 	"strings"
 	"testing"
 
@@ -484,4 +485,52 @@ func TestARealKilledProcessIsRecognised(t *testing.T) {
 	if wasKilled(exited{status: 1}) {
 		t.Fatal("an ordinary failure is reported as a kill")
 	}
+}
+
+// The folders an exec may work in. The runtime puts the shell back in the start folder after every
+// command unless the folder it was moved to is one of these, so a session told to build somewhere else
+// runs its second command in the wrong place. The system names the folder rather than moving the start
+// folder, because a conversation and its memory are filed under the start folder and moving it loses
+// both.
+func TestBuildArgsNamesEveryFolderTheExecMayWorkIn(t *testing.T) {
+	got := buildArgs(Request{Text: "go on", AddDirs: []string{"/home/agent/shared/worktrees/abc"}}, "")
+	want := []string{"--add-dir", "/home/agent/shared/worktrees/abc"}
+	if !carriesInOrder(got, want) {
+		t.Fatalf("the exec is %q, want it to carry %q together", strings.Join(got, " "),
+			strings.Join(want, " "))
+	}
+}
+
+// Two folders are two flags. The runtime takes one directory per flag, so a pair joined into one
+// argument is a path that does not exist and an exec that refuses.
+func TestBuildArgsNamesEachFolderWithItsOwnFlag(t *testing.T) {
+	got := strings.Join(buildArgs(Request{
+		Text: "go on", AddDirs: []string{"/home/agent/shared/worktrees/abc", "/home/agent/shared/repos"},
+	}, ""), " ")
+	want := "--add-dir /home/agent/shared/worktrees/abc --add-dir /home/agent/shared/repos"
+	if !strings.Contains(got, want) {
+		t.Fatalf("the exec is %q, want it to carry %q", got, want)
+	}
+}
+
+// An exec that names no folder passes the flag at all, because a flag with nothing after it, or with
+// an empty path after it, fails the exec before the model reads a word of the request.
+func TestBuildArgsLeavesOutTheFolderFlagWhenThereIsNone(t *testing.T) {
+	named := strings.Join(buildArgs(Request{Text: "go on", AddDirs: []string{"/home/agent/shared"}}, ""), " ")
+	if !strings.Contains(named, "--add-dir") {
+		t.Fatalf("an exec naming a folder is %q, so leaving the flag out says nothing yet", named)
+	}
+	if got := strings.Join(buildArgs(Request{Text: "go on"}, ""), " "); strings.Contains(got, "--add-dir") {
+		t.Fatalf("the exec is %q, and it names a folder nobody asked for", got)
+	}
+}
+
+// carriesInOrder says whether these arguments appear next to each other, in this order.
+func carriesInOrder(args, want []string) bool {
+	for at := 0; at+len(want) <= len(args); at++ {
+		if slices.Equal(args[at:at+len(want)], want) {
+			return true
+		}
+	}
+	return false
 }
