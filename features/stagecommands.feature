@@ -84,3 +84,25 @@ Feature: The operator writes and approves the design stages from the command lin
     Then the driver is refused, told the call is the operator's to make
     And the operator reads the project's design stages
     And the "discovery" design stage is not approved
+
+  # The design is on a page the control plane serves, and the address of it holds two names and a
+  # port. Nobody types that. One word prints it, and a second run opens it.
+  Scenario: krewe design open prints the address of the project's design
+    Given a machine where opening a page leaves a mark
+    When the caller types "design open acme/house-bills --print" through the tool
+    Then the command succeeds
+    And standard output says "http://127.0.0.1:50052/p/acme/house-bills/"
+    And nothing opened a page
+
+  Scenario: krewe design open opens the page it prints
+    Given a machine where opening a page leaves a mark
+    When the caller types "design open acme/house-bills" through the tool
+    Then the command succeeds
+    And the page that opened is "http://127.0.0.1:50052/p/acme/house-bills/"
+
+  # The listing is where an operator looks first, so the address is under it. A person who reads the
+  # six states then wants to look at the prose behind them.
+  Scenario: The stage listing ends with the address of the design
+    When the caller types "stage show acme/house-bills" through the tool
+    Then the command succeeds
+    And the last line of standard output is "http://127.0.0.1:50052/p/acme/house-bills/"
