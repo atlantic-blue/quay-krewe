@@ -6,12 +6,14 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"runtime"
 	"strconv"
 	"strings"
 
 	quaycrewv1 "github.com/atlantic-blue/quay-krewe/gen/quaycrew/v1"
 	"github.com/atlantic-blue/quay-krewe/internal/console"
 	"github.com/atlantic-blue/quay-krewe/internal/contextsize"
+	"github.com/atlantic-blue/quay-krewe/internal/controlplane"
 	"github.com/atlantic-blue/quay-krewe/internal/sandbox"
 	"github.com/atlantic-blue/quay-krewe/internal/workspace"
 )
@@ -34,10 +36,35 @@ const flagPrint = "--print"
 
 // openPage puts an address in front of the operator. It is a variable so a test can stand in for the
 // machine: opening a page is done to somebody's screen, and no test may do that for real.
-var openPage = func(address string) error { return nil }
+var openPage = openWithTheMachine
 
-// openCommandFor is the command that opens an address on one system.
-func openCommandFor(system string) string { return "" }
+// openWithTheMachine runs the machine's own open command on an address.
+//
+// Both streams go to standard error, because the address is what this command prints and a browser
+// writing a line of its own into standard output would end up in whatever the operator piped it to.
+func openWithTheMachine(address string) error {
+	command := exec.Command(openCommandFor(runtime.GOOS), address)
+	command.Stdout, command.Stderr = os.Stderr, os.Stderr
+	return command.Run()
+}
+
+// openCommandFor is the command that opens an address on one system. macOS calls it open, and every
+// other system krewe runs on takes xdg-open.
+func openCommandFor(system string) string {
+	if system == "darwin" {
+		return "open"
+	}
+	return "xdg-open"
+}
+
+// siteAddressOf is where a project's design is read. The two segments are the words the operator
+// typed, which the site resolves as a name or as an identifier, so both forms reach the page.
+//
+// The host and the port are the site's own constant. A second copy of the port here would be a copy
+// that can disagree with the listener.
+func siteAddressOf(path workspace.Path) string {
+	return fmt.Sprintf("http://%s/p/%s/%s/", controlplane.SiteAddr, path.Workspace, path.Project)
+}
 
 const designUsage = "usage: krewe design [<address>]" +
 	"\n       krewe design brief [<address>] \"<text>\"" +
@@ -45,7 +72,8 @@ const designUsage = "usage: krewe design [<address>]" +
 	"\n       krewe design edit [<address>]" +
 	"\n       krewe design contracts [<address>] [--file <path>]" +
 	"\n       krewe design approve [<address>]" +
-	"\n       krewe design proof [<address>] \"<command>\""
+	"\n       krewe design proof [<address>] \"<command>\"" +
+	"\n       krewe design open [<address>] [" + flagPrint + "]"
 
 func runDesign(ctx context.Context, client quaycrewv1.ControlPlaneServiceClient, args []string, out io.Writer) error {
 	if len(args) > 0 && args[0] == "brief" {
@@ -65,6 +93,9 @@ func runDesign(ctx context.Context, client quaycrewv1.ControlPlaneServiceClient,
 	}
 	if len(args) > 0 && args[0] == "proof" {
 		return runDesignProof(ctx, client, args[1:], out)
+	}
+	if len(args) > 0 && args[0] == "open" {
+		return runDesignOpen(ctx, client, args[1:], out)
 	}
 	if len(args) > 1 {
 		return fmt.Errorf("%s", designUsage)
@@ -342,6 +373,49 @@ func runDesignApprove(ctx context.Context, client quaycrewv1.ControlPlaneService
 		resp.GetDesign().GetApprovedAt().AsTime().Format("2006-01-02 15:04"))
 	return nil
 }
+
+// runDesignOpen prints where a project's design is read, and opens it there.
+//
+// The address holds a port and two names, so nobody types it from memory. It is printed on its own
+// line whether or not a page opens, because that line is the thing to paste into a message, and
+// because a machine with no browser on it still answers the question.
+//
+// With --print nothing opens. That is the form for a machine with no screen, and the form for a
+// person who wants the address and not the page.
+func runDesignOpen(ctx context.Context, client quaycrewv1.ControlPlaneServiceClient, args []string, out io.Writer) error {
+	rest := make([]string, 0, len(args))
+	printOnly := false
+	for _, arg := range args {
+		if arg == flagPrint {
+			printOnly = true
+			continue
+		}
+		rest = append(rest, arg)
+	}
+	if len(rest) > 1 {
+		return fmt.Errorf("%s", designOpenUsage)
+	}
+	typed := ""
+	if len(rest) == 1 {
+		typed = rest[0]
+	}
+	located, err := designProject(ctx, client, typed)
+	if err != nil {
+		return err
+	}
+	address := siteAddressOf(located.Path)
+	fmt.Fprintln(out, address)
+	if printOnly {
+		return nil
+	}
+	if err := openPage(address); err != nil {
+		return fmt.Errorf("opening %s with %s: %w\n\nthe address is above, so open it yourself",
+			address, openCommandFor(runtime.GOOS), err)
+	}
+	return nil
+}
+
+const designOpenUsage = "usage: krewe design open [<address>] [" + flagPrint + "]"
 
 // fileAndAddress reads --file out of the arguments and hands back the address in front of it.
 func fileAndAddress(args []string) (typed, path string, err error) {

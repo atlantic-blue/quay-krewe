@@ -206,10 +206,17 @@ commands:
                                           one group around the number. It is the operator's word: a
                                           session is refused this call, because a session that could
                                           set it would choose what proves its own work
+  design open [<address>] [--print]       print the address a project's design is read at, and open
+                                          it there. The page is the control plane's own, on
+                                          127.0.0.1 port 50052, so it answers while the system is
+                                          running on this machine. With --print it prints the
+                                          address and opens nothing, which is the form for a machine
+                                          with no screen
   stage show [<address>]                  the six stages a project is designed in, in order, with
                                           the state of each one: empty, written, approved or
                                           skipped. The line under the listing names the one move the
-                                          project has
+                                          project has, and the last line is the address the design
+                                          is read at
   stage set [<address>] <stage>           write one stage from a file, and the artifact beside it
     --file <path> [--artifact <path>]     from a second one. The six are discovery, stories,
                                           design_system, mockups, data_model and architecture, in
