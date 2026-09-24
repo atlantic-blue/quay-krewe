@@ -1642,7 +1642,7 @@ func (s *Server) TakeStep(ctx context.Context, req *quaycrewv1.TakeStepRequest) 
 	// The design was read above for the approval, and it carries the contracts document too, so the
 	// text says to read that file only when the project has one.
 	text := takeText(taken, len(steps), s.projectName(ctx, feature.GetProject()),
-		design.GetContracts() != "")
+		design.GetContracts() != "", feature.GetNumber())
 	dispatched, err := s.Dispatch(ctx, &quaycrewv1.DispatchRequest{
 		Project: feature.GetProject(), Handle: handle, Text: text, Detach: true,
 	})
@@ -2123,7 +2123,8 @@ func somebodyElseWritesIt(shared *store.SharedFileError) string {
 // A block the step left empty is left out with its label, because a label with nothing under it is
 // text the model reads for nothing. The count is of the steps in the path and never of the highest
 // number, so a path running 1, 2, 5 reads "of 3".
-func takeText(step *quaycrewv1.Step, inThePath int, project string, hasContracts bool) string {
+func takeText(step *quaycrewv1.Step, inThePath int, project string, hasContracts bool,
+	feature int32) string {
 	blocks := []string{
 		fmt.Sprintf("Step %d of %d on the path for %s.", step.GetNumber(), inThePath, project),
 		step.GetTitle(),
