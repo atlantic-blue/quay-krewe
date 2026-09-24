@@ -7,8 +7,8 @@ colour, font, radius and space comes from the data.
 
 ## What you write
 
-Write `flows.json`. Put `index.html` from this skill next to it. The page reads `flows.json` with
-fetch, so the two files sit in one folder.
+Write `flows.json` and nothing else. The page is in this skill, and krewe serves it at the stage you
+write the screens to, so you never copy it anywhere.
 
 `schema.json` is beside this file. Read it before you write. It holds every field and every
 allowed value.
@@ -52,19 +52,19 @@ One shape is one object in a screen's `el` list. The kind goes in `t`:
 Put `to` on a shape to make it open another screen. The Prototype view follows it when a person
 presses the shape.
 
-## Look at it before you publish it
+## Save it to the stage
 
-Serve the folder over http and open the address. A browser refuses fetch from a file address, so
-the page shows nothing when you open the file directly.
+Write the stage with the prose and the screens:
 
-Play every story once. Press each shape that carries a `to`. Read the Gaps view.
+    krewe stage set <address> mockups --file mockups.md --artifact flows.json
 
-## Publish it and save it to the stage
+The artifact is the data. Nothing else is written, and nothing is published.
 
-Copy `index.html` and `flows.json` to where the project publishes static files. Then write the
-stage:
+## Look at it
 
-    krewe stage set <address> mockups --file mockups.md --artifact flows.json --url <the page>
+Open the project's design page and choose the stage:
 
-The artifact is the data. The address is the page the operator opens. Write both. The operator
-plays each story, and then approves the stage.
+    krewe design open <address>
+
+The stage shows the flow map on the screens you wrote. Play every story once. Press each shape that
+carries a `to`. Read the Gaps view. Then the operator approves the stage.

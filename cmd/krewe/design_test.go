@@ -345,3 +345,108 @@ func projectNamed(t *testing.T, client quaycrewv1.ControlPlaneServiceClient, nam
 	t.Fatalf("no project called %s", name)
 	return ""
 }
+
+// openedPages records every address the tool asked the machine to open, and puts itself in place of
+// the machine's own open command for one test.
+type openedPages struct{ at []string }
+
+// anOpenCommandThatRecords replaces the command that opens a page, and puts the real one back when
+// the test ends. Opening a page is a thing done to the operator's screen, so no test may do it for
+// real.
+func anOpenCommandThatRecords(t *testing.T) *openedPages {
+	t.Helper()
+	recorded := &openedPages{}
+	was := openPage
+	openPage = func(address string) error {
+		recorded.at = append(recorded.at, address)
+		return nil
+	}
+	t.Cleanup(func() { openPage = was })
+	return recorded
+}
+
+// TestDesignOpenPrintsTheAddressOfTheDesign: one command, and the operator has the address of the
+// page their design is on. The port and the two names are the system's to know.
+func TestDesignOpenPrintsTheAddressOfTheDesign(t *testing.T) {
+	client := aProjectWithADesign(t, "the design")
+	anOpenCommandThatRecords(t)
+
+	printed := mustRun(t, client, "design", "open", "acme/house-bills", flagPrint)
+	if strings.TrimSpace(printed) != "http://127.0.0.1:50052/p/acme/house-bills/" {
+		t.Fatalf("krewe design open printed %q", printed)
+	}
+}
+
+// TestDesignOpenWithPrintOpensNothing. The flag is the whole reason a person types it: they want the
+// address to paste somewhere, on a machine that may have no screen at all.
+func TestDesignOpenWithPrintOpensNothing(t *testing.T) {
+	client := aProjectWithADesign(t, "the design")
+	opened := anOpenCommandThatRecords(t)
+
+	mustRun(t, client, "design", "open", "acme/house-bills", flagPrint)
+	if len(opened.at) != 0 {
+		t.Fatalf("a page was opened at %v, and --print asks only for the address", opened.at)
+	}
+}
+
+// TestDesignOpenOpensThePageItPrinted. The two must be the same address, or the operator reads one
+// page and pastes another.
+func TestDesignOpenOpensThePageItPrinted(t *testing.T) {
+	client := aProjectWithADesign(t, "the design")
+	opened := anOpenCommandThatRecords(t)
+
+	printed := mustRun(t, client, "design", "open", "acme/house-bills")
+	if len(opened.at) != 1 {
+		t.Fatalf("the tool opened %v, want one page", opened.at)
+	}
+	if opened.at[0] != strings.TrimSpace(printed) {
+		t.Fatalf("it opened %q and printed %q", opened.at[0], strings.TrimSpace(printed))
+	}
+	if opened.at[0] != "http://127.0.0.1:50052/p/acme/house-bills/" {
+		t.Fatalf("it opened %q", opened.at[0])
+	}
+}
+
+// TestDesignOpenTakesTheAddressYouAreStandingIn, which is the shape every other design word has: an
+// operator who moved into a project types the word alone.
+func TestDesignOpenTakesTheAddressYouAreStandingIn(t *testing.T) {
+	client := aProjectWithADesign(t, "the design")
+	anOpenCommandThatRecords(t)
+
+	printed := mustRun(t, client, "design", "open", flagPrint)
+	if strings.TrimSpace(printed) != "http://127.0.0.1:50052/p/acme/house-bills/" {
+		t.Fatalf("standing in the project, krewe design open printed %q", printed)
+	}
+}
+
+// TestDesignOpenRefusesAWorkspace. A design belongs to a project, and the page is a project's page,
+// so a workspace is an address there is no page for.
+func TestDesignOpenRefusesAWorkspace(t *testing.T) {
+	client := aProjectWithADesign(t, "the design")
+	anOpenCommandThatRecords(t)
+
+	var out bytes.Buffer
+	err := run(context.Background(), client, []string{"design", "open", "acme", flagPrint}, &out, "")
+	if err == nil {
+		t.Fatal("krewe design open acme was accepted, and a workspace has no design page")
+	}
+	if !strings.Contains(err.Error(), "acme is a workspace") {
+		t.Errorf("the refusal is %q, and never says a project is what this needs", err)
+	}
+	if strings.Contains(err.Error(), "takes no flags") {
+		t.Errorf("the refusal is about the flag, so it says nothing about the address: %s", err)
+	}
+}
+
+// TestTheOpenCommandIsTheMachinesOwn. There is no variable to set and nothing to configure: the
+// command is the one the operator's system already has.
+func TestTheOpenCommandIsTheMachinesOwn(t *testing.T) {
+	if got := openCommandFor("darwin"); got != "open" {
+		t.Errorf("macOS opens a page with %q, want open", got)
+	}
+	for _, system := range []string{"linux", "freebsd", "openbsd"} {
+		if got := openCommandFor(system); got != "xdg-open" {
+			t.Errorf("%s opens a page with %q, want xdg-open", system, got)
+		}
+	}
+}

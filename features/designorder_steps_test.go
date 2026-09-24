@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/atlantic-blue/quay-krewe/internal/controlplane"
 	"github.com/atlantic-blue/quay-krewe/internal/skill"
 	"github.com/atlantic-blue/quay-krewe/internal/store"
 	"github.com/cucumber/godog"
@@ -245,6 +246,9 @@ func dispatchLines(body string) []string {
 // theStageOffered is the line under the listing, which is the one that says what to do next. The rows
 // above it name all six whatever state the project is in, so a reading of the whole answer would
 // report every stage as offered.
+//
+// The address of the design page is under that line, and it is not an offer of anything, so it is
+// passed over. A line holding the site's own host and port is that address and nothing else.
 func theStageOffered(ctx context.Context) (string, error) {
 	read := designOrderFrom(ctx).reading
 	if strings.TrimSpace(read) == "" {
@@ -252,9 +256,11 @@ func theStageOffered(ctx context.Context) (string, error) {
 	}
 	lines := strings.Split(strings.TrimRight(read, "\n"), "\n")
 	for at := len(lines) - 1; at >= 0; at-- {
-		if strings.TrimSpace(lines[at]) != "" {
-			return strings.TrimSpace(lines[at]), nil
+		line := strings.TrimSpace(lines[at])
+		if line == "" || strings.Contains(line, controlplane.SiteAddr) {
+			continue
 		}
+		return line, nil
 	}
 	return "", fmt.Errorf("the reading is blank lines: %q", read)
 }
