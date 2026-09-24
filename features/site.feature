@@ -19,6 +19,11 @@ Feature: A project's stages are read over http
   agreed to reads differently from one written again since then, so the word on the screen is the
   word that still stands.
 
+  A stage that holds screens carries them as an artifact, and the site plays them. The flow map is
+  the page that plays a story, it ships with the skill that writes the screens, and the site serves
+  it from the binary at the stage the screens belong to. The page asks the stage for its screens.
+  So an operator approves the mockups by playing them, and nothing was published anywhere.
+
   Background:
     Given a running control plane
     And a workspace named "acme"
@@ -69,6 +74,8 @@ Feature: A project's stages are read over http
       | /p/acme/no-such-project/stages.json          | no-such-project |
       | /p/acme/house-bills/stories/flows.json       | stories         |
       | /p/acme/house-bills/kitchen/flows.json       | kitchen         |
+      | /p/acme/house-bills/stories/map/             | stories         |
+      | /p/acme/house-bills/kitchen/map/             | kitchen         |
 
   # Nothing here writes, so nothing here takes a write. The refusal is the method and not the
   # address, and it says which methods the address answers.
@@ -164,3 +171,39 @@ Feature: A project's stages are read over http
     Then the site answers 200
     And the site answers a script
     And no file the site hands the operator reaches an address off the machine
+
+  # The stage an operator approves by playing it. The screens sit in the database and the page that
+  # plays them sits in the binary, so the operator opens the stage and plays a story. Nobody
+  # published a page to a web host, and nobody copied a file next to another file.
+  Scenario: The mockups stage plays its story from the stored artifact
+    Given the stages up to the design system are approved, naming the project's colours and fonts
+    And the operator writes the mockups stage with a component on every shape
+    And the site is served on a local address
+    When the operator opens the flow map of the "mockups" stage
+    Then the site answers 200
+    And the page plays the project's stories
+    When the operator reads the screens the page asks for
+    Then the site answers 200
+    And the screens are the ones the session wrote
+    When the operator reads the site at "/p/acme/house-bills/stages.json"
+    Then the page opens the flow map on the "mockups" stage
+    And the page opens no flow map on the "architecture" stage
+
+  # A person types this address, and a person leaves the last slash off it. The page asks for its
+  # screens one step above wherever it is, so at the address without the slash it would ask the
+  # project for them and draw nothing. The site sends the operator to the address that plays.
+  Scenario: The flow map address without its last slash sends the operator to the one with it
+    Given the stages up to the design system are approved, naming the project's colours and fonts
+    And the operator writes the mockups stage with a component on every shape
+    And the site is served on a local address
+    When the operator opens the flow map of the "mockups" stage without its last slash
+    Then the site sends the operator to the flow map of the "mockups" stage
+
+  # A stage that holds no screens has nothing to play. The address says so, rather than drawing a
+  # page that then asks for screens nobody wrote.
+  Scenario: A stage that holds no screens has no flow map to open
+    Given the "discovery" design stage is written and approved
+    And the site is served on a local address
+    When the operator opens the flow map of the "discovery" stage
+    Then the site answers 404
+    And the answer says "carries no artifact"

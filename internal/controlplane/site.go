@@ -12,6 +12,7 @@ import (
 
 	quaycrewv1 "github.com/atlantic-blue/quay-krewe/gen/quaycrew/v1"
 	"github.com/atlantic-blue/quay-krewe/internal/store"
+	flowmap "github.com/atlantic-blue/quay-krewe/skills/flow-map"
 )
 
 // The read only http surface: a project's design stages at an address, so the operator approves a
@@ -78,6 +79,8 @@ func (s *Server) Site() http.Handler {
 	mux.HandleFunc("GET /assets/{file}", serveAsset)
 	mux.HandleFunc("GET /p/{workspace}/{project}/stages.json", s.serveStages)
 	mux.HandleFunc("GET /p/{workspace}/{project}/{stage}/flows.json", s.serveFlows)
+	mux.HandleFunc("GET /p/{workspace}/{project}/{stage}/map/{$}", s.serveFlowMap)
+	mux.HandleFunc("GET /p/{workspace}/{project}/{stage}/map", sendToTheFlowMap)
 	return mux
 }
 
@@ -215,44 +218,90 @@ func (s *Server) serveStages(w http.ResponseWriter, r *http.Request) {
 // serveFlows answers the artifact one stage carries, as the bytes it was written with.
 //
 // The column holds json already, so it is handed over rather than parsed and rendered again: the flow
-// map reads what the session wrote. A stage carrying nothing is a refusal rather than an empty
-// document, because an empty body is not json a reader can parse.
+// map reads what the session wrote.
 func (s *Server) serveFlows(w http.ResponseWriter, r *http.Request) {
-	stage := r.PathValue("stage")
-	if _, known := store.DesignStagePosition(stage); !known {
-		siteMissing(fmt.Sprintf("%q is not a design stage: the six are %s",
-			stage, strings.Join(store.DesignStages(), ", "))).answer(w, r)
-		return
-	}
-
-	project, failed := s.siteProject(r.Context(), r.PathValue("workspace"), r.PathValue("project"))
+	artifact, failed := s.stageArtifact(r.Context(),
+		r.PathValue("workspace"), r.PathValue("project"), r.PathValue("stage"))
 	if failed != nil {
 		failed.answer(w, r)
 		return
 	}
+	w.Header().Set("Content-Type", "application/json")
+	if _, err := w.Write([]byte(artifact)); err != nil {
+		slog.WarnContext(r.Context(), "the site could not finish writing an artifact",
+			"stage", r.PathValue("stage"), "error", err)
+	}
+}
 
-	held, err := s.store.ListDesignStages(r.Context(), project.GetId())
-	if err != nil {
-		siteBroke(w, r, "read the design stages", err)
+// serveFlowMap answers the page that plays one stage's screens.
+//
+// It is the skill's own page, served out of the binary. The page asks the stage for its screens, at
+// the flows.json one step above it, so the address the page is read at is the address that works and
+// nothing is published anywhere.
+//
+// The screens are read here as well, and a stage carrying none is refused before the page is handed
+// over. A page that drew itself and then said the screens did not load leaves the operator with two
+// questions: whether the screens are missing, or whether the page is broken.
+func (s *Server) serveFlowMap(w http.ResponseWriter, r *http.Request) {
+	if _, failed := s.stageArtifact(r.Context(),
+		r.PathValue("workspace"), r.PathValue("project"), r.PathValue("stage")); failed != nil {
+		failed.answer(w, r)
 		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if _, err := w.Write(flowmap.PageHTML); err != nil {
+		slog.WarnContext(r.Context(), "the site could not finish writing the flow map",
+			"stage", r.PathValue("stage"), "error", err)
+	}
+}
+
+// sendToTheFlowMap sends a reader who left the last slash off to the address that carries it.
+//
+// The page asks for its screens one step above itself, so the slash decides which directory it asks.
+// Without it the page would ask the project for screens rather than the stage, and draw nothing.
+//
+// Nothing is read here. An address naming a project nobody has is refused by the address it is sent
+// to, in the sentence that names the part that is missing, rather than in two places that could come
+// to disagree.
+func sendToTheFlowMap(w http.ResponseWriter, r *http.Request) {
+	to := r.URL.Path + "/"
+	if r.URL.RawQuery != "" {
+		to += "?" + r.URL.RawQuery
+	}
+	http.Redirect(w, r, to, http.StatusMovedPermanently)
+}
+
+// stageArtifact is the screens one stage carries, and a refusal when it carries none.
+//
+// The stage name is read before the project, so an address with a word that is not a stage says that
+// rather than going to the store to find out. A stage nobody wrote and a stage holding nothing are
+// two answers, because they send the reader to two different places.
+func (s *Server) stageArtifact(ctx context.Context, workspace, project, stage string) (string, *siteRefusal) {
+	if _, known := store.DesignStagePosition(stage); !known {
+		return "", siteMissing(fmt.Sprintf("%q is not a design stage: the six are %s",
+			stage, strings.Join(store.DesignStages(), ", ")))
+	}
+
+	found, failed := s.siteProject(ctx, workspace, project)
+	if failed != nil {
+		return "", failed
+	}
+
+	held, err := s.store.ListDesignStages(ctx, found.GetId())
+	if err != nil {
+		return "", siteBrokeReading("read the design stages", err)
 	}
 	for _, one := range held {
 		if one.GetStage() != stage {
 			continue
 		}
 		if one.GetArtifact() == "" {
-			siteMissing(fmt.Sprintf("the %s stage of %q carries no artifact",
-				stage, project.GetName())).answer(w, r)
-			return
+			return "", siteMissing(fmt.Sprintf("the %s stage of %q carries no artifact",
+				stage, found.GetName()))
 		}
-		w.Header().Set("Content-Type", "application/json")
-		if _, err := w.Write([]byte(one.GetArtifact())); err != nil {
-			slog.WarnContext(r.Context(), "the site could not finish writing an artifact",
-				"stage", stage, "error", err)
-		}
-		return
+		return one.GetArtifact(), nil
 	}
-	siteMissing(fmt.Sprintf("%q has not written a %s stage", project.GetName(), stage)).answer(w, r)
+	return "", siteMissing(fmt.Sprintf("%q has not written a %s stage", found.GetName(), stage))
 }
 
 // siteProject is the project an address landed on, with both names resolved the way a person types

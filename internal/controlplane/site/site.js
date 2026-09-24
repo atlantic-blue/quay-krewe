@@ -94,6 +94,31 @@ function renderDocument(html, text) {
   return '<pre class="text">' + esc(text) + "</pre>";
 }
 
+// STAGES_THAT_PLAY are the three stages whose artifact is a set of screens. The design system stage
+// carries tokens, and the data model and the architecture carry their pictures inside their text, so
+// none of those three has screens to play.
+var STAGES_THAT_PLAY = ["discovery", "stories", "mockups"];
+
+// renderFlowMap opens the flow map on a stage that holds screens, and draws nothing on one that does
+// not, so an operator never presses something that leads nowhere.
+//
+// The address is relative to the project, the way the document beside it is, so the frame works at
+// whatever address the project has. The page inside the frame then asks that stage for its screens.
+function renderFlowMap(entry, row) {
+  if (STAGES_THAT_PLAY.indexOf(entry) < 0) { return ""; }
+  if (!row || !row.artifact) { return ""; }
+  var at = esc(entry) + "/map/";
+  var named = esc(ENTRY_NAMES[entry] || entry);
+  return '<iframe class="map" src="' + at + '" title="The screens of the ' + named + ' stage"></iframe>' +
+    '<p class="wide"><a href="' + at + '">Open the screens on their own</a></p>';
+}
+
+// bodyClass widens the column when the stage plays its screens. Prose is read at a width a person
+// reads comfortably, and a map is looked at, so the two want different room.
+function bodyClass(map) {
+  return map ? "body plays" : "body";
+}
+
 // renderBody draws what one entry shows when it is chosen. A body is markdown, so the operator reads
 // a document: its headings, its lists, its tables and its code, rather than the marks that make them.
 function renderBody(answer, entry) {
@@ -108,12 +133,13 @@ function renderBody(answer, entry) {
   }
   var row = rowsByStage(answer)[entry];
   var state = stageState(row);
+  var map = renderFlowMap(entry, row);
   if (!row || !row.body) {
-    return '<article class="body" data-entry="' + esc(entry) + '">' + head +
-      '<p class="empty">This stage is ' + esc(state) + ".</p></article>";
+    return '<article class="' + bodyClass(map) + '" data-entry="' + esc(entry) + '">' + head +
+      '<p class="empty">This stage is ' + esc(state) + ".</p>" + map + "</article>";
   }
-  return '<article class="body" data-entry="' + esc(entry) + '">' + head +
-    '<p class="state">' + esc(state) + " at version " + esc(row.version) + "</p>" +
+  return '<article class="' + bodyClass(map) + '" data-entry="' + esc(entry) + '">' + head +
+    '<p class="state">' + esc(state) + " at version " + esc(row.version) + "</p>" + map +
     renderDocument(row.body_html, row.body) + "</article>";
 }
 

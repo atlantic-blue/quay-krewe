@@ -8,13 +8,16 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 
 	"github.com/atlantic-blue/quay-krewe/internal/controlplane"
 	"github.com/atlantic-blue/quay-krewe/internal/controlplane/site/render"
 	"github.com/atlantic-blue/quay-krewe/internal/store"
+	flowmaprender "github.com/atlantic-blue/quay-krewe/skills/flow-map/render"
 	"github.com/cucumber/godog"
 )
 
@@ -62,6 +65,8 @@ type siteWorld struct {
 	header  http.Header
 	page    string
 	library string
+	// mapStage is the stage whose flow map was opened, so the steps after it read that stage.
+	mapStage string
 }
 
 // siteFile is one file the site handed over, named by the address it came from.
@@ -419,6 +424,192 @@ func initializeSiteSteps(sc *godog.ScenarioContext) {
 		}
 		return nil
 	})
+
+	// The flow map, opened the way an operator opens it: at the stage whose screens it plays.
+	sc.Step(`^the operator opens the flow map of the "([^"]*)" stage$`,
+		func(ctx context.Context, stage string) error {
+			siteFrom(ctx).mapStage = stage
+			return callSite(ctx, http.MethodGet, flowMapAddress(ctx, stage))
+		})
+
+	// The same address with its last slash left off, which is how a person types it. The answer is
+	// read without following it, because the answer is the thing being read.
+	sc.Step(`^the operator opens the flow map of the "([^"]*)" stage without its last slash$`,
+		func(ctx context.Context, stage string) error {
+			siteFrom(ctx).mapStage = stage
+			return callSiteWithoutFollowing(ctx, strings.TrimSuffix(flowMapAddress(ctx, stage), "/"))
+		})
+
+	sc.Step(`^the site sends the operator to the flow map of the "([^"]*)" stage$`,
+		func(ctx context.Context, stage string) error {
+			s := siteFrom(ctx)
+			if s.status < 300 || s.status > 399 {
+				return fmt.Errorf("the site answered %d saying %q, and a person who left the slash off "+
+					"has to be sent to the address that plays", s.status, s.body)
+			}
+			want := flowMapAddress(ctx, stage)
+			sent := s.header.Get("Location")
+			if !strings.HasSuffix(sent, want) {
+				return fmt.Errorf("the site sent the operator to %q, want %q", sent, want)
+			}
+			return nil
+		})
+
+	// The page itself. It is the skill's own page, served out of the binary rather than copied
+	// somewhere, and it carries the control a person presses to play a story.
+	sc.Step(`^the page plays the project's stories$`, func(ctx context.Context) error {
+		s := siteFrom(ctx)
+		s.page = s.body
+		held, err := theFlowMapPage()
+		if err != nil {
+			return err
+		}
+		if s.page != held {
+			return fmt.Errorf("the site answered %d bytes, and the flow map the skill ships is %d bytes, "+
+				"so the operator is playing something else", len(s.page), len(held))
+		}
+		if !strings.Contains(s.page, playControl) {
+			return fmt.Errorf("the page carries no %q, so there is nothing to play a story with", playControl)
+		}
+		return nil
+	})
+
+	// What the page asks for, followed from the page rather than from an address a scenario made up.
+	// The address is resolved against the one the page was read at, the way a browser resolves it.
+	sc.Step(`^the operator reads the screens the page asks for$`, func(ctx context.Context) error {
+		s := siteFrom(ctx)
+		if s.page == "" {
+			return fmt.Errorf("no page was read, so there is nothing to follow")
+		}
+		found := screensThePageAsksFor.FindStringSubmatch(s.page)
+		if found == nil {
+			return fmt.Errorf("the page asks for no screens at all, so it draws nothing")
+		}
+		at, err := url.Parse(flowMapAddress(ctx, s.mapStage))
+		if err != nil {
+			return err
+		}
+		asked, err := url.Parse(found[1])
+		if err != nil {
+			return fmt.Errorf("the page asks for %q, which is not an address: %w", found[1], err)
+		}
+		if asked.IsAbs() {
+			return fmt.Errorf("the page asks for %q, which is off this machine", found[1])
+		}
+		return callSite(ctx, http.MethodGet, at.ResolveReference(asked).String())
+	})
+
+	// The bytes, held against what the session wrote. The stage is read over the wire, so what the
+	// page is handed and what the session stored are the same screens.
+	sc.Step(`^the screens are the ones the session wrote$`, func(ctx context.Context) error {
+		s := siteFrom(ctx)
+		if err := readStages(ctx); err != nil {
+			return err
+		}
+		held := stageNamed(stagesFrom(ctx).stages, s.mapStage)
+		if held == nil {
+			return fmt.Errorf("the project holds no %s stage, so nothing was written to read back", s.mapStage)
+		}
+		wrote, read := new(bytes.Buffer), new(bytes.Buffer)
+		if err := json.Compact(wrote, []byte(held.GetArtifact())); err != nil {
+			return fmt.Errorf("the %s stage holds %q, which is not json: %w", s.mapStage, held.GetArtifact(), err)
+		}
+		if err := json.Compact(read, []byte(s.body)); err != nil {
+			return fmt.Errorf("the page was handed %q, which is not json: %w", s.body, err)
+		}
+		if wrote.String() != read.String() {
+			return fmt.Errorf("the page was handed %s, and the session wrote %s", read, wrote)
+		}
+		return nil
+	})
+
+	// The stage as the page draws it: a stage holding screens opens the flow map on them, and one
+	// holding none does not, so the operator presses nothing that leads nowhere.
+	sc.Step(`^the page opens the flow map on the "([^"]*)" stage$`, func(ctx context.Context, stage string) error {
+		drawn, err := siteBody(ctx, stage)
+		if err != nil {
+			return err
+		}
+		found := theFlowMapFrame.FindStringSubmatch(drawn)
+		if found == nil {
+			return fmt.Errorf("the %s stage opens no flow map: %s", stage, drawn)
+		}
+		if want := stage + "/map/"; found[1] != want {
+			return fmt.Errorf("the %s stage opens the flow map at %q, want %q", stage, found[1], want)
+		}
+		return nil
+	})
+
+	sc.Step(`^the page opens no flow map on the "([^"]*)" stage$`, func(ctx context.Context, stage string) error {
+		drawn, err := siteBody(ctx, stage)
+		if err != nil {
+			return err
+		}
+		if found := theFlowMapFrame.FindStringSubmatch(drawn); found != nil {
+			return fmt.Errorf("the %s stage holds no screens and opens a flow map at %q anyway",
+				stage, found[1])
+		}
+		return nil
+	})
+}
+
+// playControl is the control a person presses to play a story. A page without it draws the screens
+// and plays nothing, which is the half of the flow map the mockups stage exists for.
+const playControl = `id="m-play"`
+
+// screensThePageAsksFor reads the address the flow map asks its screens for, out of the page itself.
+// The address is followed rather than written down here, so a page that starts asking somewhere else
+// fails this rather than passing against an address a scenario invented.
+var screensThePageAsksFor = regexp.MustCompile(`fetch\("([^"]+)"\)`)
+
+// theFlowMapFrame is the frame one stage opens the flow map in, and the address it opens.
+var theFlowMapFrame = regexp.MustCompile(`<iframe[^>]+src="([^"]*)"`)
+
+// flowMapAddress is where a stage's flow map is read, built from the names the operator typed rather
+// than from the identifiers underneath them.
+func flowMapAddress(ctx context.Context, stage string) string {
+	w := worldFrom(ctx)
+	return "/p/" + w.workspaceName + "/" + w.projectName + "/" + stage + "/map/"
+}
+
+// theFlowMapPage is the page the skill ships, read off disk. The site serves this file, so a copy
+// that drifted from it is a copy, and holding the two together is what keeps the page in one home.
+func theFlowMapPage() (string, error) {
+	dir, err := flowmaprender.Dir()
+	if err != nil {
+		return "", err
+	}
+	body, err := os.ReadFile(filepath.Join(dir, "index.html"))
+	if err != nil {
+		return "", fmt.Errorf("reading the flow map the skill ships: %w", err)
+	}
+	return string(body), nil
+}
+
+// callSiteWithoutFollowing makes one request and stops where the site sends it, because a redirect
+// followed is a redirect nobody read.
+func callSiteWithoutFollowing(ctx context.Context, path string) error {
+	s := siteFrom(ctx)
+	if s.serving == nil {
+		return fmt.Errorf("the site is not being served, so there is nothing to read at %s", path)
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, s.serving.URL+path, nil)
+	if err != nil {
+		return err
+	}
+	client := *s.serving.Client()
+	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	answer, err := client.Do(request)
+	if err != nil {
+		return fmt.Errorf("reading %s: %w", path, err)
+	}
+	defer func() { _ = answer.Body.Close() }()
+	body, err := io.ReadAll(answer.Body)
+	if err != nil {
+		return fmt.Errorf("reading the body of %s: %w", path, err)
+	}
+	s.status, s.body, s.header = answer.StatusCode, string(body), answer.Header
+	return nil
 }
 
 // callSite makes one request and keeps what came back, so the steps after it read a status, a header
