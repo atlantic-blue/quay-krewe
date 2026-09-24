@@ -262,8 +262,8 @@ func TestOneArgumentIsTheProofCommandOrTheAddress(t *testing.T) {
 	}{
 		{
 			name:  "a command carrying a space",
-			typed: "go test ./features/... -run '{scenario}'",
-			wrote: "go test ./features/... -run '{scenario}'",
+			typed: "go test ./features/... -run {scenario}",
+			wrote: "go test ./features/... -run {scenario}",
 		},
 		{
 			// No space anywhere in it, so the token is the only thing saying this is a command.
