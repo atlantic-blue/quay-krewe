@@ -204,8 +204,10 @@ func runDesignStageConformance(t *testing.T, newDataset func(t *testing.T) Opene
 		}
 	})
 
-	// STAGE-2, the near half: the text changed, so the word on that text is gone.
-	t.Run("writing a stage clears its own approval and raises its version", func(t *testing.T) {
+	// STAGE-2, the near half: the text changed, so the word on that text stops standing. What the
+	// word was given to is kept, because a stage that moved after it was agreed is not the same thing
+	// as a stage nobody ever agreed to.
+	t.Run("writing a stage stops its own approval standing and raises its version", func(t *testing.T) {
 		s := newDataset(t)(t)
 		ctx := context.Background()
 		project := newProject(t, s, "acme", "house-bills")
@@ -224,8 +226,18 @@ func runDesignStageConformance(t *testing.T, newDataset func(t *testing.T) Opene
 		if err != nil {
 			t.Fatalf("SetDesignStage over an approved stage: %v", err)
 		}
-		if again.GetApproved() || again.GetApprovedAt() != nil || again.GetApprovedVersion() != 0 {
-			t.Fatalf("a rewritten stage reads approved=%t at %v", again.GetApproved(), again.GetApprovedAt())
+		if again.GetApproved() {
+			t.Fatalf("a rewritten stage still reads approved, and the text under the word moved")
+		}
+		// The number the word was given to stays on the row. A reader holding only "approved is false"
+		// cannot tell a stage nobody ever agreed to from one that changed after it was agreed, and the
+		// page that lists the six stages says exactly that difference.
+		if again.GetApprovedVersion() != approved.GetVersion() {
+			t.Errorf("a rewritten stage reads approved at version %d, want the version it was approved at, %d",
+				again.GetApprovedVersion(), approved.GetVersion())
+		}
+		if again.GetApprovedAt() == nil {
+			t.Errorf("a rewritten stage lost when the word was given, so nothing says when it stopped standing")
 		}
 		if again.GetVersion() != approved.GetVersion()+1 {
 			t.Errorf("a rewritten stage reads version %d, want %d", again.GetVersion(), approved.GetVersion()+1)
@@ -262,8 +274,14 @@ func runDesignStageConformance(t *testing.T, newDataset func(t *testing.T) Opene
 					t.Errorf("%s sits above the write and lost its word", stage.GetStage())
 				}
 			default:
-				if stage.GetApproved() || stage.GetApprovedAt() != nil {
+				if stage.GetApproved() {
 					t.Errorf("%s sits at or after the write and kept its word", stage.GetStage())
+				}
+				// A stage after the write never moved its own text, so nothing is left to say a word was
+				// ever given to it. Only the stage being written keeps the version it was approved at.
+				if stage.GetPosition() > 2 && stage.GetApprovedVersion() != 0 {
+					t.Errorf("%s sits after the write and reads approved at version %d",
+						stage.GetStage(), stage.GetApprovedVersion())
 				}
 				if stage.GetBody() == "" {
 					t.Errorf("%s lost its body, and only the word on it was supposed to go", stage.GetStage())

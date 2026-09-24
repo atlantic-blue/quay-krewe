@@ -9,9 +9,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"regexp"
 	"strings"
 
 	"github.com/atlantic-blue/quay-krewe/internal/controlplane"
+	"github.com/atlantic-blue/quay-krewe/internal/controlplane/site/render"
+	"github.com/atlantic-blue/quay-krewe/internal/store"
 	"github.com/cucumber/godog"
 )
 
@@ -192,6 +195,54 @@ func initializeSiteSteps(sc *godog.ScenarioContext) {
 		return nil
 	})
 
+	// The page itself, rather than the documents under it. A page that named a script somewhere else
+	// would work on the machine that wrote it and nowhere else, so the two names are read out of the
+	// markup the site served.
+	sc.Step(`^the page names its stylesheet and its script$`, func(ctx context.Context) error {
+		body := siteFrom(ctx).body
+		for _, want := range []string{"/assets/site.css", "/assets/site.js"} {
+			if !strings.Contains(body, want) {
+				return fmt.Errorf("the page never names %q, so the operator gets markup and nothing else", want)
+			}
+		}
+		return nil
+	})
+
+	// The menu, drawn by the page's own renderer over the document the site just answered. It runs
+	// outside a browser, so a scenario reads the words an operator reads.
+	sc.Step(`^the menu drawn from that answer reads "([^"]*)" for the "([^"]*)" stage$`,
+		func(ctx context.Context, want, stage string) error {
+			drawn, err := siteMenu(ctx)
+			if err != nil {
+				return err
+			}
+			held, found := menuState(drawn, stage)
+			if !found {
+				return fmt.Errorf("the menu carries no entry for the %s stage: %s", stage, drawn)
+			}
+			if held != want {
+				return fmt.Errorf("the menu reads %q for the %s stage, want %q", held, stage, want)
+			}
+			return nil
+		})
+
+	sc.Step(`^the menu drawn from that answer lists Design and then the six stages in order$`,
+		func(ctx context.Context) error {
+			drawn, err := siteMenu(ctx)
+			if err != nil {
+				return err
+			}
+			var listed []string
+			for _, found := range menuEntry.FindAllStringSubmatch(drawn, -1) {
+				listed = append(listed, found[1])
+			}
+			want := append([]string{"design"}, store.DesignStages()...)
+			if strings.Join(listed, ",") != strings.Join(want, ",") {
+				return fmt.Errorf("the menu lists %v, want %v", listed, want)
+			}
+			return nil
+		})
+
 	sc.Step(`^the site's default address is "([^"]*)"$`, func(want string) error {
 		if controlplane.SiteAddr != want {
 			return fmt.Errorf("the site binds %q by default, want %q", controlplane.SiteAddr, want)
@@ -267,4 +318,43 @@ func composeSays(want string) error {
 		return fmt.Errorf("the compose stack never says %q", want)
 	}
 	return nil
+}
+
+// menuEntry reads one entry out of the drawn menu: which entry it is, and the state it carries.
+var menuEntry = regexp.MustCompile(`data-entry="([^"]*)"[^>]*data-state="([^"]*)"`)
+
+// siteMenu draws the menu over the document the site last answered, with the page's own renderer.
+// The page draws it in a browser and this draws it here, and both read the same block of site.js.
+func siteMenu(ctx context.Context) (string, error) {
+	body := siteFrom(ctx).body
+	if !json.Valid([]byte(body)) {
+		return "", fmt.Errorf("the site last answered %q, and a menu is drawn over stages.json", body)
+	}
+	script, err := render.ReadSite()
+	if err != nil {
+		return "", fmt.Errorf("reading the page's renderer: %w", err)
+	}
+	drawn, err := script.Menu(body)
+	if err != nil {
+		return "", fmt.Errorf("drawing the menu: %w", err)
+	}
+	return drawn, nil
+}
+
+// menuState is the word one entry of the menu shows, read from the words a person reads.
+func menuState(drawn, entry string) (string, bool) {
+	mark := `data-entry="` + entry + `"`
+	from := strings.Index(drawn, mark)
+	if from < 0 {
+		return "", false
+	}
+	rest := drawn[from:]
+	if to := strings.Index(rest, "</button>"); to >= 0 {
+		rest = rest[:to]
+	}
+	found := regexp.MustCompile(`<span class="state">([^<]*)</span>`).FindStringSubmatch(rest)
+	if found == nil {
+		return "", false
+	}
+	return found[1], true
 }

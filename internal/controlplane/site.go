@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"context"
+	"embed"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -66,9 +67,73 @@ type siteAnswer struct {
 // with GET.
 func (s *Server) Site() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /p/{workspace}/{project}/{$}", s.servePage)
+	mux.HandleFunc("GET /assets/{file}", serveAsset)
 	mux.HandleFunc("GET /p/{workspace}/{project}/stages.json", s.serveStages)
 	mux.HandleFunc("GET /p/{workspace}/{project}/{stage}/flows.json", s.serveFlows)
 	return mux
+}
+
+// The page itself, and the two files it loads. They are embedded rather than read from disk because
+// the control plane is installed as one binary: a page beside the executable is a page that is there
+// on the machine it was built on and nowhere else.
+//
+// Named one by one rather than as a directory: the renderer that proves this page is a Go package in
+// a directory below, and a pattern over the whole tree would carry its source into the binary.
+//
+//go:embed site/index.html site/site.js site/site.css
+var siteFiles embed.FS
+
+// siteAssets are the files the page loads, with what each one is. A name outside this list is not
+// served: the site hands out the page and its two files, and nothing else on the machine.
+var siteAssets = map[string]string{
+	"site.js":  "text/javascript; charset=utf-8",
+	"site.css": "text/css; charset=utf-8",
+}
+
+// servePage answers the page an operator opens.
+//
+// The project is resolved first, so an address with a name nobody has reads the same sentence here as
+// it does on the document underneath. A page that drew itself and then said nothing would leave the
+// operator looking at an empty menu with no idea which part of the address was wrong.
+func (s *Server) servePage(w http.ResponseWriter, r *http.Request) {
+	if _, failed := s.siteProject(r.Context(), r.PathValue("workspace"), r.PathValue("project")); failed != nil {
+		failed.answer(w, r)
+		return
+	}
+	page, err := siteFiles.ReadFile("site/index.html")
+	if err != nil {
+		siteBroke(w, r, "read its own page", err)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if _, err := w.Write(page); err != nil {
+		slog.WarnContext(r.Context(), "the site could not finish writing its page",
+			"path", r.URL.Path, "error", err)
+	}
+}
+
+// serveAsset answers one of the files the page loads.
+//
+// It needs no project: the script and the stylesheet are the same for every project, so the page
+// names them at one address and a reader with two projects open holds one copy of each.
+func serveAsset(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("file")
+	kind, served := siteAssets[name]
+	if !served {
+		siteMissing(fmt.Sprintf("the site serves no file called %q", name)).answer(w, r)
+		return
+	}
+	body, err := siteFiles.ReadFile("site/" + name)
+	if err != nil {
+		siteBroke(w, r, "read "+name, err)
+		return
+	}
+	w.Header().Set("Content-Type", kind)
+	if _, err := w.Write(body); err != nil {
+		slog.WarnContext(r.Context(), "the site could not finish writing a file",
+			"path", r.URL.Path, "error", err)
+	}
 }
 
 // serveStages answers the design of a project and every stage written under it.

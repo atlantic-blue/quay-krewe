@@ -1535,8 +1535,9 @@ func (m *Memory) SetDesignStage(_ context.Context, project string, write DesignS
 	written.Body = write.Body
 	written.Artifact = write.Artifact
 	written.ArtifactUrl = write.ArtifactURL
-	written.ApprovedVersion = 0
-	written.ApprovedAt = nil
+	// The word no longer stands, because the text moved under it. The version it was given to stays
+	// on the row: without it a stage nobody ever agreed to and a stage that changed after the
+	// operator agreed to it read the same, and they are two different things to do next.
 	written.Approved = false
 	written.UpdatedAt = timestamppb.New(now)
 

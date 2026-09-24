@@ -14,6 +14,11 @@ Feature: A project's stages are read over http
   An address that names nothing says which part of it named nothing: the workspace, the project or
   the stage. A method that writes is refused the same way, because the surface has no write on it.
 
+  The address also serves a page. It lists Design and then the six stages, and each entry carries one
+  word: approved, changed since approval, written, not written or skipped. A stage the operator
+  agreed to reads differently from one written again since then, so the word on the screen is the
+  word that still stands.
+
   Background:
     Given a running control plane
     And a workspace named "acme"
@@ -37,16 +42,16 @@ Feature: A project's stages are read over http
     Then the site answers 404
     And the answer says "no-such-project"
 
-  # A stage written again. The version moves and the word is gone, because the operator agreed to a
-  # text that has just changed. Both numbers travel, so the page can tell a written stage from an
-  # approved one without asking a second question.
+  # A stage written again. The version moves, so the word no longer stands, and the version it was
+  # given to stays on the row. Both numbers travel, so the page can say which of the three a stage is:
+  # agreed, written and never agreed, or changed after the word was given.
   Scenario: A stage written again comes back without the word it had
     Given the "discovery" design stage is written and approved
     And the operator writes the "discovery" design stage as "four bills, and three of them move"
     And the site is served on a local address
     When the operator reads the site at "/p/acme/house-bills/stages.json"
     Then the site answers 200
-    And the answer carries the "discovery" stage at version 2, approved at version 0
+    And the answer carries the "discovery" stage at version 2, approved at version 1
     And the answer says the "discovery" stage reads "four bills, and three of them move"
 
   # The workspace, the project and the stage each name themselves when they are the part that is
@@ -96,3 +101,22 @@ Feature: A project's stages are read over http
     Then the site's default address is "127.0.0.1:50052"
     And the compose stack publishes the site as "127.0.0.1:50052:50052"
     And the compose stack tells the control plane to bind ":50052"
+
+  # The page the operator opens. Two stages are agreed, and then one of them is written again, so the
+  # word it carried no longer stands. The menu says which stage is which, and it says it without
+  # anybody comparing two version numbers by hand.
+  Scenario: The menu shows an approved stage and a stage changed since its approval
+    Given the "discovery" design stage is written and approved
+    And the "stories" design stage is written and approved
+    And the operator writes the "stories" design stage as "four bills, and three of them move"
+    And the site is served on a local address
+    When the operator reads the site at "/p/acme/house-bills/"
+    Then the site answers 200
+    And the page names its stylesheet and its script
+    When the operator reads the site at "/assets/site.js"
+    Then the site answers 200
+    When the operator reads the site at "/p/acme/house-bills/stages.json"
+    Then the menu drawn from that answer reads "approved" for the "discovery" stage
+    And the menu drawn from that answer reads "changed since approval" for the "stories" stage
+    And the menu drawn from that answer reads "not written" for the "architecture" stage
+    And the menu drawn from that answer lists Design and then the six stages in order

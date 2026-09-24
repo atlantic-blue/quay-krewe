@@ -168,11 +168,23 @@ func initializeStageSteps(sc *godog.ScenarioContext) {
 		if held.GetApproved() {
 			return fmt.Errorf("the %s stage still carries the word, at version %d", stage, held.GetVersion())
 		}
-		if held.GetApprovedAt() != nil {
-			return fmt.Errorf("the %s stage still carries the moment it was approved", stage)
-		}
 		return nil
 	})
+
+	// A stage the operator agreed to and then wrote again keeps the version the word was given to, so
+	// a reader can tell it from a stage nobody ever agreed to.
+	sc.Step(`^the "([^"]*)" design stage reads approved at version (\d+), holding version (\d+)$`,
+		func(ctx context.Context, stage string, approved, version int) error {
+			held, err := stageRead(ctx, stage)
+			if err != nil {
+				return err
+			}
+			if int(held.GetApprovedVersion()) != approved || int(held.GetVersion()) != version {
+				return fmt.Errorf("the %s stage reads approved at version %d holding version %d, want %d and %d",
+					stage, held.GetApprovedVersion(), held.GetVersion(), approved, version)
+			}
+			return nil
+		})
 
 	// What it means, never how it is spelled. Postgres holds a jsonb document in its own form, so a
 	// scenario comparing the bytes would pass here, against the memory store, and fail against a
