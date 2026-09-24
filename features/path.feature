@@ -3575,7 +3575,7 @@ Feature: A project holds a numbered path of steps
     Then the control plane refuses it as the wrong state
     And the refusal suggests "/home/agent/workspace"
     And the refusal suggests "/home/agent/shared/worktrees/"
-    And the refusal suggests "take the working tree the git skill names"
+    And the refusal suggests "Take the working tree the git skill names"
     And step 1 reads back as unproven
     And step 1 records no run at all
     And nothing was run

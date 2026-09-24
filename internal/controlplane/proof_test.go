@@ -107,7 +107,7 @@ func TestCheckTwoRefusesASessionWithNoCheckout(t *testing.T) {
 		"step 3",
 		sandbox.WorkingPath,
 		sandbox.WorktreesPath + "/" + session.GetId(),
-		"take the working tree the git skill names",
+		"Take the working tree the git skill names",
 	} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal is %q, want it to carry %q", err.Error(), want)
