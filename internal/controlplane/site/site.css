@@ -34,6 +34,16 @@ button{font:inherit;color:inherit;cursor:pointer}
 .body .state{font-size:11px;letter-spacing:.06em;text-transform:uppercase}
 .body .text{font-family:var(--mono);font-size:13px;line-height:1.55;white-space:pre-wrap;margin:0}
 
+/* The screens of a stage, played here rather than on a web host. The frame is given the height a
+   person needs to press a shape and read what came back, and the link beside it hands them the same
+   page on its own when the stage is dense. */
+.body.plays{max-width:none}
+.body.plays .state,.body.plays .empty,.body.plays .document{max-width:72ch}
+.body .map{display:block;width:100%;height:min(80vh,900px);min-height:520px;border:1px solid var(--line);
+  border-radius:12px;background:var(--panel);margin:0 0 8px}
+.body .wide{margin:0 0 18px;font-size:12px}
+.body .wide a{color:var(--accent)}
+
 /* A rendered body. The stage text arrives as a document now, so these are the elements a design is
    written in, held to the same palette and the same restraint as the page around them. */
 .document{line-height:1.6}
