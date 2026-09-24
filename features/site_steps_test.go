@@ -551,6 +551,50 @@ func initializeSiteSteps(sc *godog.ScenarioContext) {
 		}
 		return nil
 	})
+
+	// The design system, as a picture rather than as a list. Every colour the session named is on the
+	// page, drawn in that colour, with its name and its value beside it.
+	sc.Step(`^the design system stage draws a swatch for every colour the project names, with its value$`,
+		func(ctx context.Context) error {
+			return theProjectDrawsItsTokens(ctx, "colour")
+		})
+
+	sc.Step(`^the design system stage draws every font, radius and space the project names, with its value$`,
+		func(ctx context.Context) error {
+			for _, group := range []string{"font", "radius", "space"} {
+				if err := theProjectDrawsItsTokens(ctx, group); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+
+	// A colour the design system never named is a colour nobody agreed to. The page holds none of its
+	// own, so what the operator approves is what the session wrote.
+	sc.Step(`^the design system stage draws no colour and no font the project does not name$`,
+		func(ctx context.Context) error {
+			drawn, err := tokensTheSiteDrew(ctx)
+			if err != nil {
+				return err
+			}
+			for _, group := range []string{"colour", "font"} {
+				named, err := theProjectsTokens(ctx, group)
+				if err != nil {
+					return err
+				}
+				for name, token := range drawn[group] {
+					if _, held := named[name]; !held {
+						return fmt.Errorf("the page draws a %s called %q as %q, and the design system names no such %s",
+							group, name, token.value, group)
+					}
+				}
+				if len(drawn[group]) != len(named) {
+					return fmt.Errorf("the design system names %d %s tokens and the page draws %d",
+						len(named), group, len(drawn[group]))
+				}
+			}
+			return nil
+		})
 }
 
 // playControl is the control a person presses to play a story. A page without it draws the screens
@@ -743,4 +787,107 @@ func menuState(drawn, entry string) (string, bool) {
 		return "", false
 	}
 	return found[1], true
+}
+
+// The tokens of a design system, as the page draws them and as the session wrote them.
+//
+// Both halves are read rather than written down here. The page is read through its own renderer, and
+// the design system is read back out of the artifact the scenario wrote, so a page holding a palette
+// of its own fails these rather than passing against a list a scenario invented.
+
+// siteTokenTypes is the style property each group is drawn with. A colour reaches the operator as the
+// colour, a font as a line set in it, a radius as a rounded corner, a space as a bar of that width.
+var siteTokenTypes = map[string]string{
+	"colour": "background",
+	"font":   "font-family",
+	"radius": "border-radius",
+	"space":  "width",
+}
+
+// siteTokenBlock is one token as the page drew it: its group, its name, and everything drawn for it.
+var siteTokenBlock = regexp.MustCompile(`(?s)<li class="token" data-group="([^"]*)" data-token="([^"]*)">(.*?)</li>`)
+
+// siteTokenValue is the value one token shows a reader.
+var siteTokenValue = regexp.MustCompile(`<code class="value">([^<]*)</code>`)
+
+// siteToken is one token of the view: what it shows, and the markup it was drawn with.
+type siteToken struct {
+	value  string
+	markup string
+}
+
+// tokensTheSiteDrew is every token on the design system stage, by group and by name.
+func tokensTheSiteDrew(ctx context.Context) (map[string]map[string]siteToken, error) {
+	drawn, err := siteBody(ctx, store.StageDesignSystem)
+	if err != nil {
+		return nil, err
+	}
+	held := map[string]map[string]siteToken{}
+	for _, found := range siteTokenBlock.FindAllStringSubmatch(drawn, -1) {
+		group, name, markup := found[1], found[2], found[3]
+		if held[group] == nil {
+			held[group] = map[string]siteToken{}
+		}
+		value := ""
+		if shown := siteTokenValue.FindStringSubmatch(markup); shown != nil {
+			value = shown[1]
+		}
+		held[group][name] = siteToken{value: value, markup: markup}
+	}
+	return held, nil
+}
+
+// theProjectsTokens is one group of the design system the scenario wrote.
+func theProjectsTokens(ctx context.Context, group string) (map[string]string, error) {
+	held := mockupsFrom(ctx)
+	if held == nil || held.fixture == nil {
+		return nil, fmt.Errorf("no design system was written, so there are no %s tokens to draw", group)
+	}
+	tokens, written := held.fixture["tokens"].(map[string]any)
+	if !written {
+		return nil, fmt.Errorf("the design system names no tokens at all")
+	}
+	values, named := tokens[group].(map[string]any)
+	if !named || len(values) == 0 {
+		return nil, fmt.Errorf("the design system names no %s, so this step would prove nothing", group)
+	}
+	out := make(map[string]string, len(values))
+	for name, value := range values {
+		text, ok := value.(string)
+		if !ok {
+			return nil, fmt.Errorf("the %s called %q is not written as a value", group, name)
+		}
+		out[name] = text
+	}
+	return out, nil
+}
+
+// theProjectDrawsItsTokens holds the page to one group: every name the design system gives, with its
+// value on the page, and drawn as the thing it is.
+func theProjectDrawsItsTokens(ctx context.Context, group string) error {
+	named, err := theProjectsTokens(ctx, group)
+	if err != nil {
+		return err
+	}
+	drawn, err := tokensTheSiteDrew(ctx)
+	if err != nil {
+		return err
+	}
+	for name, value := range named {
+		token, found := drawn[group][name]
+		if !found {
+			return fmt.Errorf("the design system names the %s %q and the page draws no such %s",
+				group, name, group)
+		}
+		if token.value != value {
+			return fmt.Errorf("the %s %q shows %q, and the design system names %q",
+				group, name, token.value, value)
+		}
+		want := `style="` + siteTokenTypes[group] + ":" + value + `"`
+		if !strings.Contains(token.markup, want) {
+			return fmt.Errorf("the %s %q is never drawn as %s, so the operator reads the value and never sees it",
+				group, name, want)
+		}
+	}
+	return nil
 }
