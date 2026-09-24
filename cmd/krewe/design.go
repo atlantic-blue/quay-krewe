@@ -14,6 +14,7 @@ import (
 	"github.com/atlantic-blue/quay-krewe/internal/console"
 	"github.com/atlantic-blue/quay-krewe/internal/contextsize"
 	"github.com/atlantic-blue/quay-krewe/internal/controlplane"
+	"github.com/atlantic-blue/quay-krewe/internal/proofcommand"
 	"github.com/atlantic-blue/quay-krewe/internal/sandbox"
 	"github.com/atlantic-blue/quay-krewe/internal/workspace"
 )
@@ -24,11 +25,10 @@ import (
 // differently.
 const flagFile = "--file"
 
-// scenarioToken is what a proof command carries where the name of one scenario goes. The word is the
-// control plane's, which refuses a command without it, and it is named here because the tool
-// substitutes it to show what will actually run. A scenario in features/design.feature reads that
-// substituted line back, so the two copies cannot drift apart in silence.
-const scenarioToken = "{scenario}"
+// scenarioToken is what a proof command carries where the name of one scenario goes. The tool reads the
+// same value the control plane refuses a command without, and substitutes it with the same function the
+// run uses, so what this prints is what will run.
+const scenarioToken = proofcommand.Token
 
 // flagPrint asks for the address of a page and nothing else, for a person who wants to paste it
 // somewhere, or who is on a machine with no screen to open it on.
@@ -506,7 +506,7 @@ func runDesignProof(ctx context.Context, client quaycrewv1.ControlPlaneServiceCl
 	}
 	if design.GetProofCommand() == "" {
 		fmt.Fprintf(out, "%s proves nothing yet: it has no proof command\n\n", located.Path.Project)
-		fmt.Fprintf(out, "set one: krewe design proof %s \"go test ./features/... -run '%s'\"\n",
+		fmt.Fprintf(out, "set one: krewe design proof %s \"go test ./features/... -run %s\"\n",
 			typed, scenarioToken)
 		return nil
 	}
@@ -534,7 +534,7 @@ func sayProof(out io.Writer, project string, design *quaycrewv1.Design, scenario
 		return
 	}
 	fmt.Fprintf(out, "\nfor the scenario named %q that runs:\n  %s\n",
-		scenario, strings.ReplaceAll(design.GetProofCommand(), scenarioToken, scenario))
+		scenario, proofcommand.Substitute(design.GetProofCommand(), scenario))
 }
 
 // aScenarioOf is the name of one scenario this project's path already names, or nothing when no step

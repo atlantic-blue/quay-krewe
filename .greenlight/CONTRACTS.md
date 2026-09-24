@@ -521,8 +521,9 @@ The column migration `0070` adds, for the fan out:
 The columns migration `0072` adds, for the proof command:
 
 - `proof_command` text not null default `''`. The command krewe runs inside the session's sandbox to
-  run one scenario. It must carry the token `{scenario}`. For this repository the value is
-  `go test ./features/... -run 'TestFeatures/{scenario}' -v -count=1`.
+  run one scenario. It must carry the token `{scenario}`, outside any quotes, because krewe quotes
+  the scenario name itself. For this repository the value is
+  `go test ./features/ -count=1 -v -run TestFeatures/{scenario}'$'`.
 - `proof_count_pattern` text not null default `'([0-9]+) scenarios'`. A regular expression with one
   capture group, read against the run output for the number of scenarios that ran.
 - `proof_timeout_seconds` integer not null default 900. The budget for one proof run.
@@ -2013,6 +2014,10 @@ Errors:
 - `NotFound` when the project does not exist or is deleted.
 - `InvalidArgument` when `command` carries no `{scenario}` token: "this command runs everything, so
   it proves nothing about one step. Put {scenario} where the scenario name goes".
+- `InvalidArgument` when `command` carries `{scenario}` inside a single quoted or a double quoted
+  span: "krewe quotes the scenario name itself, so a token inside quotes puts the name inside a
+  second pair, and the shell reads the rest of the name as code. Write it as: " and the same command
+  with the token outside the quotes.
 - `InvalidArgument` when `count_pattern` does not compile, naming the position of the fault.
 - `InvalidArgument` when `count_pattern` carries no capture group: "the pattern needs one group
   around the number".
@@ -3457,10 +3462,10 @@ Errors:
 
 Invariants:
 - With no command argument it prints and writes nothing.
-- The command must carry `{scenario}`. The refusal says where to put it.
+- The command must carry `{scenario}`, outside any quotes. Each refusal says how to write it.
 - Run from inside a sandbox, `DeniedToDriver` refuses it.
-- The output shows the command with a real scenario name substituted, so the operator reads what
-  will run.
+- The output shows the command with a real scenario name substituted as one shell word, so the
+  operator reads what will run.
 
 Verification: verify
 Acceptance criteria:
