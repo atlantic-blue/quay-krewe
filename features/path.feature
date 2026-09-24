@@ -1732,7 +1732,7 @@ Feature: A project holds a numbered path of steps
   Scenario: A session that takes a step finds its working tree made and keeps its folder there
     Given the project's design is "# Bills\n"
     And the operator approved the project's design
-    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the project's proof command is "go test ./features/... -run {scenario}"
     And the project works in "atlantic-blue/bills"
     And the session's sandbox holds no checkout yet
     And the project's path is:
@@ -1750,7 +1750,7 @@ Feature: A project holds a numbered path of steps
   Scenario: An exec that finds the working tree there runs no git command
     Given the project's design is "# Bills\n"
     And the operator approved the project's design
-    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the project's proof command is "go test ./features/... -run {scenario}"
     And the project works in "atlantic-blue/bills"
     And the project's path is:
       """
@@ -1766,7 +1766,7 @@ Feature: A project holds a numbered path of steps
   Scenario: Only the session holding the step is given a folder to work in
     Given the project's design is "# Bills\n"
     And the operator approved the project's design
-    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the project's proof command is "go test ./features/... -run {scenario}"
     And the project works in "atlantic-blue/bills"
     And the project's path is:
       """
@@ -1782,7 +1782,7 @@ Feature: A project holds a numbered path of steps
   Scenario: A working tree that cannot be made fails the exec and starts no model
     Given the project's design is "# Bills\n"
     And the operator approved the project's design
-    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the project's proof command is "go test ./features/... -run {scenario}"
     And the project works in "atlantic-blue/bills"
     And the session's sandbox holds no checkout yet
     And adding the working tree fails, saying "fatal: could not create work tree"
