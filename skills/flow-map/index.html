@@ -704,8 +704,11 @@ $("#z-out").onclick = function () { zoom = Math.max(0.25, zoom - 0.15); applyZoo
 $("#z-fit").onclick = fit;
 window.addEventListener("resize", function () { if (mode === "map") { fit(); } });
 
-fetch("flows.json").then(function (r) {
-  if (!r.ok) { throw new Error("flows.json answered " + r.status); }
+// The screens come from the stage this page is opened at, which is one step above the page. The
+// site serves the page at <stage>/map/ and the screens at <stage>/flows.json, so a project keeps
+// its screens in the system that holds the rest of its design and publishes nothing.
+fetch("../flows.json").then(function (r) {
+  if (!r.ok) { throw new Error("the screens answered " + r.status); }
   return r.json();
 }).then(function (d) {
   DATA = d;
