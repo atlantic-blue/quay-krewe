@@ -1695,6 +1695,33 @@ Feature: A project holds a numbered path of steps
     And the step text carries "Do not merge it. Report the address of the pull request."
     And the step text carries "Read both.\n\nDeliver this step as one pull request."
 
+  # The two runs krewe has to record, and the one place both can be produced. A red run reads a tree
+  # holding the tests and no code, a green run reads the finished work, and only the session holding
+  # the step puts the tree in either state. So the build stops at each of those two moments.
+  #
+  # The operator runs both checks. A session inside a step reaches no control plane, so a text telling
+  # it to check its own work sends it to a command that answers that it was never told where the
+  # system is.
+  Scenario: The take text tells the session to stop for the red run and the green run checks
+    Given the project's design is "# Bills\n"
+    And the operator approved the project's design
+    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the project's path is:
+      """
+      ## 1. The store holds a project's brief
+      """
+    When the operator takes step 1
+    Then the step text carries "/home/agent/shared/worktrees/$QC_SESSION_ID/"
+    And the step text carries "Do not clone the repository into /home/agent/workspace or into /tmp"
+    And the step text carries "the smallest stubs the tests need to compile"
+    And the step text carries "Reply with the sha of that commit. Then stop."
+    And the step text carries "the operator runs krewe step check 1.1"
+    And the step text carries "Open the pull request, reply with the sha at its head, and stop again."
+    And the step text carries "Change no test file after the red run."
+    And the step text carries "Build only when the operator tells you the restatement is approved"
+    And the step text carries "Do not run krewe step check yourself"
+    And the step text carries "Do not merge it. Report the address of the pull request."
+
   # A label with nothing under it is text the model has to read for nothing.
   Scenario: A step with no proof produces text with no proof label in it
     Given the project's design is "# Bills\n"
