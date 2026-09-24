@@ -52,11 +52,22 @@ type siteAnswer struct {
 }
 
 // siteWorld is the address the site is served on, and what the last request answered.
+//
+// The page and the address it names for its drawing library are kept as well, because the steps that
+// follow a page read the files the page itself loads rather than addresses of their own.
 type siteWorld struct {
 	serving *httptest.Server
 	status  int
 	body    string
 	header  http.Header
+	page    string
+	library string
+}
+
+// siteFile is one file the site handed over, named by the address it came from.
+type siteFile struct {
+	what string
+	body string
 }
 
 type siteKey struct{}
@@ -315,6 +326,99 @@ func initializeSiteSteps(sc *godog.ScenarioContext) {
 	sc.Step(`^the compose stack tells the control plane to bind "([^"]*)"$`, func(want string) error {
 		return composeSays(`QC_SITE_ADDR: "` + want + `"`)
 	})
+	// The picture, at the point the page receives it. A diagram arrives as the element the drawing
+	// library looks for, holding the source a session wrote, so the page has something to draw and
+	// the operator is not reading a flowchart as prose.
+	sc.Step(`^the "([^"]*)" stage arrives as a diagram ready to draw$`, func(ctx context.Context, stage string) error {
+		held, err := siteStage(ctx, stage)
+		if err != nil {
+			return err
+		}
+		if !strings.Contains(held.BodyHTML, diagramElement) {
+			return fmt.Errorf("the %s stage carries no %s element: it reads %q", stage, diagramElement, held.BodyHTML)
+		}
+		if !strings.Contains(held.BodyHTML, "flowchart") {
+			return fmt.Errorf("the %s stage carries an empty diagram: it reads %q", stage, held.BodyHTML)
+		}
+		return nil
+	})
+
+	// Where the library comes from. The address is kept, so the step after this one reads the file the
+	// page itself names rather than an address a scenario made up.
+	sc.Step(`^the page loads the drawing library from the site itself$`, func(ctx context.Context) error {
+		s := siteFrom(ctx)
+		s.page = s.body
+		found := drawingLibrary.FindStringSubmatch(s.page)
+		if found == nil {
+			return fmt.Errorf("the page loads no drawing library, so a diagram stays as text: %s", s.page)
+		}
+		s.library = found[1]
+		if !strings.HasPrefix(s.library, "/assets/") {
+			return fmt.Errorf("the page loads its drawing library from %q, and the site has to serve it", s.library)
+		}
+		return nil
+	})
+
+	sc.Step(`^the operator reads the drawing library the page names$`, func(ctx context.Context) error {
+		s := siteFrom(ctx)
+		if s.library == "" {
+			return fmt.Errorf("the page named no drawing library, so there is nothing to read")
+		}
+		return callSite(ctx, http.MethodGet, s.library)
+	})
+
+	sc.Step(`^the site answers a script$`, func(ctx context.Context) error {
+		s := siteFrom(ctx)
+		if kind := s.header.Get("Content-Type"); !strings.Contains(kind, "javascript") {
+			return fmt.Errorf("the site answered content type %q, and a browser runs a script", kind)
+		}
+		if len(s.body) == 0 {
+			return fmt.Errorf("the site answered an empty file, and an empty library draws nothing")
+		}
+		return nil
+	})
+
+	// The whole point of holding the library here. Every file the page loads is read, and none of them
+	// reaches off the machine, so a design opened on a machine with no network draws, and a private
+	// design is never announced to anybody.
+	//
+	// The library is read for its status and skipped for its text: it carries the addresses of the
+	// projects it came from in its own source, and a comment inside a file nobody fetches is not a
+	// call anywhere.
+	sc.Step(`^no file the site hands the operator reaches an address off the machine$`, func(ctx context.Context) error {
+		s := siteFrom(ctx)
+		if s.page == "" {
+			return fmt.Errorf("no page was read, so there is nothing to follow")
+		}
+		named := pageNames.FindAllStringSubmatch(s.page, -1)
+		if len(named) == 0 {
+			return fmt.Errorf("the page loads no file at all: %s", s.page)
+		}
+		read := []siteFile{{what: "the page", body: s.page}}
+		for _, one := range named {
+			address := one[1]
+			if !strings.HasPrefix(address, "/") {
+				return fmt.Errorf("the page loads %q, which is not an address on this site", address)
+			}
+			if err := callSite(ctx, http.MethodGet, address); err != nil {
+				return err
+			}
+			if s.status != http.StatusOK {
+				return fmt.Errorf("the site answered %d for %s, which the page loads", s.status, address)
+			}
+			if address == s.library {
+				continue
+			}
+			read = append(read, siteFile{what: address, body: s.body})
+		}
+		for _, one := range read {
+			if found := addressOffTheMachine.FindString(one.body); found != "" {
+				return fmt.Errorf("%s reaches %q, so opening this project would leave the machine",
+					one.what, found)
+			}
+		}
+		return nil
+	})
 }
 
 // callSite makes one request and keeps what came back, so the steps after it read a status, a header
@@ -398,6 +502,18 @@ func siteMenu(ctx context.Context) (string, error) {
 	}
 	return drawn, nil
 }
+
+// diagramElement is what a mermaid block arrives as, and what the drawing library looks for.
+const diagramElement = `<pre class="mermaid">`
+
+// drawingLibrary is the script tag that loads the library which draws the diagrams.
+var drawingLibrary = regexp.MustCompile(`<script[^>]+src="([^"]*mermaid[^"]*)"`)
+
+// pageNames is every file the page loads: its stylesheet, its script and its drawing library.
+var pageNames = regexp.MustCompile(`(?:src|href)="([^"]+)"`)
+
+// addressOffTheMachine is a request that leaves the machine the control plane runs on.
+var addressOffTheMachine = regexp.MustCompile(`https?://`)
 
 // eventAttribute is an attribute a browser runs: on, a word and an equals sign, inside a tag.
 var eventAttribute = regexp.MustCompile(`(?i)<[^>]*\son[a-z]+\s*=`)

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -307,5 +308,109 @@ func TestTheSiteAnswersAStageWrittenAgainWithoutTheWordItHad(t *testing.T) {
 	}
 	if held.Body != "four bills, and three of them move" {
 		t.Errorf("the discovery stage reads %q, want what was written second", held.Body)
+	}
+}
+
+// SITE-7. The library that draws a diagram is served by the site, and nothing the site hands over
+// reaches off the machine.
+//
+// A design is read on a machine that may have no network at all, and a private design must not
+// announce itself to anybody while it is read. So the page loads its drawing library from the site
+// and from nowhere else, and every file the site serves is checked for an address that leaves the
+// machine.
+
+// pageLoads is every file the page loads: its stylesheet, its script and its drawing library.
+var pageLoads = regexp.MustCompile(`(?:src|href)="([^"]+)"`)
+
+// libraryName is the address the page loads the drawing library from. The version is in the file
+// name, so a reader of the page sees which library is pinned without reading any Go.
+var libraryName = regexp.MustCompile(`^/assets/mermaid-\d+\.\d+\.\d+\.min\.js$`)
+
+// theDiagramLibrary is the address the page names for its drawing library, read off the page the site
+// serves rather than written down here, so the page and the file it loads cannot drift apart.
+func theDiagramLibrary(t *testing.T, s *controlplane.Server) string {
+	t.Helper()
+	status, page, _ := readSite(t, s, "/p/acme/house-bills/")
+	if status != http.StatusOK {
+		t.Fatalf("the page answered %d saying %q, want 200", status, page)
+	}
+	for _, found := range pageLoads.FindAllStringSubmatch(page, -1) {
+		if strings.Contains(found[1], "mermaid") {
+			return found[1]
+		}
+	}
+	t.Fatalf("the page loads no drawing library, so a diagram stays as text: %s", page)
+	return ""
+}
+
+// The page names the library, at an address on this site, with the version in the file name.
+func TestThePageLoadsTheDiagramLibraryFromTheSite(t *testing.T) {
+	s := newServer(&model.FakeRunner{})
+	_, projectID := newProject(t, s)
+	settleSiteStage(t, s, projectID, store.StageDiscovery)
+
+	held := theDiagramLibrary(t, s)
+	if !libraryName.MatchString(held) {
+		t.Fatalf("the page loads its drawing library from %q, want an address on this site with the "+
+			"version in the file name", held)
+	}
+}
+
+// The address the page names answers the library itself: a script, and the library that draws.
+func TestTheSiteServesTheDiagramLibrary(t *testing.T) {
+	s := newServer(&model.FakeRunner{})
+	_, projectID := newProject(t, s)
+	settleSiteStage(t, s, projectID, store.StageDiscovery)
+
+	status, body, header := readSite(t, s, theDiagramLibrary(t, s))
+	if status != http.StatusOK {
+		t.Fatalf("the drawing library answered %d, want 200", status)
+	}
+	if kind := header.Get("Content-Type"); !strings.Contains(kind, "javascript") {
+		t.Errorf("the drawing library answered content type %q, and a browser runs a script", kind)
+	}
+	if !strings.Contains(body, `globalThis["mermaid"]`) {
+		t.Errorf("the file at that address is %d bytes and never names mermaid, so it is not the library",
+			len(body))
+	}
+}
+
+// Nothing the operator is handed reaches off the machine. The page is read, every file it loads is
+// read, and each one is held to it.
+//
+// The library is read for its status and skipped for its text. It carries the addresses of the
+// projects it was built from in its own source, and an address written in a comment is not a call.
+func TestNoFileTheSiteServesReachesOffTheMachine(t *testing.T) {
+	s := newServer(&model.FakeRunner{})
+	_, projectID := newProject(t, s)
+	settleSiteStage(t, s, projectID, store.StageDiscovery)
+	library := theDiagramLibrary(t, s)
+
+	_, page, _ := readSite(t, s, "/p/acme/house-bills/")
+	read := []struct{ what, body string }{{"the page", page}}
+	loaded := pageLoads.FindAllStringSubmatch(page, -1)
+	if len(loaded) == 0 {
+		t.Fatalf("the page loads no file at all: %s", page)
+	}
+	for _, found := range loaded {
+		address := found[1]
+		if !strings.HasPrefix(address, "/") {
+			t.Fatalf("the page loads %q, which is not an address on this site", address)
+		}
+		status, body, _ := readSite(t, s, address)
+		if status != http.StatusOK {
+			t.Fatalf("the site answered %d for %s, which the page loads", status, address)
+		}
+		if address == library {
+			continue
+		}
+		read = append(read, struct{ what, body string }{address, body})
+	}
+
+	offTheMachine := regexp.MustCompile(`https?://`)
+	for _, one := range read {
+		if found := offTheMachine.FindString(one.body); found != "" {
+			t.Errorf("%s reaches %q, so opening a project would leave the machine", one.what, found)
+		}
 	}
 }
