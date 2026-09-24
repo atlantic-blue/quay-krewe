@@ -406,6 +406,15 @@ func (s *Server) runTheScenario(ctx context.Context, project string, held *quayc
 	if err != nil {
 		return store.ProofResult{}, nil, err
 	}
+	// After the sandbox, because a reclaimed session has its working tree restored in there, and a
+	// directory read before that restore is a directory that is not back yet. A tree that cannot be
+	// restored is a fault of the system's own and says so, which is a different sentence from this
+	// one. For a session that has its container, which is every check but one, this costs the read
+	// and nothing else: the call above answers from the container it already found.
+	where, err := s.whereTheWorkIs(session, held)
+	if err != nil {
+		return store.ProofResult{}, nil, err
+	}
 
 	command := strings.ReplaceAll(design.GetProofCommand(), scenarioToken, held.GetProofScenario())
 	budget := time.Duration(design.GetProofTimeoutSeconds()) * time.Second
@@ -417,7 +426,7 @@ func (s *Server) runTheScenario(ctx context.Context, project string, held *quayc
 
 	// A shell, because a proof command is a command line rather than a program and its arguments: it
 	// carries quotes, pipes and a scenario name with spaces in it.
-	spec := sandbox.Spec{Argv: []string{"sh", "-c", command}, Workdir: s.whereTheWorkIs(session)}
+	spec := sandbox.Spec{Argv: []string{"sh", "-c", command}, Workdir: where}
 	started, err := box.Exec(under, spec)
 	if err != nil {
 		// A command the shell cannot start is a verdict and not an error. Nothing about the step is
@@ -504,21 +513,49 @@ func (s *Server) restoreTheWorkingTree(session *quaycrewv1.Session) error {
 }
 
 // whereTheWorkIs is the directory inside the container that the run is pointed at: the repository the
-// session worked in where there is one, and the session's own directory where there is not.
+// session worked in.
 //
-// It is the root ReadSessionWork reads from, named as the container sees it rather than as this
-// process does, because the command runs in there. A system that keeps no directories falls back to
-// the path a sandbox mounts its working directory at, which is where the session has been working
-// whatever this process can see of it.
-func (s *Server) whereTheWorkIs(session *quaycrewv1.Session) string {
+// It is named as the container sees it rather than as this process does, because the command runs in
+// there.
+//
+// A place with no repository in it is refused rather than run in, which is CHECK-2. The fallback it
+// replaces pointed the run at the session's own directory, and a scenario run where there is no
+// checkout reports no scenarios. Krewe records that as a failing verdict, so the operator read a
+// fault in code that never ran, and on a commit holding the tests alone that verdict even counted as
+// the red run the step needs. The refusal comes before the container, before the run and before any
+// verdict is recorded, so nothing about the step moves.
+func (s *Server) whereTheWorkIs(session *quaycrewv1.Session, held *quaycrewv1.Step) (string, error) {
 	places := s.storage.WorkPlaces(boxOf(session))
+	if found, kept := sandbox.Repository(places); kept {
+		return found.Sandbox, nil
+	}
+	return "", noCheckoutToRunIn(places, held)
+}
+
+// noCheckoutToRunIn is what the operator reads when the session built somewhere krewe cannot see.
+//
+// It names every directory krewe read, because the next move is to go and look in them, and the one
+// thing a person cannot do from a refusal that names none is tell a lost checkout from a system that
+// was never going to find it.
+func noCheckoutToRunIn(places []sandbox.Place, held *quaycrewv1.Step) error {
+	const nothingRan = "Nothing was run: a scenario run where there is no checkout reports no " +
+		"scenarios, which reads as a fault in the code and is not one"
 	if len(places) == 0 {
-		return sandbox.WorkingPath
+		return status.Errorf(codes.FailedPrecondition,
+			"krewe keeps no directory for the session holding step %d, so it can see no checkout to "+
+				"run the scenario in. %s. Give this system a directory of its own to keep its work in, "+
+				"then take the working tree the git skill names and build there",
+			held.GetNumber(), nothingRan)
 	}
-	if found, held := sandbox.Repository(places); held {
-		return found.Sandbox
+	read := make([]string, 0, len(places))
+	for _, place := range places {
+		read = append(read, place.Sandbox)
 	}
-	return places[0].Sandbox
+	return status.Errorf(codes.FailedPrecondition,
+		"the session holding step %d has no checkout krewe can see, so there is nothing to run the "+
+			"scenario in. krewe read %s. %s. Take the working tree the git skill names, build there, "+
+			"and check the step again",
+		held.GetNumber(), strings.Join(read, " and "), nothingRan)
 }
 
 // theEndOfTheRun is the last proofOutputRead characters the run printed, read to the end.
