@@ -81,21 +81,30 @@ func (s *Server) Site() http.Handler {
 	return mux
 }
 
-// The page itself, and the two files it loads. They are embedded rather than read from disk because
+// The page itself, and the files it loads. They are embedded rather than read from disk because
 // the control plane is installed as one binary: a page beside the executable is a page that is there
 // on the machine it was built on and nowhere else.
 //
 // Named one by one rather than as a directory: the renderer that proves this page is a Go package in
 // a directory below, and a pattern over the whole tree would carry its source into the binary.
 //
-//go:embed site/index.html site/site.js site/site.css
+//go:embed site/index.html site/site.js site/site.css site/mermaid-12.0.0.min.js
 var siteFiles embed.FS
 
+// mermaidFile is the library that draws the diagrams, and the version it is pinned at. It is
+// dist/mermaid.min.js of the npm package mermaid at 12.0.0, copied in as it is and never built here.
+//
+// It is served rather than fetched from anywhere, so a design is read on a machine with no network
+// and a private design never announces itself while somebody reads it. The version is in the file
+// name, so the page names the version too and a reader sees which library they are running.
+const mermaidFile = "mermaid-12.0.0.min.js"
+
 // siteAssets are the files the page loads, with what each one is. A name outside this list is not
-// served: the site hands out the page and its two files, and nothing else on the machine.
+// served: the site hands out the page and the files it loads, and nothing else on the machine.
 var siteAssets = map[string]string{
-	"site.js":  "text/javascript; charset=utf-8",
-	"site.css": "text/css; charset=utf-8",
+	"site.js":   "text/javascript; charset=utf-8",
+	"site.css":  "text/css; charset=utf-8",
+	mermaidFile: "text/javascript; charset=utf-8",
 }
 
 // servePage answers the page an operator opens.
@@ -122,8 +131,9 @@ func (s *Server) servePage(w http.ResponseWriter, r *http.Request) {
 
 // serveAsset answers one of the files the page loads.
 //
-// It needs no project: the script and the stylesheet are the same for every project, so the page
-// names them at one address and a reader with two projects open holds one copy of each.
+// It needs no project: the script, the stylesheet and the drawing library are the same for every
+// project, so the page names them at one address and a reader with two projects open holds one copy
+// of each.
 func serveAsset(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("file")
 	kind, served := siteAssets[name]

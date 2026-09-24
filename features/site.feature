@@ -148,3 +148,19 @@ Feature: A project's stages are read over http
     And the "discovery" stage reads as a document, with its heading, its list and its code
     And the "discovery" stage runs nothing in the operator's browser
     And the page shows the operator that document
+
+  # A data model and an architecture carry a picture, and step 3 left that picture on the page as the
+  # text that describes it. The library that draws it is served by the site itself, so the operator
+  # reads the architecture as a diagram on a machine with no network, and the design of a private
+  # project never leaves the machine it is written on.
+  Scenario: A diagram in a stage is drawn by a library the site serves itself
+    Given every design stage is written and approved
+    And the site is served on a local address
+    When the operator reads the site at "/p/acme/house-bills/stages.json"
+    Then the "architecture" stage arrives as a diagram ready to draw
+    When the operator reads the site at "/p/acme/house-bills/"
+    Then the page loads the drawing library from the site itself
+    When the operator reads the drawing library the page names
+    Then the site answers 200
+    And the site answers a script
+    And no file the site hands the operator reaches an address off the machine

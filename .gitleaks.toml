@@ -1,0 +1,15 @@
+# What the secret scanner reads when it runs over this repository.
+#
+# It extends the rules the scanner ships with rather than replacing them, so every rule still runs
+# over every file written here.
+
+[extend]
+useDefault = true
+
+# The drawing library the design site serves. It is minified, so its short names and its long lines
+# read as a key to a rule that measures entropy: the finding was `keyCount`, a field of a debug count
+# in its texture atlas. Nothing in the file is written here, and the version is in the name, so a
+# later version is scanned again until somebody skips that one too.
+[[allowlists]]
+description = "the vendored drawing library, which is read as bytes and written by nobody here"
+paths = ['''internal/controlplane/site/mermaid-12\.0\.0\.min\.js''']

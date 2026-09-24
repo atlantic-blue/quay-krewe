@@ -129,12 +129,34 @@ function renderBody(answer, entry) {
   var answer = null;
   var showing = "design";
 
+  var libraryReady = false;
+
+  // drawDiagrams turns every diagram in the stage into a picture, with the library this site serves.
+  // It runs after a body is in the document, because a diagram is an element of that body and the
+  // library is handed the elements rather than told to go and look for them.
+  //
+  // A page whose library did not arrive still reads: a diagram is a block of text inside the body, so
+  // what is lost is the picture and never the stage.
+  function drawDiagrams() {
+    if (typeof mermaid === "undefined") { return; }
+    var blocks = stage.querySelectorAll("pre.mermaid");
+    if (!blocks.length) { return; }
+    if (!libraryReady) {
+      mermaid.initialize({ startOnLoad: false });
+      libraryReady = true;
+    }
+    mermaid.run({ nodes: blocks }).catch(function (err) {
+      console.error("a diagram in this stage could not be drawn", err);
+    });
+  }
+
   function show(entry) {
     showing = entry;
     stage.innerHTML = renderBody(answer, entry);
     Array.prototype.forEach.call(menu.querySelectorAll(".entry"), function (button) {
       button.setAttribute("aria-current", String(button.getAttribute("data-entry") === entry));
     });
+    drawDiagrams();
   }
 
   function draw() {
