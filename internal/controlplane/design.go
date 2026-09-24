@@ -2148,13 +2148,59 @@ func takeText(step *quaycrewv1.Step, inThePath int, project string, hasContracts
 		blocks = append(blocks, labelScope+"\n"+step.GetContractScope())
 	}
 	blocks = append(blocks, whereToRead(hasContracts), takeDelivery)
-	// The restatement is asked for only where the project asked to have its steps checked. Without a
-	// proof command there is no check to approve a restatement for, so the paragraph would cost the
-	// session a read and the operator a reading, and gate nothing at the end of it.
+	// The restatement and the two stops are asked for only where the project asked to have its steps
+	// checked. Without a proof command there is no check to approve a restatement for and no run to
+	// stop for, so both paragraphs would cost the session a read and gate nothing at the end of it.
+	//
+	// The stops come before the restatement, because the restatement is the thing this session does
+	// next and the last thing the text says is the thing it does next.
 	if step.GetCheckRequired() {
-		blocks = append(blocks, restateFirst())
+		blocks = append(blocks, stopForBothRuns(feature, step.GetNumber()), restateFirst())
 	}
 	return strings.Join(blocks, "\n\n") + "\n"
+}
+
+// stopForBothRuns is the protocol a session follows to produce the two runs the word done waits for.
+//
+// Krewe records a run that failed and then a run that passed, and it reads both out of the working
+// tree the session built in. Only that session can hold the tree in the state each run needs: the
+// tests and no code, and then the finished work. Nothing stopped it at either moment, so no red run
+// was ever recorded, and a step whose code is written can produce none.
+//
+// The session records neither run. A session inside a step reaches no control plane, so the text
+// says where to stop and leaves the command to the operator. Measured on 2026-09-24: krewe step show
+// in a session's exec answers that this session was not told where the system is.
+//
+// The paths are read from the package that computes them, so the directory the text names and the
+// directory krewe makes cannot come to be two different places. The one to avoid is named as well as
+// the one to work in: krewe reads the session's own directory before the working tree, so a clone
+// there is the checkout a run happens in, and the tests the session wrote sit where nothing looks.
+//
+// The address carries the feature as well as the number, because a step 3 is a step 3 in every
+// feature of the project and the operator has one command to type.
+func stopForBothRuns(feature, number int32) string {
+	tree := sandbox.WorktreesPath + "/$" + sandbox.SessionIDEnv + "/<repository>"
+	return fmt.Sprintf(
+		"This step is checked, so krewe reads two runs of its scenario out of your working tree: "+
+			"one that fails with the tests alone, and one that passes with the code. "+
+			"Only you can put the tree in those two states, so the build stops twice.\n"+
+			"\n1. Restate the step first, then stop. Build only when the operator tells you the "+
+			"restatement is approved, because the check refuses a step whose restatement nobody "+
+			"approved.\n"+
+			"\n2. Work in %s, the working tree the git skill names. Do not clone the repository "+
+			"into %s or into /tmp. Krewe reads your own directory first, so a clone there is the "+
+			"checkout it runs in, and the tests you wrote sit where it never looks.\n"+
+			"\n3. Commit the tests on their own, with the smallest stubs the tests need to compile. "+
+			"A commit that does not compile runs 0 scenarios, and 0 scenarios is not a red run.\n"+
+			"\n4. Reply with the sha of that commit. Then stop. You reach no control plane from "+
+			"in here, so the operator runs krewe step check %d.%d and tells you the red run is "+
+			"recorded.\n"+
+			"\n5. Write the code on top of that commit. Change no test file after the red run.\n"+
+			"\n6. Open the pull request, reply with the sha at its head, and stop again. The "+
+			"operator runs the same check for the green run.\n"+
+			"\nDo not run krewe step check yourself. This session reaches no control plane, and the "+
+			"command answers that it was never told where the system is.",
+		tree, sandbox.WorkingPath, feature, number)
 }
 
 // restateFirst is the last paragraph of the take text of a step its project asked to have checked,
