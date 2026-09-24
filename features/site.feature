@@ -120,3 +120,31 @@ Feature: A project's stages are read over http
     And the menu drawn from that answer reads "changed since approval" for the "stories" stage
     And the menu drawn from that answer reads "not written" for the "architecture" stage
     And the menu drawn from that answer lists Design and then the six stages in order
+
+  # A stage body is markdown, and an operator reads a document rather than the marks that make one.
+  # The same reading is what makes a body safe to open. A session writes the text, the operator reads
+  # the text, and nothing written into a body runs in the operator's browser.
+  Scenario: A script written into a stage body is shown and never run
+    Given the operator writes the "discovery" design stage as:
+      """
+      # Four bills
+
+      Two of them move every month.
+
+      - the rent moves
+      - the water moves
+
+      ```go
+      fmt.Println("the rent")
+      ```
+
+      <script>alert("the rent")</script>
+
+      <img src="x" onerror="alert('the water')">
+      """
+    And the site is served on a local address
+    When the operator reads the site at "/p/acme/house-bills/stages.json"
+    Then the site answers 200
+    And the "discovery" stage reads as a document, with its heading, its list and its code
+    And the "discovery" stage runs nothing in the operator's browser
+    And the page shows the operator that document
