@@ -14,6 +14,7 @@ import (
 
 	quaycrewv1 "github.com/atlantic-blue/quay-krewe/gen/quaycrew/v1"
 	"github.com/atlantic-blue/quay-krewe/internal/display"
+	"github.com/atlantic-blue/quay-krewe/internal/model"
 	"github.com/atlantic-blue/quay-krewe/internal/sandbox"
 	"github.com/atlantic-blue/quay-krewe/internal/store"
 	"github.com/cucumber/godog"
@@ -60,6 +61,10 @@ type pathWorld struct {
 	// scenario reclaimed it, so a count afterwards is the containers the check made and not the one
 	// the take made.
 	containersBefore int
+	// ranBeforeTheModel is every command a container had been given at the moment the model was asked,
+	// so a scenario can say the working tree was there before the session ran anything. Both orders
+	// leave the same records behind afterwards, and only one of them is any use to the session.
+	ranBeforeTheModel string
 	// recorded is the path as it stood before a scenario closed the feature, so a later read is
 	// compared against what was there rather than against what the scenario meant to write. A step
 	// somebody took has already moved, and this is what says closing the feature moved nothing more.
@@ -143,6 +148,7 @@ func milestoneNumbered(ctx context.Context, number int32) (*quaycrewv1.Milestone
 func initializePathSteps(sc *godog.ScenarioContext) {
 	initializeFeatureSteps(sc)
 	initializeProofRunSteps(sc)
+	initializeStepWorkingTreeSteps(sc)
 	initializeReclaimedSessionSteps(sc)
 	sc.Before(func(ctx context.Context, _ *godog.Scenario) (context.Context, error) {
 		return context.WithValue(ctx, pathKey{}, &pathWorld{}), nil
@@ -3240,4 +3246,236 @@ func theSessionCloned(ctx context.Context) error {
 // and the workspace and project this world made it in.
 func theSessionsBox(w *world, session string) sandbox.Config {
 	return sandbox.Config{ID: session, Workspace: w.workspaceID, Project: w.projectID}
+}
+
+// The working tree a step session builds in, made by krewe before that session's first command.
+//
+// The check reads one directory, the working tree the git skill names, and every one of these
+// scenarios is about the session being in it. What the sandbox was given is the evidence a double can
+// hold: the commands are the tree, and the folder the model is told it may work in is what keeps the
+// shell there from one command to the next.
+func initializeStepWorkingTreeSteps(sc *godog.ScenarioContext) {
+	sc.Step(`^the project works in "([^"]*)"$`, func(ctx context.Context, address string) error {
+		w := worldFrom(ctx)
+		_, err := w.client.SetProjectRepository(ctx, &quaycrewv1.SetProjectRepositoryRequest{
+			Project: w.projectID, Repository: address})
+		return err
+	})
+
+	// A container with nothing checked out in it. It is set on the provider rather than on a sandbox,
+	// because the container this answers for does not exist yet: the take is what makes it.
+	//
+	// The same step records what had run at the moment the model was asked, so a scenario can say the
+	// tree was there before the session's first command rather than only that both happened.
+	sc.Step(`^the session's sandbox holds no checkout yet$`, func(ctx context.Context) error {
+		w, p := worldFrom(ctx), pathFrom(ctx)
+		w.provider.Replies = append(w.provider.Replies,
+			sandbox.Reply{Match: lookingForACheckout, Err: exitedWith(1)})
+		w.runner.duringExec = func(model.Request) { p.ranBeforeTheModel = whatEverySandboxRan(w) }
+		return nil
+	})
+
+	sc.Step(`^adding the working tree fails, saying "([^"]*)"$`, func(ctx context.Context, said string) error {
+		w := worldFrom(ctx)
+		w.provider.Replies = append(w.provider.Replies,
+			sandbox.Reply{Match: "worktree add", Stderr: said, Err: exitedWith(128)})
+		return nil
+	})
+
+	// Command by command, because each one is a different way for the work to land where krewe cannot
+	// read it: a clone of another repository, a tree under a name another session shares, or a tree
+	// that nothing in the session's own folder points at.
+	sc.Step(`^the session's working tree holds the project's repository$`, func(ctx context.Context) error {
+		ran, err := whatTheSandboxOfTheSessionRan(ctx)
+		if err != nil {
+			return err
+		}
+		session, err := theSessionWithTheTree(ctx)
+		if err != nil {
+			return err
+		}
+		tree := sandbox.WorktreesPath + "/" + session + "/bills"
+		for _, want := range []string{
+			"git clone https://github.com/atlantic-blue/bills.git " + sandbox.ReposPath + "/bills",
+			"git -C " + sandbox.ReposPath + "/bills fetch origin",
+			"git -C " + sandbox.ReposPath + "/bills worktree add " + tree + " -b krewe/" + session + " origin/HEAD",
+			"ln -s " + tree + " " + sandbox.WorkingPath + "/bills",
+		} {
+			if !strings.Contains(ran, want) {
+				return fmt.Errorf("the sandbox was given:\n%s\nand it never ran %q", ran, want)
+			}
+		}
+		return nil
+	})
+
+	// The folder the runtime is told the session may work in. Without it the shell goes back to the
+	// start folder after every command, so the session builds where the check does not read.
+	sc.Step(`^the session may work in its own working tree$`, func(ctx context.Context) error {
+		w := worldFrom(ctx)
+		session, err := theSessionWithTheTree(ctx)
+		if err != nil {
+			return err
+		}
+		want := sandbox.WorktreesPath + "/" + session
+		held := w.runner.lastRequest().AddDirs
+		if len(held) != 1 || held[0] != want {
+			return fmt.Errorf("the session was told it may work in %v, want only %q", held, want)
+		}
+		return nil
+	})
+
+	// The first exec rather than the last, because the scenario that reads this asks a second session
+	// something afterwards, and what it is about is the session holding the step.
+	sc.Step(`^the session that took the step may work in its own working tree$`, func(ctx context.Context) error {
+		w := worldFrom(ctx)
+		session, err := theSessionWithTheTree(ctx)
+		if err != nil {
+			return err
+		}
+		first, held := w.runner.exec(0)
+		if !held {
+			return fmt.Errorf("the model was asked nothing, so nobody was told where it may work")
+		}
+		want := sandbox.WorktreesPath + "/" + session
+		if len(first.AddDirs) != 1 || first.AddDirs[0] != want {
+			return fmt.Errorf("the session holding the step was told it may work in %v, want only %q",
+				first.AddDirs, want)
+		}
+		return nil
+	})
+
+	sc.Step(`^the session that answered the dispatch was given no folder to work in$`,
+		func(ctx context.Context) error {
+			w := worldFrom(ctx)
+			if w.runner.count() < 2 {
+				return fmt.Errorf("only %d execs ran, so the dispatch and the take are one exec",
+					w.runner.count())
+			}
+			if held := w.runner.lastRequest().AddDirs; len(held) != 0 {
+				return fmt.Errorf("a session holding no step was told it may work in %v", held)
+			}
+			return nil
+		})
+
+	// Read from the moment the model was asked rather than from the end of the scenario, because both
+	// orders leave the same two records behind and only one of them is any use to the session.
+	sc.Step(`^the tree was made before the session was asked anything$`, func(ctx context.Context) error {
+		p := pathFrom(ctx)
+		if p.ranBeforeTheModel == "" {
+			return fmt.Errorf("nothing was recorded while the model was asked, so this proves nothing")
+		}
+		if !strings.Contains(p.ranBeforeTheModel, "worktree add") {
+			return fmt.Errorf("by the time the model was asked, the sandbox had run:\n%s", p.ranBeforeTheModel)
+		}
+		return nil
+	})
+
+	sc.Step(`^no git command ran in the session's sandbox$`, func(ctx context.Context) error {
+		ran, err := whatTheSandboxOfTheSessionRan(ctx)
+		if err != nil {
+			return err
+		}
+		for _, unwanted := range []string{"git clone", "fetch origin", "worktree add", "ln -s"} {
+			if strings.Contains(ran, unwanted) {
+				return fmt.Errorf("the sandbox was given %q, and it was not to touch the tree:\n%s",
+					unwanted, ran)
+			}
+		}
+		return nil
+	})
+
+	sc.Step(`^the exec failed, naming the command and "([^"]*)"$`,
+		func(ctx context.Context, said string) error {
+			w := worldFrom(ctx)
+			session, err := theSessionWithTheTree(ctx)
+			if err != nil {
+				return err
+			}
+			execs, err := listExecs(ctx, w, session)
+			if err != nil {
+				return err
+			}
+			if len(execs) == 0 {
+				return fmt.Errorf("the session has no exec, so nothing failed")
+			}
+			last := execs[len(execs)-1]
+			if last.GetStatus() != "failed" {
+				return fmt.Errorf("the exec reads %q, want failed", last.GetStatus())
+			}
+			for _, want := range []string{"worktree add", said} {
+				if !strings.Contains(last.GetFailure(), want) {
+					return fmt.Errorf("the exec failed with %q, want it to name %q",
+						last.GetFailure(), want)
+				}
+			}
+			return nil
+		})
+
+	sc.Step(`^no model was asked anything$`, func(ctx context.Context) error {
+		if asked := worldFrom(ctx).runner.count(); asked != 0 {
+			return fmt.Errorf("the model was asked %d things, and the tree was never made", asked)
+		}
+		return nil
+	})
+}
+
+// lookingForACheckout is the fragment of the command krewe reads a directory with, so a scenario can
+// be a container with nothing in it without knowing which directories krewe looks in.
+const lookingForACheckout = "test -e"
+
+// theSessionWithTheTree is the session these scenarios are about: the one holding the step a take
+// started, or the one the last dispatch answered where no step was taken.
+func theSessionWithTheTree(ctx context.Context) (string, error) {
+	w, p := worldFrom(ctx), pathFrom(ctx)
+	if p.take != nil {
+		return p.take.GetSession().GetId(), nil
+	}
+	current, err := w.lastExec()
+	if err != nil {
+		return "", err
+	}
+	return current.sessionID, nil
+}
+
+// whatTheSandboxOfTheSessionRan is every command that session's container was given, joined.
+func whatTheSandboxOfTheSessionRan(ctx context.Context) (string, error) {
+	w := worldFrom(ctx)
+	session, err := theSessionWithTheTree(ctx)
+	if err != nil {
+		return "", err
+	}
+	box, running, err := w.provider.Existing(ctx, session)
+	if err != nil {
+		return "", err
+	}
+	if !running {
+		return "", fmt.Errorf("the session has no container, so nothing ran in one")
+	}
+	held, is := box.(*sandbox.FakeSandbox)
+	if !is {
+		return "", fmt.Errorf("the session's container is a %T rather than the double", box)
+	}
+	return commandsOf(held), nil
+}
+
+// whatEverySandboxRan is every command every container of this world was given. It is what a snapshot
+// taken while an exec runs can read: the request the model was handed does not name the session, so
+// the container it belongs to cannot be picked out from inside the double.
+func whatEverySandboxRan(w *world) string {
+	lines := make([]string, 0)
+	for _, box := range w.provider.Boxes {
+		if said := commandsOf(box); said != "" {
+			lines = append(lines, said)
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// commandsOf joins what one container was given, one command to a line.
+func commandsOf(box *sandbox.FakeSandbox) string {
+	lines := make([]string, 0, len(box.Ran))
+	for _, spec := range box.Ran {
+		lines = append(lines, strings.Join(spec.Argv, " "))
+	}
+	return strings.Join(lines, "\n")
 }
