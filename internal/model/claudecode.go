@@ -92,6 +92,18 @@ func buildArgs(req Request, model string) []string {
 	if req.Settings != "" {
 		args = append(args, "--settings", req.Settings)
 	}
+	// The folders this exec may work in, beyond the one it starts in. The runtime puts the shell back in
+	// the folder it started in after every command unless the folder it was moved to is one of these, so
+	// a session told to build somewhere else runs its second command in the wrong place. One flag each:
+	// the runtime takes one directory per flag, and a pair joined into one argument is a path that is
+	// not there. Left off entirely where there are none, because the flag with nothing after it fails
+	// the exec before the model reads a word of it.
+	for _, dir := range req.AddDirs {
+		if dir == "" {
+			continue
+		}
+		args = append(args, "--add-dir", dir)
+	}
 	return args
 }
 
