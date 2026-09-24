@@ -81,15 +81,30 @@ function renderMenu(answer) {
   return '<nav class="menu" aria-label="The design and its stages">' + entries.join("") + "</nav>";
 }
 
-// renderBody draws what one entry shows when it is chosen. The text is the text the session wrote,
-// shown as text: markup inside a body is read rather than run.
+// renderDocument draws one text of an entry: the html the site rendered from it, and the text it was
+// written as when the site answered no html.
+//
+// The html is written into the page as html, which is the whole point of it, so what makes that safe
+// sits on the other side: the site renders a body with raw html left out, so an element a session
+// wrote arrives as words rather than as an element. The fallback draws the text escaped, the way the
+// page drew every body before it was rendered, so an answer without the html still reads.
+function renderDocument(html, text) {
+  if (html) { return '<div class="document">' + html + "</div>"; }
+  if (!text) { return ""; }
+  return '<pre class="text">' + esc(text) + "</pre>";
+}
+
+// renderBody draws what one entry shows when it is chosen. A body is markdown, so the operator reads
+// a document: its headings, its lists, its tables and its code, rather than the marks that make them.
 function renderBody(answer, entry) {
   var head = '<h1>' + esc(ENTRY_NAMES[entry] || entry) + "</h1>";
   if (entry === "design") {
     var design = (answer || {}).design || {};
-    return '<article class="body" data-entry="design">' + head +
-      '<p class="brief">' + esc(design.brief) + "</p>" +
-      '<pre class="text">' + esc(design.body) + "</pre></article>";
+    var brief = design.brief_html
+      ? '<div class="brief">' + design.brief_html + "</div>"
+      : '<p class="brief">' + esc(design.brief) + "</p>";
+    return '<article class="body" data-entry="design">' + head + brief +
+      renderDocument(design.body_html, design.body) + "</article>";
   }
   var row = rowsByStage(answer)[entry];
   var state = stageState(row);
@@ -99,7 +114,7 @@ function renderBody(answer, entry) {
   }
   return '<article class="body" data-entry="' + esc(entry) + '">' + head +
     '<p class="state">' + esc(state) + " at version " + esc(row.version) + "</p>" +
-    '<pre class="text">' + esc(row.body) + "</pre></article>";
+    renderDocument(row.body_html, row.body) + "</article>";
 }
 
 // site:render:end

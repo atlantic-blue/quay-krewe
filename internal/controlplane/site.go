@@ -31,9 +31,15 @@ import (
 const SiteAddr = "127.0.0.1:50052"
 
 // siteDesign is what the project is for, and the design written for it.
+//
+// Each text comes twice: as it was written, and as the html the page shows. The written text stays
+// because it is what a session wrote and what another reader may want to read back, and because the
+// page falls back to it when a document could not be made.
 type siteDesign struct {
-	Brief string `json:"brief"`
-	Body  string `json:"body"`
+	Brief     string `json:"brief"`
+	BriefHTML string `json:"brief_html"`
+	Body      string `json:"body"`
+	BodyHTML  string `json:"body_html"`
 }
 
 // siteStage is one design stage as a page reads it.
@@ -45,6 +51,7 @@ type siteStage struct {
 	Stage           string `json:"stage"`
 	Position        int32  `json:"position"`
 	Body            string `json:"body"`
+	BodyHTML        string `json:"body_html"`
 	Artifact        string `json:"artifact"`
 	Version         int32  `json:"version"`
 	ApprovedVersion int32  `json:"approved_version"`
@@ -158,15 +165,34 @@ func (s *Server) serveStages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	brief, err := siteHTML(design.GetBrief())
+	if err != nil {
+		siteBroke(w, r, "render the brief", err)
+		return
+	}
+	body, err := siteHTML(design.GetBody())
+	if err != nil {
+		siteBroke(w, r, "render the design", err)
+		return
+	}
 	answer := siteAnswer{
-		Design: siteDesign{Brief: design.GetBrief(), Body: design.GetBody()},
+		Design: siteDesign{
+			Brief: design.GetBrief(), BriefHTML: brief,
+			Body: design.GetBody(), BodyHTML: body,
+		},
 		Stages: make([]siteStage, 0, len(held)),
 	}
 	for _, stage := range held {
+		drawn, err := siteHTML(stage.GetBody())
+		if err != nil {
+			siteBroke(w, r, "render the "+stage.GetStage()+" stage", err)
+			return
+		}
 		answer.Stages = append(answer.Stages, siteStage{
 			Stage:           stage.GetStage(),
 			Position:        stage.GetPosition(),
 			Body:            stage.GetBody(),
+			BodyHTML:        drawn,
 			Artifact:        stage.GetArtifact(),
 			Version:         stage.GetVersion(),
 			ApprovedVersion: stage.GetApprovedVersion(),

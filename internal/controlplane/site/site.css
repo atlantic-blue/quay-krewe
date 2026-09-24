@@ -34,6 +34,29 @@ button{font:inherit;color:inherit;cursor:pointer}
 .body .state{font-size:11px;letter-spacing:.06em;text-transform:uppercase}
 .body .text{font-family:var(--mono);font-size:13px;line-height:1.55;white-space:pre-wrap;margin:0}
 
+/* A rendered body. The stage text arrives as a document now, so these are the elements a design is
+   written in, held to the same palette and the same restraint as the page around them. */
+.document{line-height:1.6}
+.document>:first-child{margin-top:0}
+.document h1,.document h2,.document h3{margin:24px 0 8px;letter-spacing:-.01em;line-height:1.3}
+.document h1{font-size:18px}
+.document h2{font-size:16px}
+.document h3{font-size:14px}
+.document p,.document ul,.document ol,.document blockquote{margin:0 0 12px}
+.document ul,.document ol{padding-left:22px}
+.document li{margin:2px 0}
+.document a{color:var(--accent)}
+.document code{font-family:var(--mono);font-size:12.5px;background:var(--panel2);border-radius:5px;padding:1px 5px}
+.document pre{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+  padding:12px 14px;overflow:auto;margin:0 0 14px}
+.document pre code{background:none;padding:0;font-size:12.5px;line-height:1.55}
+.document blockquote{border-left:2px solid var(--line);margin-left:0;padding-left:14px;color:var(--muted)}
+.document table{border-collapse:collapse;margin:0 0 14px;font-size:13px}
+.document th,.document td{border:1px solid var(--line);padding:6px 10px;text-align:left}
+.document th{background:var(--panel2);font-weight:650}
+.document img{max-width:100%}
+.document hr{border:0;border-top:1px solid var(--line);margin:20px 0}
+
 @media (max-width:720px){.app{grid-template-columns:1fr;grid-template-rows:auto 1fr}
   .side{border-right:0;border-bottom:1px solid var(--line)}
   .menu{flex-direction:row;flex-wrap:wrap}}
