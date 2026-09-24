@@ -2766,6 +2766,48 @@ func initializeProofRunSteps(sc *godog.ScenarioContext) {
 		}
 		return nil
 	})
+
+	// CHECK-2's other half. The refusal is worth having because it records nothing, so both columns a
+	// run writes are read: the moment of the run, and the moment a run was last seen to fail.
+	sc.Step(`^step (\d+) records no run at all$`, func(ctx context.Context, number int) error {
+		step, err := stepAsItStands(ctx, int32(number))
+		if err != nil {
+			return err
+		}
+		if step.GetProofRanAt() != nil {
+			return fmt.Errorf("step %d carries the moment %s, and nothing was meant to run",
+				number, step.GetProofRanAt().AsTime())
+		}
+		if step.GetRedRunAt() != nil {
+			return fmt.Errorf("step %d carries a red run at %s, and nothing was meant to run",
+				number, step.GetRedRunAt().AsTime())
+		}
+		return nil
+	})
+
+	// A session that built somewhere krewe cannot see: a directory of its own outside every place the
+	// system keeps, or a clone that never finished. What reaches krewe is the same either way, which
+	// is a place holding no repository.
+	sc.Step(`^the session holding the step has no checkout in any place krewe reads$`,
+		func(ctx context.Context) error {
+			w, p := worldFrom(ctx), pathFrom(ctx)
+			if p.take == nil {
+				return fmt.Errorf("no step was taken, so no session holds one")
+			}
+			places := w.storage.WorkPlaces(theSessionsBox(w, p.take.GetSession().GetId()))
+			for _, place := range places {
+				if err := os.RemoveAll(filepath.Join(place.Dir, ".git")); err != nil {
+					return err
+				}
+			}
+			// Read back, because a scenario about a session with no checkout proves nothing while the
+			// setup still holds one.
+			if found, held := sandbox.Repository(places); held {
+				return fmt.Errorf("%q still holds a checkout, so this session built somewhere krewe reads",
+					found.Dir)
+			}
+			return nil
+		})
 }
 
 // theProofCommandRuns is the fragment every proof command in these scenarios carries, which is what
@@ -2890,6 +2932,13 @@ func takeRestateAndApprove(ctx context.Context, feature string, number int32, ap
 	}
 	if w.lastErr != nil {
 		return fmt.Errorf("the take was refused: %w", w.lastErr)
+	}
+	// The checkout the session built in, because a check refuses a session that has none and every
+	// scenario here is about something else. It goes in the session's own directory, which is the
+	// shape the git skill teaches where a system keeps no volume, so the directory a run is pointed
+	// at stays where it was.
+	if err := theSessionCloned(ctx); err != nil {
+		return err
 	}
 	said := "What this step changes\n" + theStepHeadings[number-1] + "."
 	if err := writeRestatement(ctx, said); err != nil {
@@ -3168,4 +3217,27 @@ func containersMadeFor(w *world, session string) int {
 		}
 	}
 	return made
+}
+
+// theSessionCloned puts a repository where a session holding a step would have put one.
+//
+// A check refuses a session with no checkout in any place krewe reads, so without this every check
+// scenario would be refused for a reason none of them is about. The `.git` is a directory rather than
+// a clone, because what krewe reads is whether the name is there.
+func theSessionCloned(ctx context.Context) error {
+	w, p := worldFrom(ctx), pathFrom(ctx)
+	if p.take == nil {
+		return fmt.Errorf("no step was taken, so no session holds one")
+	}
+	dir, kept := w.storage.WorkingDir(theSessionsBox(w, p.take.GetSession().GetId()))
+	if !kept {
+		return fmt.Errorf("this system keeps no directories, so no session in it can hold a checkout")
+	}
+	return os.MkdirAll(filepath.Join(dir, ".git"), 0o777)
+}
+
+// theSessionsBox is the configuration the storage reads a session's directories from: the session,
+// and the workspace and project this world made it in.
+func theSessionsBox(w *world, session string) sandbox.Config {
+	return sandbox.Config{ID: session, Workspace: w.workspaceID, Project: w.projectID}
 }

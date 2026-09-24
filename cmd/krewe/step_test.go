@@ -33,9 +33,12 @@ func aStepToCheck(t *testing.T, answers sandbox.Reply) (
 	t.Helper()
 	held := store.NewMemory()
 	provider := &sandbox.FakeProvider{Replies: []sandbox.Reply{answers}}
+	// A system that keeps directories, because a check reads the session's for a checkout and refuses
+	// where it finds none.
+	storage := sandbox.Storage{Dir: t.TempDir()}
 	server := controlplane.NewServer(controlplane.Config{
 		Store: held, Runner: &model.FakeRunner{Reply: "ok"},
-		Provider: provider, Secrets: secrets.NewMemory(),
+		Provider: provider, Secrets: secrets.NewMemory(), Storage: storage,
 	})
 	client := testClientFor(t, server)
 	mustRun(t, client, "workspace", "create", "acme")
@@ -71,7 +74,23 @@ func aStepToCheck(t *testing.T, answers sandbox.Reply) (
 		t.Fatalf("ApproveRestatement: %v", err)
 	}
 	theTakeHasLanded(t, server)
+	theSessionCloned(t, storage, theSessionHoldingTheStep(t, client))
 	return client, provider, server
+}
+
+// theSessionCloned puts a checkout where the session holding the step worked, which is what every
+// session that took a step did. A check refuses a session with none, so a test about what the check
+// prints would otherwise read a refusal about the setup.
+func theSessionCloned(t *testing.T, storage sandbox.Storage, session *quaycrewv1.Session) {
+	t.Helper()
+	dir, kept := storage.WorkingDir(sandbox.Config{
+		ID: session.GetId(), Workspace: session.GetWorkspace(), Project: session.GetProject()})
+	if !kept {
+		t.Fatal("this storage keeps no working directory, so there is nowhere to put a checkout")
+	}
+	if err := os.MkdirAll(filepath.Join(dir, ".git"), 0o777); err != nil {
+		t.Fatalf("the checkout in %q: %v", dir, err)
+	}
 }
 
 // theTakeHasLanded waits for the exec the take started, so the session holding the step has the

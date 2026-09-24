@@ -3562,6 +3562,24 @@ Feature: A project holds a numbered path of steps
     And krewe made the session 1 container
     And the second check warns nothing
 
+  # CHECK-2. A session builds in a working tree of its own, and a session that built somewhere krewe
+  # cannot see leaves the run pointed at an empty directory. That run reports no scenarios, krewe
+  # records a failing verdict, and the operator reads a fault in code that never ran. So the check
+  # refuses first, names every directory it read, and records nothing.
+
+  Scenario: A check with no checkout in the session's working tree is refused and records nothing
+    Given a step taken, restated and approved, naming the scenario "a project carries a brief"
+    And the project's proof command is "go test ./features/... -run '{scenario}'"
+    And the session holding the step has no checkout in any place krewe reads
+    When the operator checks step 1
+    Then the control plane refuses it as the wrong state
+    And the refusal suggests "/home/agent/workspace"
+    And the refusal suggests "/home/agent/shared/worktrees/"
+    And the refusal suggests "Take the working tree the git skill names"
+    And step 1 reads back as unproven
+    And step 1 records no run at all
+    And nothing was run
+
   # The important refusal in this slice. A run in an empty directory reports no scenarios, krewe
   # records no scenarios as failing, and the operator then reads a fault in the code that is not one.
   # So a tree that cannot be restored stops the run rather than falling through into it.
