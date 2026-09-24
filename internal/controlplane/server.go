@@ -1291,6 +1291,27 @@ func (s *Server) exec(ctx context.Context, session *quaycrewv1.Session, text, cr
 		return "", sandboxError(err, "create sandbox")
 	}
 
+	// The environment of this exec, read once because the working tree is made with it as well as the
+	// model: a clone that authenticates and a model that does not are two different credentials, and the
+	// git brief says the session never handles one.
+	env := withTraceparent(ctx, s.execEnv(ctx, session, credential, building))
+
+	// The working tree the check reads, before the model starts. A session that builds anywhere else
+	// cannot be checked, and a tree made after the model started is a tree the session's first command
+	// did not have. A tree that cannot be made ends the exec here: the alternative is a session building
+	// in the folder it started in, reporting the work, and leaving the check reading an empty directory.
+	addDirs, err := s.theWorkingTreeOfAStep(ctx, session, box, env)
+	if err != nil {
+		if asked, reason := held.stopped(); asked {
+			return "", s.landStopped(ctx, session, exec, model.Response{}, reason)
+		}
+		s.recordExec(ctx, session.GetId(), "", StatusFailed)
+		failure := "no working tree: " + err.Error()
+		s.landExec(ctx, session, exec, StatusFailed, "", failure)
+		s.emit(ctx, session, KindSessionErrored, failure)
+		return "", status.Errorf(codes.Internal, "make the working tree: %v", err)
+	}
+
 	// Named here as well as at dispatch, so an exec always carries a conversation whatever road it
 	// arrived by, and started decides which of the two ways it is named on the command line.
 	conversation := s.nameConversation(ctx, session)
@@ -1299,8 +1320,9 @@ func (s *Server) exec(ctx context.Context, session *quaycrewv1.Session, text, cr
 		ModelSessionID:      conversation,
 		ConversationStarted: s.conversationStarted(session, conversation),
 		PermissionMode:      permissionModeOf(session, s.birthMode),
-		Env:                 withTraceparent(ctx, s.execEnv(ctx, session, credential, building)),
+		Env:                 env,
 		Settings:            s.settingsFor(ctx, session),
+		AddDirs:             addDirs,
 	})
 	if err != nil {
 		if asked, reason := held.stopped(); asked {
