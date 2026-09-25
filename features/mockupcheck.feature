@@ -8,6 +8,10 @@ Feature: A mockup is refused unless every shape names its component
   "Sign in" and had to guess. So the artifact is read when it is written. A mockup a session could
   not build from never reaches the operator to approve.
 
+  A screen can be written as markup instead of a list of shapes. Then the name sits on the markup,
+  as data-component. A part that can be pressed names one on itself. Every visible part sits under
+  one. So a card names itself once, and the words inside it need no name of their own.
+
   A screen is drawn in the colours and the fonts of its tokens, and those come from the
   design_system stage, which the operator approved before the mockups could be written. A value
   that stage does not name is a second design system nobody agreed to, so it is refused too.
@@ -28,6 +32,16 @@ Feature: A mockup is refused unless every shape names its component
     Then the control plane refuses it as invalid
     And the refusal suggests "sign-in"
     And the refusal suggests "component"
+    And the project holds no mockups stage
+
+  # The same contract, read in markup. A part that names no component is a part the building session
+  # has to guess at, whether the screen is written as shapes or as markup.
+  Scenario: A screen whose words sit outside every named component is refused
+    When the operator writes the mockups stage with words outside every named component
+    Then the control plane refuses it as invalid
+    And the refusal suggests "dashboard"
+    And the refusal suggests "This week"
+    And the refusal suggests "data-component"
     And the project holds no mockups stage
 
   Scenario: A mockup that names a component on every shape goes in
