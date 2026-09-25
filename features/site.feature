@@ -220,3 +220,23 @@ Feature: A project's stages are read over http
     And the design system stage draws a swatch for every colour the project names, with its value
     And the design system stage draws every font, radius and space the project names, with its value
     And the design system stage draws no colour and no font the project does not name
+
+  # The screens of a project are drawn in one design system, and the page that draws them has to
+  # reach it. So the site answers it beside the design the operator already reads there. A project
+  # that wrote no design system is told so in one sentence, because a page that draws nothing and
+  # says nothing reads as a broken site.
+  Scenario: The site answers the design system a project approved
+    Given the stages before the design system are approved
+    And the operator writes the design system the flow map skill ships
+    And the operator approves the "design_system" design stage
+    And a project named "kitchen-shelf" beside it
+    And the site is served on a local address
+    When the operator reads the site at "/p/acme/house-bills/design-system.json"
+    Then the site answers 200
+    And the site answers json
+    And the design system it answers carries the operator's word, at the version they approved
+    And the design system it answers is the one the project's screens are drawn in
+    When the operator reads the site at "/p/acme/kitchen-shelf/design-system.json"
+    Then the site answers 404
+    And the answer says "kitchen-shelf"
+    And the answer says "design_system"

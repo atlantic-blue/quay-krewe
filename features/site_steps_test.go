@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"strings"
 
+	quaycrewv1 "github.com/atlantic-blue/quay-krewe/gen/quaycrew/v1"
 	"github.com/atlantic-blue/quay-krewe/internal/controlplane"
 	"github.com/atlantic-blue/quay-krewe/internal/controlplane/site/render"
 	"github.com/atlantic-blue/quay-krewe/internal/store"
@@ -595,6 +596,75 @@ func initializeSiteSteps(sc *godog.ScenarioContext) {
 			}
 			return nil
 		})
+
+	// The word the operator gave, read back beside the version it was given to. A design system
+	// written again after the word no longer carries it, and the page has to be able to say so.
+	sc.Step(`^the design system it answers carries the operator's word, at the version they approved$`,
+		func(ctx context.Context) error {
+			answered, err := theDesignSystemTheSiteAnswered(ctx)
+			if err != nil {
+				return err
+			}
+			if !answered.Approved {
+				return fmt.Errorf("the site says the design system is not approved, and the operator approved it")
+			}
+			held, err := theDesignSystemRow(ctx)
+			if err != nil {
+				return err
+			}
+			if held.GetApprovedVersion() != held.GetVersion() {
+				return fmt.Errorf("the project holds the design system at version %d approved at version %d, "+
+					"so this scenario is not reading an approved one",
+					held.GetVersion(), held.GetApprovedVersion())
+			}
+			if answered.Version != int(held.GetVersion()) {
+				return fmt.Errorf("the site answers version %d and the project holds version %d",
+					answered.Version, held.GetVersion())
+			}
+			return nil
+		})
+
+	// What the page is given is what the session wrote: the colours and the fonts every screen is
+	// drawn in, the font file it is set in, and the stylesheet every screen is given.
+	sc.Step(`^the design system it answers is the one the project's screens are drawn in$`,
+		func(ctx context.Context) error {
+			answered, err := theDesignSystemTheSiteAnswered(ctx)
+			if err != nil {
+				return err
+			}
+			written := designSystemFrom(ctx).written
+			if written == nil {
+				return fmt.Errorf("no design system was written, so there is nothing to hold the answer to")
+			}
+			read := map[string]any{}
+			for name, value := range map[string]json.RawMessage{
+				"tokens": answered.Tokens, "assets": answered.Assets,
+			} {
+				if len(value) == 0 {
+					continue
+				}
+				var held any
+				if err := json.Unmarshal(value, &held); err != nil {
+					return fmt.Errorf("the site answers a %s a page cannot read: %w", name, err)
+				}
+				read[name] = held
+			}
+			if answered.CSS != "" {
+				read["css"] = answered.CSS
+			}
+			for _, group := range []string{"colour", "font"} {
+				if len(asMap(asMap(read["tokens"])[group])) == 0 {
+					return fmt.Errorf("the site names no %s, so no screen knows what to draw in", group)
+				}
+			}
+			if len(asMap(read["assets"])) == 0 {
+				return fmt.Errorf("the site carries no file, so the screens are drawn in the font of the machine")
+			}
+			if strings.TrimSpace(answered.CSS) == "" {
+				return fmt.Errorf("the site carries no stylesheet, so every screen is given nothing")
+			}
+			return sameDocument(read, written)
+		})
 }
 
 // playControl is the control a person presses to play a story. A page without it draws the screens
@@ -890,4 +960,42 @@ func theProjectDrawsItsTokens(ctx context.Context, group string) error {
 		}
 	}
 	return nil
+}
+
+// siteDesignSystemRow is the design system as design-system.json hands it over. It is written out
+// here rather than shared with the code, for the reason siteStageRow is: a page holds the json and
+// nothing else, so a field renamed on the wire has to fail here.
+type siteDesignSystemRow struct {
+	Approved bool            `json:"approved"`
+	Version  int             `json:"version"`
+	Tokens   json.RawMessage `json:"tokens"`
+	Assets   json.RawMessage `json:"assets"`
+	CSS      string          `json:"css"`
+}
+
+// theDesignSystemTheSiteAnswered is the document the last read came back with.
+func theDesignSystemTheSiteAnswered(ctx context.Context) (siteDesignSystemRow, error) {
+	var answer siteDesignSystemRow
+	body := siteFrom(ctx).body
+	if err := json.Unmarshal([]byte(body), &answer); err != nil {
+		return answer, fmt.Errorf("the site answered %q, which is not a design system a page reads: %w", body, err)
+	}
+	return answer, nil
+}
+
+// theDesignSystemRow is what the project holds, read over the wire, so the answer is held to the
+// stage itself rather than to a number the scenario wrote down.
+func theDesignSystemRow(ctx context.Context) (*quaycrewv1.DesignStage, error) {
+	w := worldFrom(ctx)
+	held, err := w.client.ListDesignStages(ctx, &quaycrewv1.ListDesignStagesRequest{Project: w.projectID})
+	if err != nil {
+		return nil, fmt.Errorf("reading the project's design stages: %w", err)
+	}
+	for _, one := range held.GetStages() {
+		if one.GetStage() == store.StageDesignSystem {
+			return one, nil
+		}
+	}
+	return nil, fmt.Errorf("the project holds no %s stage, so there is nothing to answer",
+		store.StageDesignSystem)
 }
