@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
@@ -12,6 +13,8 @@ import (
 	quaycrewv1 "github.com/atlantic-blue/quay-krewe/gen/quaycrew/v1"
 	"github.com/atlantic-blue/quay-krewe/internal/controlplane"
 	"github.com/atlantic-blue/quay-krewe/internal/model"
+	"github.com/atlantic-blue/quay-krewe/internal/sandbox"
+	"github.com/atlantic-blue/quay-krewe/internal/secrets"
 	"github.com/atlantic-blue/quay-krewe/internal/store"
 )
 
@@ -413,4 +416,172 @@ func TestNoFileTheSiteServesReachesOffTheMachine(t *testing.T) {
 			t.Errorf("%s reaches %q, so opening a project would leave the machine", one.what, found)
 		}
 	}
+}
+
+// siteDesignSystem is the shape design-system.json promises. The page that draws the screens holds
+// this and nothing else, so the field names are the contract.
+type siteDesignSystem struct {
+	Approved bool            `json:"approved"`
+	Version  int             `json:"version"`
+	Tokens   json.RawMessage `json:"tokens"`
+	Assets   json.RawMessage `json:"assets"`
+	CSS      string          `json:"css"`
+}
+
+// SYSTEM-2. The design system at one address, so the page that draws the screens reads the tokens,
+// the font files and the stylesheet the project's screens are drawn in. The word the operator gave
+// travels beside them, because a design system written again since then no longer carries it.
+func TestTheSiteAnswersTheDesignSystemAProjectApproved(t *testing.T) {
+	s := newServer(&model.FakeRunner{})
+	_, projectID := newProject(t, s)
+	designedUpToTheDesignSystem(t, s, projectID)
+	written := aDesignSystem(systemTokens, systemAssets, systemCSS)
+	if _, err := writeDesignSystemStage(s, projectID, written); err != nil {
+		t.Fatalf("writing the design system: %v", err)
+	}
+	if _, err := s.ApproveDesignStage(context.Background(), &quaycrewv1.ApproveDesignStageRequest{
+		Project: projectID, Stage: store.StageDesignSystem,
+	}); err != nil {
+		t.Fatalf("ApproveDesignStage: %v", err)
+	}
+
+	status, body, header := readSite(t, s, "/p/acme/house-bills/design-system.json")
+	if status != http.StatusOK {
+		t.Fatalf("the site answered %d saying %q, want 200", status, body)
+	}
+	if kind := header.Get("Content-Type"); !strings.Contains(kind, "application/json") {
+		t.Errorf("the design system came back as content type %q, and a page reads json", kind)
+	}
+
+	answer := readDesignSystem(t, body)
+	if !answer.Approved {
+		t.Errorf("the site says the design system is not approved, and the operator approved it")
+	}
+	if answer.Version != 1 {
+		t.Errorf("the site answers version %d, want the version of the row, 1", answer.Version)
+	}
+	wrote := map[string]any{}
+	if err := json.Unmarshal([]byte(written), &wrote); err != nil {
+		t.Fatalf("the design system this test writes is not json: %v", err)
+	}
+	for name, held := range map[string]json.RawMessage{"tokens": answer.Tokens, "assets": answer.Assets} {
+		if !sameJSON(t, held, wrote[name]) {
+			t.Errorf("the site answers %s of %s, and the session wrote something else", name, string(held))
+		}
+	}
+	if answer.CSS != wrote["css"] {
+		t.Errorf("the site answers the stylesheet %q, and the session wrote %q", answer.CSS, wrote["css"])
+	}
+
+	// Written again, and the word no longer stands. A page draws a design system nobody agreed to
+	// differently, so the field moves with the row.
+	if _, err := writeDesignSystemStage(s, projectID, written); err != nil {
+		t.Fatalf("writing the design system again: %v", err)
+	}
+	_, body, _ = readSite(t, s, "/p/acme/house-bills/design-system.json")
+	answer = readDesignSystem(t, body)
+	if answer.Approved {
+		t.Errorf("the site still says the design system is approved, and it was written again since")
+	}
+	if answer.Version != 2 {
+		t.Errorf("the site answers version %d, want 2", answer.Version)
+	}
+}
+
+// SYSTEM-2. A design system that names no file and no stylesheet is still a design system: the
+// screens are drawn in the tokens and in the font of the machine. The page draws that state rather
+// than reading a refusal.
+func TestTheSiteAnswersADesignSystemOfTokensAlone(t *testing.T) {
+	s := newServer(&model.FakeRunner{})
+	_, projectID := newProject(t, s)
+	designedUpToTheDesignSystem(t, s, projectID)
+	if _, err := writeDesignSystemStage(s, projectID, aDesignSystem(systemTokens)); err != nil {
+		t.Fatalf("writing the design system: %v", err)
+	}
+
+	status, body, _ := readSite(t, s, "/p/acme/house-bills/design-system.json")
+	if status != http.StatusOK {
+		t.Fatalf("the site answered %d saying %q, want 200", status, body)
+	}
+	answer := readDesignSystem(t, body)
+	if answer.Approved {
+		t.Errorf("the site says a design system nobody approved is approved")
+	}
+	if string(answer.Assets) != "{}" {
+		t.Errorf("the site answers assets of %s, want an empty object, so the page reads a list of none",
+			string(answer.Assets))
+	}
+	if answer.CSS != "" {
+		t.Errorf("the site answers the stylesheet %q, and the session wrote none", answer.CSS)
+	}
+}
+
+// SYSTEM-2. The three states that are not a design system. Each one is a 404 with one sentence
+// naming the project and the stage, so the page says there is no design system yet rather than
+// looking broken.
+func TestTheSiteSaysWhenAProjectHasNoDesignSystemToAnswer(t *testing.T) {
+	// A design system written before the stage had a shape carries whatever json it carries, so the
+	// unreadable one goes in through the store, which is where that project holds it.
+	held := store.NewMemory()
+	s := controlplane.NewServer(controlplane.Config{
+		Store: held, Runner: &model.FakeRunner{},
+		Provider: &sandbox.FakeProvider{}, Secrets: secrets.NewMemory(),
+	})
+	_, projectID := newProject(t, s)
+	designedUpToTheDesignSystem(t, s, projectID)
+
+	status, body, _ := readSite(t, s, "/p/acme/house-bills/design-system.json")
+	saysTheStageIsMissing(t, "a project that wrote no design system", status, body)
+
+	if _, err := s.SetDesignStage(context.Background(), &quaycrewv1.SetDesignStageRequest{
+		Project: projectID, Stage: store.StageDesignSystem, Body: "the design system body",
+	}); err != nil {
+		t.Fatalf("SetDesignStage: %v", err)
+	}
+	status, body, _ = readSite(t, s, "/p/acme/house-bills/design-system.json")
+	saysTheStageIsMissing(t, "a design system written as prose alone", status, body)
+
+	if _, err := held.SetDesignStage(context.Background(), projectID, store.DesignStageWrite{
+		Stage: store.StageDesignSystem, Body: "the design system body",
+		Artifact: `["a design system written before the stage had a shape"]`,
+	}); err != nil {
+		t.Fatalf("writing an older design system: %v", err)
+	}
+	status, body, _ = readSite(t, s, "/p/acme/house-bills/design-system.json")
+	saysTheStageIsMissing(t, "a design system a page cannot read", status, body)
+}
+
+// saysTheStageIsMissing holds one refusal to the sentence stageArtifact writes: a 404 naming the
+// project and the stage, and never a 500, because the page tells the two apart by the status.
+func saysTheStageIsMissing(t *testing.T, state string, status int, body string) {
+	t.Helper()
+	if status != http.StatusNotFound {
+		t.Fatalf("%s answered %d saying %q, want 404", state, status, body)
+	}
+	for _, want := range []string{"house-bills", store.StageDesignSystem} {
+		if !strings.Contains(body, want) {
+			t.Errorf("%s answered %q, and the sentence never names %q", state, body, want)
+		}
+	}
+}
+
+// readDesignSystem is the document a page holds, and a failure to read it is the contract broken.
+func readDesignSystem(t *testing.T, body string) siteDesignSystem {
+	t.Helper()
+	var answer siteDesignSystem
+	if err := json.Unmarshal([]byte(body), &answer); err != nil {
+		t.Fatalf("the site answered %q, which is not a design system a page reads: %v", body, err)
+	}
+	return answer
+}
+
+// sameJSON compares what the site answered against what the session wrote, as documents rather than
+// as text, because the two are the same document whatever order their names come back in.
+func sameJSON(t *testing.T, answered json.RawMessage, written any) bool {
+	t.Helper()
+	var read any
+	if err := json.Unmarshal(answered, &read); err != nil {
+		t.Fatalf("the site answered %s, which a page cannot read: %v", string(answered), err)
+	}
+	return reflect.DeepEqual(read, written)
 }
