@@ -374,3 +374,184 @@ func between(text, open, ending string) (string, error) {
 	}
 	return rest[:to], nil
 }
+
+// ScriptsIn is the text inside every script element of a document. A screen document carries one,
+// the courier the page writes, so a test reads what is there rather than looking for a word
+// anywhere in the document.
+func ScriptsIn(document string) []string {
+	var out []string
+	rest := document
+	for {
+		from := strings.Index(rest, "<script")
+		if from < 0 {
+			return out
+		}
+		rest = rest[from:]
+		open := strings.Index(rest, ">")
+		shut := strings.Index(rest, "</script")
+		if open < 0 || shut < open {
+			return out
+		}
+		out = append(out, rest[open+1:shut])
+		rest = rest[shut+len("</script"):]
+	}
+}
+
+// PressFrom is the page reading a message the way it reads one in a browser: it answers the screen
+// a press names, and it answers nothing at all for a message that did not come from the frame it
+// drew. The message is built here the way a browser builds one, so what is read is the page's own
+// rule rather than a copy of it.
+func (p Page) PressFrom(data string, fromTheFrame bool) (string, bool, error) {
+	vm := goja.New()
+	if err := vm.Set("dataJSON", data); err != nil {
+		return "", false, err
+	}
+	if err := vm.Set("fromTheFrame", fromTheFrame); err != nil {
+		return "", false, err
+	}
+	if _, err := vm.RunString(p.Render); err != nil {
+		return "", false, fmt.Errorf("flowmap: the render block did not run: %w", err)
+	}
+	value, err := vm.RunString(`(function () {
+		var itsOwn = { name: "the frame the page drew" }, another = { name: "some other window" };
+		var frame = { contentWindow: itsOwn };
+		var message = { source: fromTheFrame ? itsOwn : another, data: JSON.parse(dataJSON) };
+		var answer = pressFrom(message, frame);
+		var nothing = answer === null || answer === undefined;
+		return { read: !nothing, to: nothing ? "" : String(answer) };
+	})()`)
+	if err != nil {
+		return "", false, fmt.Errorf("flowmap: reading a press: %w", err)
+	}
+	var answered struct {
+		Read bool   `json:"read"`
+		To   string `json:"to"`
+	}
+	if err := vm.ExportTo(value, &answered); err != nil {
+		return "", false, fmt.Errorf("flowmap: reading what the page answered: %w", err)
+	}
+	return answered.To, answered.Read, nil
+}
+
+// A Courier is the script the page writes into a screen document, running outside a browser over a
+// stand in for the parts of a page it uses. A press inside a frame is invisible to the page, so
+// what the screen posts back is the whole of the mechanism, and a test reads it here.
+type Courier struct{ vm *goja.Runtime }
+
+// CourierIn takes the script out of a screen document and runs it. A document carrying anything
+// other than one script is refused, because the courier is the only script the page writes and a
+// second one is the session's.
+func CourierIn(document string) (*Courier, error) {
+	scripts := ScriptsIn(document)
+	if len(scripts) != 1 {
+		return nil, fmt.Errorf("flowmap: the screen document carries %d scripts, and the page writes one", len(scripts))
+	}
+	vm := goja.New()
+	if _, err := vm.RunString(theStandIn); err != nil {
+		return nil, fmt.Errorf("flowmap: the stand in did not run: %w", err)
+	}
+	if _, err := vm.RunString(scripts[0]); err != nil {
+		return nil, fmt.Errorf("flowmap: the courier did not run: %w", err)
+	}
+	return &Courier{vm: vm}, nil
+}
+
+// Press is somebody pressing a part of the screen. The name is the screen that part opens, and an
+// empty name is a press on a spot that opens nothing. It answers every message the screen posted
+// to the page.
+func (c *Courier) Press(to string) ([]string, error) {
+	if err := c.vm.Set("pressedTo", to); err != nil {
+		return nil, err
+	}
+	value, err := c.vm.RunString(`(function () {
+		posted = [];
+		fire("click", { target: aPart(pressedTo) });
+		return posted;
+	})()`)
+	if err != nil {
+		return nil, fmt.Errorf("flowmap: pressing the screen: %w", err)
+	}
+	var posted []string
+	if err := c.vm.ExportTo(value, &posted); err != nil {
+		return nil, fmt.Errorf("flowmap: reading what the screen posted: %w", err)
+	}
+	return posted, nil
+}
+
+// Flash is the page asking the screen to show what can be pressed. It answers the parts the screen
+// outlined, and whether the outline went away again, because an outline that stays is a screen
+// nobody can read afterwards.
+func (c *Courier) Flash() ([]string, bool, error) {
+	value, err := c.vm.RunString(`(function () {
+		fire("message", { data: { krewe: "flash" } });
+		var lit = theParts.filter(function (p) { return !!p.style.outline; })
+			.map(function (p) { return p.getAttribute("data-to"); });
+		runTimers();
+		var still = theParts.filter(function (p) { return !!p.style.outline; }).length;
+		return { lit: lit, cleared: still === 0 };
+	})()`)
+	if err != nil {
+		return nil, false, fmt.Errorf("flowmap: asking the screen to show what can be pressed: %w", err)
+	}
+	var answered struct {
+		Lit     []string `json:"lit"`
+		Cleared bool     `json:"cleared"`
+	}
+	if err := c.vm.ExportTo(value, &answered); err != nil {
+		return nil, false, fmt.Errorf("flowmap: reading what the screen outlined: %w", err)
+	}
+	return answered.Lit, answered.Cleared, nil
+}
+
+// theStandIn is the part of a page the courier touches, and nothing else: a document that takes a
+// listener and answers the parts that open a screen, a parent that keeps what was posted to it, and
+// a timer a test runs when it chooses to. It is looser than a browser, which is why the step that
+// ships this also walks the page in one.
+const theStandIn = `
+var posted = [], listeners = {}, timers = [];
+
+function anElement(to, parent) {
+	return {
+		dataset: to === "" ? {} : { to: to },
+		style: {},
+		parentElement: parent || null,
+		getAttribute: function (name) { return name === "data-to" && to !== "" ? to : null; },
+		hasAttribute: function (name) { return name === "data-to" && to !== ""; },
+		matches: function (selector) { return selector === "[data-to]" && this.hasAttribute("data-to"); },
+		closest: function (selector) {
+			var at = this;
+			while (at) {
+				if (at.matches(selector)) { return at; }
+				at = at.parentElement;
+			}
+			return null;
+		}
+	};
+}
+
+var theBody = anElement("");
+var theParts = [anElement("log", theBody), anElement("home", theBody)];
+
+function aPart(to) {
+	if (to === "") { return anElement("", theBody); }
+	for (var at = 0; at < theParts.length; at++) {
+		if (theParts[at].getAttribute("data-to") === to) { return theParts[at]; }
+	}
+	var made = anElement(to, theBody);
+	theParts.push(made);
+	return made;
+}
+
+function listen(kind, fn) { (listeners[kind] = listeners[kind] || []).push(fn); }
+function fire(kind, event) { (listeners[kind] || []).forEach(function (fn) { fn(event); }); }
+function runTimers() { var held = timers; timers = []; held.forEach(function (fn) { fn(); }); }
+
+var document = {
+	addEventListener: listen,
+	querySelectorAll: function (selector) { return selector === "[data-to]" ? theParts : []; },
+	body: theBody
+};
+var parent = { postMessage: function (message) { posted.push(JSON.stringify(message)); } };
+var window = { addEventListener: listen, parent: parent, document: document };
+function setTimeout(fn) { timers.push(fn); return timers.length; }
+`

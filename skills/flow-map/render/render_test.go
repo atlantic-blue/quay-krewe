@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -28,6 +29,10 @@ import (
 //
 // FRAME-3: the font files and the images of the design system reach that document as data
 // addresses, and an asset name the design system does not carry is left as it is.
+//
+// PRESS-1: a press on a part of a screen reaches the page. The markup sits in a frame with an
+// origin of its own, so the screen posts what was pressed and the page opens the screen that part
+// names, and only when the press came from the frame the page drew.
 //
 // Both are read off the markup the page's own renderer produces, run here outside a browser, so
 // what these tests read is what an operator sees.
@@ -305,9 +310,20 @@ func TestTheFrameRunsNoScriptTheSessionWrote(t *testing.T) {
 			t.Errorf("the document does not refuse an address with %q:\n%s", want, document)
 		}
 	}
-	for _, refuse := range []string{"<script", "onclick", "steal(", "document.title"} {
+	for _, refuse := range []string{"onclick", "steal(", "parent.document", "document.title"} {
 		if strings.Contains(document, refuse) {
 			t.Errorf("the document still holds %q, which the session wrote:\n%s", refuse, document)
+		}
+	}
+	// The page writes one script of its own, the courier, so the document is read for that one and
+	// not for the absence of every script.
+	scripts := ScriptsIn(document)
+	if len(scripts) != 1 {
+		t.Fatalf("the document carries %d scripts, and the page writes one:\n%s", len(scripts), document)
+	}
+	for _, want := range []string{"krewe", "press", "data-to"} {
+		if !strings.Contains(scripts[0], want) {
+			t.Errorf("the one script in the document holds no %q, so it is not the courier:\n%s", want, scripts[0])
 		}
 	}
 	if !strings.Contains(document, "Today") {
@@ -734,4 +750,154 @@ func oneScreen(t *testing.T) Flows {
 	t.Helper()
 	return Flows{Raw: []byte(`{"screens":{"one":{"name":"One","surface":"mobile","status":"designed",` +
 		`"html":"<p data-component=\"Text\">a</p>"}}}`)}
+}
+
+// PRESS-1. The whole of it, in the order a person makes it happen: somebody presses a part of a
+// screen, the screen posts what was pressed, and the page answers with the screen that part opens.
+// Reading only the message the screen posted would prove half of it, and the half that decides
+// whether the operator gets anywhere is what the page does with it.
+func TestAPressOnAPartOfAScreenOpensTheScreenThatPartNames(t *testing.T) {
+	drawn := page(t)
+	flows := fixture(t)
+	system := system(t)
+
+	id, opens := aScreenThatOpensAnother(t, flows)
+	courier, document := courierFor(t, drawn, flows, system, id)
+
+	posted, err := courier.Press(opens)
+	if err != nil {
+		t.Fatalf("pressing the part of %s that opens %s: %v", id, opens, err)
+	}
+	if len(posted) != 1 {
+		t.Fatalf("a press on a part of %s posted %d messages to the page, and one is what it takes:\n%s",
+			id, len(posted), document)
+	}
+	to, read, err := drawn.PressFrom(posted[0], true)
+	if err != nil {
+		t.Fatalf("the page reading %s: %v", posted[0], err)
+	}
+	if !read {
+		t.Fatalf("the page read no press in %s, which the screen it drew posted", posted[0])
+	}
+	if to != opens {
+		t.Errorf("the page opens %q, and the part that was pressed names %q", to, opens)
+	}
+	if _, held := flows.Screens[to]; !held {
+		t.Errorf("the page opens %q, which the project holds no screen for", to)
+	}
+}
+
+// A message from anywhere else opens nothing. A frame has an origin of its own and any window can
+// post to this page, so the page walking on whatever arrives is the whole of the risk here.
+func TestThePageOpensNothingForAMessageFromAnywhereElse(t *testing.T) {
+	drawn := page(t)
+	flows := fixture(t)
+	system := system(t)
+
+	id, opens := aScreenThatOpensAnother(t, flows)
+	courier, _ := courierFor(t, drawn, flows, system, id)
+	posted, err := courier.Press(opens)
+	if err != nil || len(posted) != 1 {
+		t.Fatalf("pressing the part of %s that opens %s: %v, %d messages", id, opens, err, len(posted))
+	}
+
+	if to, read, err := drawn.PressFrom(posted[0], false); err != nil {
+		t.Fatalf("the page reading a message from another window: %v", err)
+	} else if read {
+		t.Errorf("the page opened %q on a message from a window it did not draw", to)
+	}
+	for _, other := range []string{`{"hello":"there"}`, `{"krewe":"flash"}`, `"press"`, `null`} {
+		if to, read, err := drawn.PressFrom(other, true); err != nil {
+			t.Fatalf("the page reading %s: %v", other, err)
+		} else if read {
+			t.Errorf("the page opened %q on the message %s, which names no press", to, other)
+		}
+	}
+}
+
+// A press on a spot that opens nothing is how an operator asks what can be pressed, and the answer
+// has to go away again or the screen is read through an outline for ever.
+func TestAPressOnASpotThatOpensNothingShowsWhatCanBePressed(t *testing.T) {
+	drawn := page(t)
+	flows := fixture(t)
+	system := system(t)
+
+	id, _ := aScreenThatOpensAnother(t, flows)
+	courier, _ := courierFor(t, drawn, flows, system, id)
+
+	posted, err := courier.Press("")
+	if err != nil || len(posted) != 1 {
+		t.Fatalf("pressing a spot of %s that opens nothing: %v, %d messages", id, err, len(posted))
+	}
+	to, read, err := drawn.PressFrom(posted[0], true)
+	if err != nil {
+		t.Fatalf("the page reading %s: %v", posted[0], err)
+	}
+	if !read || to != "" {
+		t.Fatalf("a press on a spot that opens nothing was read as %q, read=%v", to, read)
+	}
+
+	lit, cleared, err := courier.Flash()
+	if err != nil {
+		t.Fatalf("asking the screen to show what can be pressed: %v", err)
+	}
+	if len(lit) == 0 {
+		t.Errorf("the screen outlined nothing, so the operator is told nothing about what can be pressed")
+	}
+	if !cleared {
+		t.Errorf("the screen outlined %v and left the outline on", lit)
+	}
+}
+
+// On the map a screen is a picture of itself. A press there opens the drawer and a second press
+// plays the story, so the frame has to let the press through to the node under it.
+func TestOnTheMapAFrameTakesNoPress(t *testing.T) {
+	flat := strings.Join(strings.Fields(page(t).ScreenStyles), "")
+	if !strings.Contains(flat, ".nodeiframe.screen{pointer-events:none}") {
+		t.Errorf("no rule keeps a press off a frame on the map, so a node under one cannot be opened")
+	}
+}
+
+// aScreenThatOpensAnother is a screen of the fixture whose markup holds a part that opens another
+// screen of the project. The screens are read in name order, so two runs read the same one.
+func aScreenThatOpensAnother(t *testing.T, flows Flows) (string, string) {
+	t.Helper()
+	ids := make([]string, 0, len(flows.Screens))
+	for id := range flows.Screens {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		found := aPartThatOpens.FindStringSubmatch(flows.Screens[id].HTML)
+		if found == nil {
+			continue
+		}
+		if _, held := flows.Screens[found[1]]; !held {
+			continue
+		}
+		return id, found[1]
+	}
+	t.Fatal("no screen of the fixture holds a part that opens another screen, so this proves nothing")
+	return "", ""
+}
+
+// aPartThatOpens is a part of a screen that opens another one, with the name of that screen.
+var aPartThatOpens = regexp.MustCompile(`data-to="([^"]+)"`)
+
+// courierFor draws one screen and answers the courier running in the document the frame was given.
+func courierFor(t *testing.T, drawn Page, flows Flows, system System, id string) (*Courier, string) {
+	t.Helper()
+	markup, err := drawn.Screen(flows, system, id)
+	if err != nil {
+		t.Fatalf("drawing %s: %v", id, err)
+	}
+	document, found := DocumentIn(markup)
+	if !found {
+		t.Fatalf("%s was drawn without a document of its own:\n%s", id, markup)
+	}
+	courier, err := CourierIn(document)
+	if err != nil {
+		t.Fatalf("the document of %s carries no courier: %v", id, err)
+	}
+	return courier, document
 }
