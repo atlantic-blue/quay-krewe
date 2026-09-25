@@ -24,6 +24,9 @@ const theScreen = "sign-in"
 type mockupWorld struct {
 	// fixture is the flow map's own flows.json, read once per scenario.
 	fixture map[string]any
+	// system is the design system the scenario approved, which is where the values every screen is
+	// drawn in live.
+	system map[string]any
 }
 
 type mockupKey struct{}
@@ -42,9 +45,13 @@ func initializeMockupCheckSteps(sc *godog.ScenarioContext) {
 			if err != nil {
 				return ctx, err
 			}
-			ctx = context.WithValue(ctx, mockupKey{}, &mockupWorld{fixture: fixture})
+			system, err := theDesignSystemFixture()
+			if err != nil {
+				return ctx, err
+			}
+			ctx = context.WithValue(ctx, mockupKey{}, &mockupWorld{fixture: fixture, system: system})
 
-			tokens, err := asJSON(map[string]any{"tokens": fixture["tokens"]})
+			tokens, err := asJSON(system)
 			if err != nil {
 				return ctx, err
 			}
@@ -197,12 +204,14 @@ func firstShapeOf(flows map[string]any, screen string) (map[string]any, error) {
 // design system never named.
 func drawIn(flows map[string]any, group, token, value string) error {
 	tokens, _ := flows["tokens"].(map[string]any)
+	if tokens == nil {
+		tokens = map[string]any{}
+		flows["tokens"] = tokens
+	}
 	held, _ := tokens[group].(map[string]any)
 	if held == nil {
-		return fmt.Errorf("the fixture names no %s tokens", group)
-	}
-	if _, there := held[token]; !there {
-		return fmt.Errorf("the fixture names no %s token called %s", group, token)
+		held = map[string]any{}
+		tokens[group] = held
 	}
 	held[token] = value
 	return nil
