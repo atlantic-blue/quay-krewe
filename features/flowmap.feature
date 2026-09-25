@@ -56,3 +56,14 @@ Feature: The flow map plays a project's stories
     And the mark of the project reaches the screen, named in the markup and named in the stylesheet
     And no screen fetches anything, because every address it draws with is inside it
     And a file the design system does not carry stays named, so the operator reads what is missing
+
+  # The step this one exists for. The markup sits in a frame with an origin of its own, so a press
+  # inside it is invisible to the page. The screen tells the page what was pressed, and the page
+  # walks there only when the press came from the frame it drew.
+  Scenario: A press on a part of a screen opens the screen that part names
+    Given a screen a session wrote as markup, holding a part that opens another screen
+    When the operator presses that part
+    Then the page opens the screen that part names
+    And a press that came from anywhere else opens nothing
+    And a press on a spot that opens nothing shows the operator what can be pressed
+    And on the map a press reaches the node under the screen

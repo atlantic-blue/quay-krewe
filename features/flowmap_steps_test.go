@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 
 	flowmap "github.com/atlantic-blue/quay-krewe/skills/flow-map/render"
@@ -43,6 +44,9 @@ type flowMapWorld struct {
 	document  string
 	screen    string
 	documents map[string]string
+	courier   *flowmap.Courier
+	opens     string
+	posted    string
 }
 
 type flowMapKey struct{}
@@ -184,9 +188,20 @@ func initializeFlowMapSteps(sc *godog.ScenarioContext) {
 
 	sc.Step(`^nothing the session wrote can run$`, func(ctx context.Context) error {
 		w := flowMapFrom(ctx)
-		for _, refuse := range []string{"<script", "onclick", "steal(", "document.title"} {
+		for _, refuse := range []string{"onclick", "steal(", "parent.document", "document.title"} {
 			if strings.Contains(w.document, refuse) {
 				return fmt.Errorf("the screen still holds %q, which the session wrote:\n%s", refuse, w.document)
+			}
+		}
+		scripts := flowmap.ScriptsIn(w.document)
+		if len(scripts) != 1 {
+			return fmt.Errorf("the screen carries %d scripts, and the page writes one, the courier:\n%s",
+				len(scripts), w.document)
+		}
+		for _, want := range []string{"krewe", "press", "data-to"} {
+			if !strings.Contains(scripts[0], want) {
+				return fmt.Errorf("the one script in the screen holds no %q, so it is not the courier:\n%s",
+					want, scripts[0])
 			}
 		}
 		if !strings.Contains(w.drawn, `sandbox="allow-scripts"`) {
@@ -378,7 +393,130 @@ func initializeFlowMapSteps(sc *godog.ScenarioContext) {
 			}
 			return nil
 		})
+
+	// The press. The screen is one of the project's own, because what is proved is that an operator
+	// playing a story gets from one screen to the next, and the screens are read in name order so
+	// two runs read the same one.
+	sc.Step(`^a screen a session wrote as markup, holding a part that opens another screen$`,
+		func(ctx context.Context) error {
+			w := flowMapFrom(ctx)
+			ids := make([]string, 0, len(w.flows.Screens))
+			for id := range w.flows.Screens {
+				ids = append(ids, id)
+			}
+			sort.Strings(ids)
+			for _, id := range ids {
+				found := aPartThatOpens.FindStringSubmatch(w.flows.Screens[id].HTML)
+				if found == nil {
+					continue
+				}
+				if _, held := w.flows.Screens[found[1]]; !held {
+					continue
+				}
+				w.opens = found[1]
+				return w.open(id)
+			}
+			return fmt.Errorf("no screen of the project holds a part that opens another screen, so this scenario proves nothing")
+		})
+
+	sc.Step(`^the operator presses that part$`, func(ctx context.Context) error {
+		w := flowMapFrom(ctx)
+		courier, err := flowmap.CourierIn(w.document)
+		if err != nil {
+			return fmt.Errorf("the screen %s carries no courier, so a press in it reaches nothing: %w", w.screen, err)
+		}
+		w.courier = courier
+		posted, err := courier.Press(w.opens)
+		if err != nil {
+			return err
+		}
+		if len(posted) != 1 {
+			return fmt.Errorf("a press on the part of %s that opens %s posted %d messages, and one is what it takes",
+				w.screen, w.opens, len(posted))
+		}
+		w.posted = posted[0]
+		return nil
+	})
+
+	sc.Step(`^the page opens the screen that part names$`, func(ctx context.Context) error {
+		w := flowMapFrom(ctx)
+		to, read, err := w.page.PressFrom(w.posted, true)
+		if err != nil {
+			return err
+		}
+		if !read {
+			return fmt.Errorf("the page read no press in %s, which the screen it drew posted", w.posted)
+		}
+		if to != w.opens {
+			return fmt.Errorf("the page opens %q, and the part that was pressed names %q", to, w.opens)
+		}
+		if _, held := w.flows.Screens[to]; !held {
+			return fmt.Errorf("the page opens %q, which the project holds no screen for", to)
+		}
+		return nil
+	})
+
+	sc.Step(`^a press that came from anywhere else opens nothing$`, func(ctx context.Context) error {
+		w := flowMapFrom(ctx)
+		if to, read, err := w.page.PressFrom(w.posted, false); err != nil {
+			return err
+		} else if read {
+			return fmt.Errorf("the page opened %q on a message from a window it did not draw", to)
+		}
+		for _, other := range []string{`{"hello":"there"}`, `{"krewe":"flash"}`, `null`} {
+			to, read, err := w.page.PressFrom(other, true)
+			if err != nil {
+				return err
+			}
+			if read {
+				return fmt.Errorf("the page opened %q on the message %s, which names no press", to, other)
+			}
+		}
+		return nil
+	})
+
+	sc.Step(`^a press on a spot that opens nothing shows the operator what can be pressed$`,
+		func(ctx context.Context) error {
+			w := flowMapFrom(ctx)
+			posted, err := w.courier.Press("")
+			if err != nil {
+				return err
+			}
+			if len(posted) != 1 {
+				return fmt.Errorf("a press on a spot that opens nothing posted %d messages, and one is what it takes",
+					len(posted))
+			}
+			to, read, err := w.page.PressFrom(posted[0], true)
+			if err != nil {
+				return err
+			}
+			if !read || to != "" {
+				return fmt.Errorf("a press on a spot that opens nothing was read as %q, read=%v", to, read)
+			}
+			lit, cleared, err := w.courier.Flash()
+			if err != nil {
+				return err
+			}
+			if len(lit) == 0 {
+				return fmt.Errorf("the screen outlined nothing, so the operator is told nothing about what can be pressed")
+			}
+			if !cleared {
+				return fmt.Errorf("the screen outlined %v and left the outline on", lit)
+			}
+			return nil
+		})
+
+	sc.Step(`^on the map a press reaches the node under the screen$`, func(ctx context.Context) error {
+		w := flowMapFrom(ctx)
+		if !strings.Contains(strings.Join(strings.Fields(w.page.ScreenStyles), ""), ".nodeiframe.screen{pointer-events:none}") {
+			return fmt.Errorf("no rule keeps a press off a frame on the map, so a node under one cannot be opened")
+		}
+		return nil
+	})
 }
+
+// aPartThatOpens is a part of a screen that opens another one, with the name of that screen.
+var aPartThatOpens = regexp.MustCompile(`data-to="([^"]+)"`)
 
 // open draws one screen and keeps both what the page answered and the document the frame was
 // given, because the operator reads the second one through the first.

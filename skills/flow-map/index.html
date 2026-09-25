@@ -399,6 +399,36 @@ var HOLES = { mobile: { width: 206, height: 438 }, web: { width: 358, height: 42
 var POLICY = "default-src 'none'; img-src data:; font-src data:; style-src 'unsafe-inline'; " +
   "script-src 'unsafe-inline'; form-action 'none'; base-uri 'none'";
 
+// THE_COURIER is the one script a screen document carries, and the page writes it. A session
+// cannot write one: its markup goes in the body with every script taken out, and the policy allows
+// an inline script only. It is here because a document with an origin of its own is invisible to
+// the page around it, so a press has to be carried out rather than read in. The outline is
+// currentColor, because a colour here would be this page's opinion about somebody else's product.
+var THE_COURIER =
+  "(function(){" +
+  "function pressed(e){var t=e&&e.target;return t&&t.closest?t.closest('[data-to]'):null;}" +
+  "document.addEventListener('click',function(e){var p=pressed(e);" +
+  "parent.postMessage({krewe:'press',to:p?String(p.getAttribute('data-to')||''):''},'*');});" +
+  "window.addEventListener('message',function(e){var said=e&&e.data;" +
+  "if(!said||said.krewe!=='flash'){return;}" +
+  "var parts=document.querySelectorAll('[data-to]');" +
+  "Array.prototype.forEach.call(parts,function(p){" +
+  "p.style.outline='2px solid currentColor';p.style.outlineOffset='2px';});" +
+  "setTimeout(function(){Array.prototype.forEach.call(parts,function(p){" +
+  "p.style.outline='';p.style.outlineOffset='';});},600);});" +
+  "})();";
+
+// pressFrom is the page reading a message. Any window on the machine can post to this page, and a
+// frame has an origin of its own, so a message is read only when it came from the frame the page
+// drew. It answers the screen the press names, an empty name for a press that opens nothing, and
+// nothing at all for a message that is not a press.
+function pressFrom(message, frame) {
+  if (!message || !frame || !frame.contentWindow || message.source !== frame.contentWindow) { return null; }
+  var said = message.data;
+  if (!said || said.krewe !== "press" || typeof said.to !== "string") { return null; }
+  return said.to;
+}
+
 // A script element, and an attribute whose name starts with "on". An artifact written before the
 // gate read for these is still drawn by this page, so the page takes them out itself.
 var A_SCRIPT = /<script\b[\s\S]*?(?:<\/script\s*>|$)/gi;
@@ -500,7 +530,8 @@ function composeScreen(screen, system) {
     (sheet ? "<style>" + sheet + "</style>" : "") +
     "<style>html,body{margin:0;padding:0;width:" + size.width + "px;height:" + size.height +
     "px;overflow:hidden}</style>" +
-    "<body>" + withAssets(safeMarkup(screen && screen.html), held.assets) + "</body>";
+    "<body>" + withAssets(safeMarkup(screen && screen.html), held.assets) +
+    "<script>" + THE_COURIER + "</scr" + "ipt></body>";
 }
 
 // screenFrame is the frame that document goes in. The sandbox attribute gives it an origin of its
@@ -766,8 +797,9 @@ function renderPlay() {
   var pp = $("#pp");
   pp.onclick = function (e) {
     var h = e.target.closest("[data-to]");
-    if (!h) { pp.classList.add("flash"); setTimeout(function () { pp.classList.remove("flash"); }, 600); return; }
-    go(h.dataset.to);
+    if (h) { go(h.dataset.to); return; }
+    if (theScreenFrame()) { showWhatCanBePressed(); return; }
+    pp.classList.add("flash"); setTimeout(function () { pp.classList.remove("flash"); }, 600);
   };
   Array.prototype.forEach.call(document.querySelectorAll("[data-go]"), function (b) {
     b.onclick = function () { go(b.dataset.go); };
@@ -775,6 +807,20 @@ function renderPlay() {
   $("#pb").onclick = function () { if (playTrail.length > 1) { playTrail.pop(); renderPlay(); } };
   $("#pr").onclick = function () { playTrail = []; renderPlay(); };
 }
+// theScreenFrame is the frame the Prototype view drew, and nothing else on the page. A message
+// from any other window is read against it and refused.
+function theScreenFrame() {
+  var stage = $("#pp");
+  return stage ? stage.querySelector("iframe.screen") : null;
+}
+
+// showWhatCanBePressed asks the screen to outline its own parts, because the page cannot reach
+// inside the frame to outline them itself.
+function showWhatCanBePressed() {
+  var frame = theScreenFrame();
+  if (frame && frame.contentWindow) { frame.contentWindow.postMessage({ krewe: "flash" }, "*"); }
+}
+
 function go(to) {
   if (to === "back") { if (playTrail.length > 1) { playTrail.pop(); } renderPlay(); return; }
   if (DATA.screens[to]) { playTrail.push(to); renderPlay(); }
@@ -854,6 +900,18 @@ $("#z-in").onclick = function () { zoom = Math.min(1.6, zoom + 0.15); applyZoom(
 $("#z-out").onclick = function () { zoom = Math.max(0.25, zoom - 0.15); applyZoom(); };
 $("#z-fit").onclick = fit;
 window.addEventListener("resize", function () { if (mode === "map") { fit(); } });
+
+// A press inside a screen arrives here, because the frame it happened in cannot reach this page
+// any other way. The trail, the Back action and the Restart action are the ones a press on a shape
+// has always used.
+window.addEventListener("message", function (e) {
+  var frame = theScreenFrame();
+  if (!frame) { return; }
+  var to = pressFrom(e, frame);
+  if (to === null) { return; }
+  if (to === "") { showWhatCanBePressed(); return; }
+  go(to);
+});
 
 // The design system belongs to the project rather than to the mockups, so it sits one level above
 // the screens. A project that has not written one answers 404, which is not a fault: every screen
