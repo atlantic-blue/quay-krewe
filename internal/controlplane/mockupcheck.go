@@ -106,6 +106,13 @@ func (s *Server) checkMockupArtifact(ctx context.Context, project, artifact stri
 			screen, part.describe())
 	}
 
+	// The containment rule, after the two component rules. A part nobody can build from is the fault
+	// that reaches furthest, because it survives the operator's approval and lands on the session that
+	// builds the screen, so a screen carrying both faults reads that one first.
+	if screen, fault, found := aScreenThatReachesOut(doc); found {
+		return nil, refusalFor(screen, fault)
+	}
+
 	schema, err := mockupSchema()
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "the flow map schema could not be read: %v", err)
@@ -542,4 +549,215 @@ func asArray(value any) ([]any, bool) {
 func asString(value any) string {
 	held, _ := value.(string)
 	return held
+}
+
+// What a screen may not hold, beyond naming the components it stands for.
+//
+// A screen is drawn and it is never run. The page draws each one inside a frame with no network and
+// no script of the session's, so a script, a handler and an address off the page all draw nothing.
+// The containment is what holds a screen stored before this check; this is the half that tells the
+// session while it writes. Measured on the 18 screens of one project: every one loaded a script from
+// a delivery network, 14 named a font host in a link and 2 more reached it with @import.
+//
+// Two addresses stay inside the page. An asset of the approved design system, which the page
+// resolves into the document as a data address, and a part of the screen itself. Every other address
+// reaches a machine somewhere, so the screen draws one thing here and another thing there, and it
+// tells that machine it was opened.
+
+// theAddressAttributes are the attributes whose value is an address. A srcset holds several, so it
+// is read candidate by candidate.
+var theAddressAttributes = map[string]bool{"src": true, "href": true, "srcset": true}
+
+// theAddressShown caps how much of an address a refusal repeats. An address is there to be found in
+// a file, and a data address runs to hundreds of thousands of characters.
+const theAddressShown = 120
+
+// The four things a screen may not hold, which are four different things to do about it.
+const (
+	faultScript  = "script"
+	faultEvent   = "event"
+	faultImport  = "import"
+	faultAddress = "address"
+)
+
+// screenFault is what one screen holds that it may not, in the words the refusal reads it out in.
+type screenFault struct {
+	kind string
+	// said is the attribute name, the address, or the import as it was written.
+	said string
+	// where names the part of the screen it sits on, so an operator opens the right line.
+	where string
+}
+
+// aScreenThatReachesOut finds the first screen holding a script, a handler or an address off the
+// page. The screens are read in name order and each screen in document order, so two reads of one
+// artifact name the same fault.
+func aScreenThatReachesOut(doc any) (screen string, fault screenFault, found bool) {
+	held := asObject(asObject(doc)["screens"])
+	for _, name := range sortedKeys(held) {
+		markup := asString(asObject(held[name])["html"])
+		if strings.TrimSpace(markup) == "" {
+			continue
+		}
+		body := &html.Node{Type: html.ElementNode, DataAtom: atom.Body, Data: "body"}
+		nodes, err := html.ParseFragment(strings.NewReader(markup), body)
+		if err != nil {
+			continue
+		}
+		for _, node := range nodes {
+			if fault, found := whatReachesOut(node); found {
+				return name, fault, true
+			}
+		}
+	}
+	return "", screenFault{}, false
+}
+
+// whatReachesOut reads one element and everything under it, in the order the markup was written in.
+func whatReachesOut(node *html.Node) (screenFault, bool) {
+	if node.Type == html.ElementNode {
+		if node.Data == "script" {
+			return screenFault{kind: faultScript}, true
+		}
+		if fault, found := whatAnAttributeReaches(node); found {
+			return fault, true
+		}
+		if node.Data == "style" {
+			if fault, found := whatAStylesheetReaches(theTextOf(node)); found {
+				fault.where = "the stylesheet of the screen"
+				return fault, true
+			}
+		}
+	}
+	for child := node.FirstChild; child != nil; child = child.NextSibling {
+		if fault, found := whatReachesOut(child); found {
+			return fault, true
+		}
+	}
+	return screenFault{}, false
+}
+
+// whatAnAttributeReaches reads the attributes of one element, in the order they were written.
+//
+// An attribute whose name starts with "on" is read whatever it holds, because the page strips the
+// whole class of them rather than the handful somebody thought of.
+func whatAnAttributeReaches(node *html.Node) (screenFault, bool) {
+	part := partOf(node, false).describe()
+	for _, held := range node.Attr {
+		name := strings.ToLower(held.Key)
+		switch {
+		case strings.HasPrefix(name, "on"):
+			return screenFault{kind: faultEvent, said: name, where: part}, true
+		case theAddressAttributes[name]:
+			for _, address := range theAddressesIn(name, held.Val) {
+				if reachesOffThePage(address) {
+					return screenFault{kind: faultAddress, said: cappedTo(address, theAddressShown),
+						where: "the " + name + " of " + part}, true
+				}
+			}
+		case name == "style":
+			if fault, found := whatAStylesheetReaches(held.Val); found {
+				fault.where = "the style of " + part
+				return fault, true
+			}
+		}
+	}
+	return screenFault{}, false
+}
+
+// whatAStylesheetReaches reads a <style> element of a screen, or a style attribute on one of its
+// parts. An @import is refused whole, the way the design system's own stylesheet refuses one: it is
+// an address written in a second grammar, and a reader told only about url() writes it next.
+func whatAStylesheetReaches(sheet string) (screenFault, bool) {
+	if at := strings.Index(strings.ToLower(sheet), "@import"); at >= 0 {
+		said := sheet[at:]
+		if end := strings.Index(said, ";"); end >= 0 {
+			said = said[:end+1]
+		}
+		return screenFault{kind: faultImport,
+			said: cappedTo(strings.Join(strings.Fields(said), " "), theAddressShown)}, true
+	}
+	for _, found := range anAddress.FindAllStringSubmatch(sheet, -1) {
+		address := strings.Trim(found[1], `"'`)
+		if reachesOffThePage(address) {
+			return screenFault{kind: faultAddress, said: cappedTo(address, theAddressShown)}, true
+		}
+	}
+	return screenFault{}, false
+}
+
+// theAddressesIn is every address one attribute holds. A srcset names the same image at several
+// sizes, so each candidate is read and the descriptor beside it is not an address.
+func theAddressesIn(attribute, value string) []string {
+	if attribute != "srcset" {
+		return []string{value}
+	}
+	var out []string
+	for _, candidate := range strings.Split(value, ",") {
+		if fields := strings.Fields(candidate); len(fields) > 0 {
+			out = append(out, fields[0])
+		}
+	}
+	return out
+}
+
+// reachesOffThePage says whether an address leaves the document the page composed. An asset of the
+// design system does not, because the page writes the bytes into the document. A fragment does not,
+// because it names a part of the screen itself. An empty address reaches nothing at all.
+func reachesOffThePage(address string) bool {
+	held := strings.TrimSpace(address)
+	if held == "" || strings.HasPrefix(held, "#") {
+		return false
+	}
+	if name, asset := strings.CutPrefix(held, theAssetScheme); asset {
+		return !aReadableName.MatchString(name)
+	}
+	return true
+}
+
+// cappedTo caps a value a refusal repeats, and says it cut it, so a long value cannot bury the sentence
+// that says what to do.
+func cappedTo(value string, most int) string {
+	if utf8.RuneCountInString(value) <= most {
+		return value
+	}
+	return string([]rune(value)[:most]) + "..."
+}
+
+// theTextOf is the text a <style> element holds, which is the stylesheet of one screen.
+func theTextOf(node *html.Node) string {
+	var said []string
+	for child := node.FirstChild; child != nil; child = child.NextSibling {
+		if child.Type == html.TextNode {
+			said = append(said, child.Data)
+		}
+	}
+	return strings.Join(said, "")
+}
+
+// refusalFor says what the screen holds and what to write instead. Each of the four says a different
+// thing to do, and each one names the screen, because a mockup runs to dozens of them.
+func refusalFor(screen string, fault screenFault) error {
+	switch fault.kind {
+	case faultScript:
+		return status.Errorf(codes.InvalidArgument,
+			"the mockups artifact is refused: the %q screen holds a <script> element. A screen is drawn "+
+				"and never run, because the page draws it in a frame that runs no script a session wrote: "+
+				"write the screen as markup and css.", screen)
+	case faultEvent:
+		return status.Errorf(codes.InvalidArgument,
+			"the mockups artifact is refused: the %q screen carries %q on %s. A screen is drawn and never "+
+				"run: take the behaviour out, and write %s to say which screen a press opens.",
+			screen, fault.said, fault.where, thePressAttribute)
+	case faultImport:
+		return status.Errorf(codes.InvalidArgument,
+			"the mockups artifact is refused: the %q screen imports a stylesheet, in %q. A screen reaches "+
+				"no address: the fonts and the images come from the approved design_system stage, and a "+
+				"stylesheet reaches one with url(%s<name>).", screen, fault.said, theAssetScheme)
+	}
+	return status.Errorf(codes.InvalidArgument,
+		"the mockups artifact is refused: the %q screen names the address %q, in %s. A screen reaches no "+
+			"address of its own: the fonts and the images come from the approved design_system stage, "+
+			"written as %s<name> under the name that stage holds them by, and a part of the screen itself "+
+			"is named as #<name>.", screen, fault.said, fault.where, theAssetScheme)
 }

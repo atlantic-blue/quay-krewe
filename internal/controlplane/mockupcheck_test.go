@@ -561,3 +561,241 @@ func TestAScreenWrittenAsShapesKeepsTheShapeRefusal(t *testing.T) {
 		t.Errorf("the refusal reads %q, and it has to name the shape it read", said)
 	}
 }
+
+// SCREEN-3. A screen is drawn, and it never runs and never calls out.
+//
+// A session writing markup reaches for the tools it knows: a script from a delivery network, a font
+// from a font host, a handler on a button. Measured on the 18 screens of a real project, every one
+// of them loaded a script from one host and 14 of them a font from another. The page contains all
+// three, because it draws each screen inside a frame with no network and no script of the session's.
+// This is the other half: the session is told while it writes, rather than an operator finding a
+// screen that draws one thing on a machine with a network and another thing without one.
+
+// aNamedCard is a part of a screen that breaks no other rule, so a test about an address is not
+// quietly a test about a component.
+const aNamedCard = `<main data-component="Card"><p>Two tides today</p></main>`
+
+// Every place an address hides in a screen, and the addresses a session actually reaches for. The
+// refusal repeats the address, because a screen runs to hundreds of lines and an operator told only
+// that an address is wrong has to read all of them.
+func TestAnAddressOutsideThePageIsRefused(t *testing.T) {
+	for _, held := range []struct {
+		name    string
+		markup  string
+		address string
+	}{
+		{
+			name:    "a font in a link",
+			markup:  `<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter">` + aNamedCard,
+			address: "https://fonts.googleapis.com/css2?family=Inter",
+		},
+		{
+			name:    "an image in a src",
+			markup:  `<img data-component="Mark" src="https://cdn.example.invalid/logo.png" alt="Tide">`,
+			address: "https://cdn.example.invalid/logo.png",
+		},
+		{
+			name: "one candidate of a srcset",
+			markup: `<img data-component="Mark" src="asset:logo" alt="Tide"` +
+				` srcset="asset:logo 1x, https://cdn.example.invalid/logo-2x.png 2x">`,
+			address: "https://cdn.example.invalid/logo-2x.png",
+		},
+		{
+			name:    "an image in the stylesheet of the screen",
+			markup:  `<style>.hero{background:url(https://cdn.example.invalid/hero.png)}</style>` + aNamedCard,
+			address: "https://cdn.example.invalid/hero.png",
+		},
+		{
+			name: "an image in a style attribute",
+			markup: `<main data-component="Card" style="background:url('https://cdn.example.invalid/hero.png')">` +
+				`<p>Two tides today</p></main>`,
+			address: "https://cdn.example.invalid/hero.png",
+		},
+		{
+			name: "a font the screen fetches itself",
+			markup: `<style>@font-face{font-family:Inter;src:url(//cdn.example.invalid/inter.woff2)}</style>` +
+				aNamedCard,
+			address: "//cdn.example.invalid/inter.woff2",
+		},
+		{
+			name:    "a file beside the page",
+			markup:  `<img data-component="Mark" src="./logo.png" alt="Tide">`,
+			address: "./logo.png",
+		},
+		{
+			name:    "a data address the page did not write",
+			markup:  `<img data-component="Mark" src="data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=" alt="Tide">`,
+			address: "data:image/svg+xml",
+		},
+	} {
+		t.Run(held.name, func(t *testing.T) {
+			s := newServer(&model.FakeRunner{})
+			_, project := newProject(t, s)
+			designedUpToMockups(t, s, project)
+
+			_, err := writeMockups(s, project, aMarkupMockup(held.markup))
+
+			if status.Code(err) != codes.InvalidArgument {
+				t.Fatalf("a screen naming %s answered %v, want InvalidArgument", held.address, err)
+			}
+			said := status.Convert(err).Message()
+			for _, want := range []string{"sign-in", held.address, "design_system"} {
+				if !strings.Contains(said, want) {
+					t.Errorf("the refusal reads %q, and it has to say %q", said, want)
+				}
+			}
+			if kept := mockupsHeld(t, s, project); kept != nil {
+				t.Fatalf("the refused write left a mockups stage behind, holding %q", kept.GetArtifact())
+			}
+		})
+	}
+}
+
+// An import is an address whatever it is written as, and it is the shape two of those 18 screens
+// reached the font host with. The design system check refuses one in the stylesheet it holds, and a
+// screen carrying its own stylesheet is the same fault in a second place.
+func TestAnImportInTheStylesheetOfAScreenIsRefused(t *testing.T) {
+	s := newServer(&model.FakeRunner{})
+	_, project := newProject(t, s)
+	designedUpToMockups(t, s, project)
+
+	_, err := writeMockups(s, project, aMarkupMockup(
+		`<style>@import "https://fonts.googleapis.com/css2?family=Inter";</style>`+aNamedCard))
+
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("a screen importing a stylesheet answered %v, want InvalidArgument", err)
+	}
+	said := status.Convert(err).Message()
+	for _, want := range []string{"sign-in", "@import", "fonts.googleapis.com", "design_system"} {
+		if !strings.Contains(said, want) {
+			t.Errorf("the refusal reads %q, and it has to say %q", said, want)
+		}
+	}
+}
+
+// A screen draws. The page gives the frame no script of the session's, so a screen that carries one
+// is a screen whose author expected behaviour that is never going to happen.
+func TestAScriptInAScreenIsRefused(t *testing.T) {
+	for _, markup := range []string{
+		`<script src="https://cdn.tailwindcss.com"></script>` + aNamedCard,
+		`<script>document.title = "Tide"</script>` + aNamedCard,
+	} {
+		s := newServer(&model.FakeRunner{})
+		_, project := newProject(t, s)
+		designedUpToMockups(t, s, project)
+
+		_, err := writeMockups(s, project, aMarkupMockup(markup))
+
+		if status.Code(err) != codes.InvalidArgument {
+			t.Fatalf("a screen holding a script answered %v, want InvalidArgument", err)
+		}
+		said := status.Convert(err).Message()
+		for _, want := range []string{"sign-in", "script"} {
+			if !strings.Contains(said, want) {
+				t.Errorf("the refusal reads %q, and it has to say %q", said, want)
+			}
+		}
+	}
+}
+
+// The other way behaviour gets written into markup. Seven of those 18 screens carried one.
+func TestAnEventAttributeInAScreenIsRefused(t *testing.T) {
+	s := newServer(&model.FakeRunner{})
+	_, project := newProject(t, s)
+	designedUpToMockups(t, s, project)
+
+	_, err := writeMockups(s, project, aMarkupMockup(
+		`<main data-component="Card"><button data-component="Button" data-to="sign-in"`+
+			` onclick="open()">Continue</button></main>`))
+
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("a screen carrying an event attribute answered %v, want InvalidArgument", err)
+	}
+	said := status.Convert(err).Message()
+	for _, want := range []string{"sign-in", "onclick", "button"} {
+		if !strings.Contains(said, want) {
+			t.Errorf("the refusal reads %q, and it has to say %q", said, want)
+		}
+	}
+}
+
+// The two addresses a screen may name, and the two that reach nothing. A gate that refused these
+// would leave a session no way to draw a mark or to name a part of its own screen.
+func TestTheAddressesAScreenMayNameAreKept(t *testing.T) {
+	s := newServer(&model.FakeRunner{})
+	_, project := newProject(t, s)
+	designedUpToMockups(t, s, project)
+
+	written, err := writeMockups(s, project, aMarkupMockup(
+		`<style>.hero{background:url(asset:hero) no-repeat}</style>`+
+			`<img data-component="Mark" src="asset:logo" alt="Tide"`+
+			` srcset="asset:logo 1x, asset:logo-2x 2x">`+
+			`<main data-component="Card" style="background:url('asset:hero')">`+
+			`<a data-component="Link" href="#today">Today</a>`+
+			`<a data-component="Link" href="#">Nothing yet</a>`+
+			`<a data-component="Link" href="">Nothing yet</a>`+
+			`<button data-component="Button" data-to="sign-in">Continue</button></main>`))
+	if err != nil {
+		t.Fatalf("a screen naming only its own assets and its own parts was refused: %v", err)
+	}
+	if written.GetStage().GetArtifact() == "" {
+		t.Fatal("the mockups stage came back with no artifact")
+	}
+}
+
+// A screen with both faults reads one of them, and the same one every time. The component rule is
+// read first: a part nobody can build from is the fault that reaches furthest, because it survives
+// the operator's approval and lands on the session that builds the screen.
+func TestTheComponentRuleIsReadBeforeTheAddress(t *testing.T) {
+	s := newServer(&model.FakeRunner{})
+	_, project := newProject(t, s)
+	designedUpToMockups(t, s, project)
+
+	_, err := writeMockups(s, project, aMarkupMockup(
+		`<main><img class="mark" src="https://cdn.example.invalid/logo.png" alt="Tide"></main>`))
+
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("a screen with both faults answered %v, want InvalidArgument", err)
+	}
+	if said := status.Convert(err).Message(); !strings.Contains(said, "data-component") {
+		t.Errorf("the refusal reads %q, want the component rule read first", said)
+	}
+}
+
+// Two screens, both calling out. A map is read in whatever order the runtime feels like, so a
+// refusal that read one would name a different screen on a different day.
+func TestTheRefusalNamesTheFirstScreenThatCallsOut(t *testing.T) {
+	s := newServer(&model.FakeRunner{})
+	_, project := newProject(t, s)
+	designedUpToMockups(t, s, project)
+
+	calling := `<img data-component=\"Mark\" src=\"https://cdn.example.invalid/logo.png\" alt=\"Tide\">`
+	two := strings.Replace(
+		aMarkupMockup(`<img data-component="Mark" src="https://cdn.example.invalid/logo.png" alt="Tide">`),
+		`"screens": {`,
+		`"screens": {
+			"account": {"name": "Account", "surface": "web", "status": "designed",
+				"html": "`+calling+`"},`, 1)
+
+	for attempt := range 8 {
+		_, err := writeMockups(s, project, two)
+		said := status.Convert(err).Message()
+		if !strings.Contains(said, `"account"`) {
+			t.Fatalf("attempt %d read %q, want the first screen in name order", attempt, said)
+		}
+	}
+}
+
+// A screen written as a shape list is not read for addresses. The shape list is removed with the
+// format it belongs to, and a rule that reached into it would refuse a stored mockup nobody can
+// rewrite.
+func TestAScreenWrittenAsShapesIsNotReadForAddresses(t *testing.T) {
+	s := newServer(&model.FakeRunner{})
+	_, project := newProject(t, s)
+	designedUpToMockups(t, s, project)
+
+	if _, err := writeMockups(s, project, aMockup(
+		`{"t": "image", "component": "Mark", "v": "https://cdn.example.invalid/logo.png"}`)); err != nil {
+		t.Fatalf("a screen written as shapes was refused: %v", err)
+	}
+}
