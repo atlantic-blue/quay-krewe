@@ -108,6 +108,15 @@ func initializeMockupCheckSteps(sc *godog.ScenarioContext) {
 			})
 		})
 
+	// The shape a session writes when nothing tells it where the fonts of the project are: a font
+	// host in the markup of one screen.
+	sc.Step(`^the operator writes the mockups stage with a screen loading a font from the network$`,
+		func(ctx context.Context) error {
+			return writeMockupFixture(ctx, func(flows map[string]any) error {
+				return loadAFontFromTheNetwork(flows, theMarkupScreen)
+			})
+		})
+
 	sc.Step(`^the operator writes the mockups stage drawn in the colour "([^"]*)"$`,
 		func(ctx context.Context, colour string) error {
 			return writeMockupFixture(ctx, func(flows map[string]any) error {
@@ -265,5 +274,29 @@ func unnameTheComponentOf(flows map[string]any, screen, part, without string) er
 			screen, part)
 	}
 	held["html"] = strings.Replace(markup, part, without, 1)
+	return nil
+}
+
+// theFontOnTheNetwork is how a session reaches for a typeface when it has not been told where the
+// fonts of the project live. It is the form measured on the screens of a real project.
+const theFontOnTheNetwork = `<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter">`
+
+// loadAFontFromTheNetwork puts a font host into the markup of one screen.
+//
+// It refuses a screen it could not change, because a scenario that broke nothing would pass against
+// the rule it was written to prove.
+func loadAFontFromTheNetwork(flows map[string]any, screen string) error {
+	screens, _ := flows["screens"].(map[string]any)
+	held, _ := screens[screen].(map[string]any)
+	markup, _ := held["html"].(string)
+	if strings.TrimSpace(markup) == "" {
+		return fmt.Errorf("the %s screen of the fixture is not written as markup, "+
+			"so this scenario would prove nothing", screen)
+	}
+	if strings.Contains(markup, "fonts.googleapis.com") {
+		return fmt.Errorf("the %s screen of the fixture already loads a font from the network, "+
+			"so this scenario would prove nothing", screen)
+	}
+	held["html"] = theFontOnTheNetwork + markup
 	return nil
 }

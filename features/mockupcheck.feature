@@ -16,6 +16,11 @@ Feature: A mockup is refused unless every shape names its component
   design_system stage, which the operator approved before the mockups could be written. A value
   that stage does not name is a second design system nobody agreed to, so it is refused too.
 
+  A screen is drawn and it is never run. A script, an attribute whose name starts with "on", and any
+  address other than an asset of the design system or a part of the screen itself are all refused.
+  The operator plays the mockup on the machine in front of them, and the fonts and the images of the
+  project are the ones that operator approved.
+
   The other five stages carry whatever json they carry. Nothing here reaches them.
 
   Background:
@@ -42,6 +47,18 @@ Feature: A mockup is refused unless every shape names its component
     And the refusal suggests "dashboard"
     And the refusal suggests "This week"
     And the refusal suggests "data-component"
+    And the project holds no mockups stage
+
+  # An operator plays a mockup on the machine in front of them, and often with no network. A screen
+  # that reaches out for a font draws one thing on one machine and another thing on the next, and it
+  # tells the host it was opened. Every font and every image of the project sits in the design system
+  # the operator approved, so a screen needs no address of its own.
+  Scenario: A screen that loads a font from an address outside the page is refused
+    When the operator writes the mockups stage with a screen loading a font from the network
+    Then the control plane refuses it as invalid
+    And the refusal suggests "dashboard"
+    And the refusal suggests "fonts.googleapis.com"
+    And the refusal suggests "design_system"
     And the project holds no mockups stage
 
   Scenario: A mockup that names a component on every shape goes in
