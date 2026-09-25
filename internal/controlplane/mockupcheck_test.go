@@ -3,6 +3,7 @@ package controlplane_test
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -388,5 +389,175 @@ func TestAnArtifactThatIsNotJSONKeepsTheStoresOwnRefusal(t *testing.T) {
 	}
 	if said := status.Convert(err).Message(); !strings.Contains(said, "not json") {
 		t.Errorf("the refusal reads %q, want the store's own words about json", said)
+	}
+}
+
+// SCREEN-2. The same contract, read in markup.
+//
+// A screen may be written as html, and then it has no shape list to carry a component name. The
+// name moves onto the markup as data-component. Two rules keep a mockup buildable: a part that can
+// be pressed names a component on itself, and every visible part sits under one.
+
+// aMarkupMockup is a whole flows.json whose one screen is written as markup.
+func aMarkupMockup(html string) string {
+	return fmt.Sprintf(`{
+		"readAt": {"commit": "0000000", "date": "2026-09-23"},
+		"screens": {
+			"sign-in": {"name": "Sign in", "surface": "web", "status": "designed", "html": %s}
+		},
+		"stories": [
+			{"id": "sign-in", "title": "A person signs in", "start": "sign-in", "nodes": [["sign-in", 0, 0]]}
+		]
+	}`, strconv.Quote(html))
+}
+
+// The press is the component. A part that opens another screen and names none leaves the building
+// session to guess which component it stands for, which is the fault this whole check exists for.
+func TestAPressablePartThatNamesNoComponentIsRefused(t *testing.T) {
+	s := newServer(&model.FakeRunner{})
+	_, project := newProject(t, s)
+	designedUpToMockups(t, s, project)
+
+	_, err := writeMockups(s, project, aMarkupMockup(
+		`<main data-component="Card"><button class="go" data-to="sign-in">Continue</button></main>`))
+
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("a part that can be pressed and names no component answered %v, want InvalidArgument", err)
+	}
+	said := status.Convert(err).Message()
+	for _, want := range []string{"sign-in", "button", "go", "Continue", "data-component"} {
+		if !strings.Contains(said, want) {
+			t.Errorf("the refusal reads %q, and it has to say %q", said, want)
+		}
+	}
+	if held := mockupsHeld(t, s, project); held != nil {
+		t.Fatalf("the refused write left a mockups stage behind, holding %q", held.GetArtifact())
+	}
+}
+
+// The words a person reads are the screen. Words under nothing are words no session can place.
+func TestVisibleWordsOutsideEveryNamedComponentAreRefused(t *testing.T) {
+	s := newServer(&model.FakeRunner{})
+	_, project := newProject(t, s)
+	designedUpToMockups(t, s, project)
+
+	_, err := writeMockups(s, project, aMarkupMockup(`<main><h1 class="lede">This week</h1></main>`))
+
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("words outside every named component answered %v, want InvalidArgument", err)
+	}
+	said := status.Convert(err).Message()
+	for _, want := range []string{"sign-in", "h1", "lede", "This week", "data-component"} {
+		if !strings.Contains(said, want) {
+			t.Errorf("the refusal reads %q, and it has to say %q", said, want)
+		}
+	}
+}
+
+// A mark carries no words, and it is still a part somebody has to build. The four drawing elements
+// are visible parts whatever they hold.
+func TestAMarkOutsideEveryNamedComponentIsRefused(t *testing.T) {
+	s := newServer(&model.FakeRunner{})
+	_, project := newProject(t, s)
+	designedUpToMockups(t, s, project)
+
+	_, err := writeMockups(s, project, aMarkupMockup(
+		`<main data-component="Card"><p data-component="Text">Two tides today</p></main>`+
+			`<img class="mark" src="asset:logo" alt="Tide">`))
+
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("a mark outside every named component answered %v, want InvalidArgument", err)
+	}
+	said := status.Convert(err).Message()
+	for _, want := range []string{"sign-in", "img", "mark", "data-component"} {
+		if !strings.Contains(said, want) {
+			t.Errorf("the refusal reads %q, and it has to say %q", said, want)
+		}
+	}
+}
+
+// The other half of the rule, and the half that keeps the markup readable. A card names itself
+// once, and every word and mark inside it needs no attribute of its own.
+func TestPartsUnderANamedComponentNeedNoNameOfTheirOwn(t *testing.T) {
+	s := newServer(&model.FakeRunner{})
+	_, project := newProject(t, s)
+	designedUpToMockups(t, s, project)
+
+	written, err := writeMockups(s, project, aMarkupMockup(
+		`<h1 data-component="Heading">This week</h1>`+
+			`<main data-component="Card"><p>Two tides<span>both after dark</span></p>`+
+			`<svg viewBox="0 0 8 8"><path d="M0 0h8v8H0z"></path></svg>`+
+			`<button data-component="Button" data-to="sign-in">Continue</button></main>`))
+	if err != nil {
+		t.Fatalf("a screen naming a component above every part was refused: %v", err)
+	}
+	if written.GetStage().GetArtifact() == "" {
+		t.Fatal("the mockups stage came back with no artifact")
+	}
+}
+
+// A stylesheet is not a part of the screen. Its text is read by the browser and by nobody else, so
+// a rule that called it visible words would refuse every screen that carries one.
+func TestAStylesheetInAScreenIsNotAVisiblePart(t *testing.T) {
+	s := newServer(&model.FakeRunner{})
+	_, project := newProject(t, s)
+	designedUpToMockups(t, s, project)
+
+	if _, err := writeMockups(s, project, aMarkupMockup(
+		`<style>h1{margin:0}</style><main data-component="Card"><h1>This week</h1></main>`,
+	)); err != nil {
+		t.Fatalf("a screen carrying a stylesheet was refused: %v", err)
+	}
+}
+
+// Spacing is not words. A part holding a space, or the space that does not break, holds nothing a
+// person reads and nothing a session has to build.
+func TestSpacingAloneIsNotWords(t *testing.T) {
+	s := newServer(&model.FakeRunner{})
+	_, project := newProject(t, s)
+	designedUpToMockups(t, s, project)
+
+	if _, err := writeMockups(s, project, aMarkupMockup(
+		`<main data-component="Card"><h1>This week</h1></main><div class="gap"> </div><div>  </div>`,
+	)); err != nil {
+		t.Fatalf("a part holding spacing alone was refused: %v", err)
+	}
+}
+
+// Two screens, both wrong. A map is read in whatever order the runtime feels like, so a refusal
+// that read one would name a different screen on a different day.
+func TestTheRefusalNamesTheSamePartEveryTime(t *testing.T) {
+	s := newServer(&model.FakeRunner{})
+	_, project := newProject(t, s)
+	designedUpToMockups(t, s, project)
+
+	two := strings.Replace(aMarkupMockup(`<main><h1>This week</h1></main>`),
+		`"screens": {`,
+		`"screens": {
+			"account": {"name": "Account", "surface": "web", "status": "designed",
+				"html": "<main><h1>Account</h1></main>"},`, 1)
+
+	for attempt := range 8 {
+		_, err := writeMockups(s, project, two)
+		said := status.Convert(err).Message()
+		if !strings.Contains(said, `"account"`) {
+			t.Fatalf("attempt %d read %q, want the first screen in name order", attempt, said)
+		}
+	}
+}
+
+// A screen written as a shape list keeps the refusal it has today, because both shapes are written
+// while the format changes over.
+func TestAScreenWrittenAsShapesKeepsTheShapeRefusal(t *testing.T) {
+	s := newServer(&model.FakeRunner{})
+	_, project := newProject(t, s)
+	designedUpToMockups(t, s, project)
+
+	_, err := writeMockups(s, project, aMockup(`{"t": "btn", "v": "Sign in"}`))
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("a shape with no component answered %v, want InvalidArgument", err)
+	}
+	if said := status.Convert(err).Message(); !strings.Contains(said, "shape") {
+		t.Errorf("the refusal reads %q, and it has to name the shape it read", said)
 	}
 }
