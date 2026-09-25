@@ -418,7 +418,7 @@ func (p Page) PressFrom(data string, fromTheFrame bool) (string, bool, error) {
 		var message = { source: fromTheFrame ? itsOwn : another, data: JSON.parse(dataJSON) };
 		var answer = pressFrom(message, frame);
 		var nothing = answer === null || answer === undefined;
-		return { read: !nothing, to: nothing ? "" : String(answer) };
+		return JSON.stringify({ read: !nothing, to: nothing ? "" : String(answer) });
 	})()`)
 	if err != nil {
 		return "", false, fmt.Errorf("flowmap: reading a press: %w", err)
@@ -427,7 +427,7 @@ func (p Page) PressFrom(data string, fromTheFrame bool) (string, bool, error) {
 		Read bool   `json:"read"`
 		To   string `json:"to"`
 	}
-	if err := vm.ExportTo(value, &answered); err != nil {
+	if err := json.Unmarshal([]byte(value.String()), &answered); err != nil {
 		return "", false, fmt.Errorf("flowmap: reading what the page answered: %w", err)
 	}
 	return answered.To, answered.Read, nil
@@ -466,13 +466,13 @@ func (c *Courier) Press(to string) ([]string, error) {
 	value, err := c.vm.RunString(`(function () {
 		posted = [];
 		fire("click", { target: aPart(pressedTo) });
-		return posted;
+		return JSON.stringify(posted);
 	})()`)
 	if err != nil {
 		return nil, fmt.Errorf("flowmap: pressing the screen: %w", err)
 	}
 	var posted []string
-	if err := c.vm.ExportTo(value, &posted); err != nil {
+	if err := json.Unmarshal([]byte(value.String()), &posted); err != nil {
 		return nil, fmt.Errorf("flowmap: reading what the screen posted: %w", err)
 	}
 	return posted, nil
@@ -488,7 +488,7 @@ func (c *Courier) Flash() ([]string, bool, error) {
 			.map(function (p) { return p.getAttribute("data-to"); });
 		runTimers();
 		var still = theParts.filter(function (p) { return !!p.style.outline; }).length;
-		return { lit: lit, cleared: still === 0 };
+		return JSON.stringify({ lit: lit, cleared: still === 0 });
 	})()`)
 	if err != nil {
 		return nil, false, fmt.Errorf("flowmap: asking the screen to show what can be pressed: %w", err)
@@ -497,7 +497,7 @@ func (c *Courier) Flash() ([]string, bool, error) {
 		Lit     []string `json:"lit"`
 		Cleared bool     `json:"cleared"`
 	}
-	if err := c.vm.ExportTo(value, &answered); err != nil {
+	if err := json.Unmarshal([]byte(value.String()), &answered); err != nil {
 		return nil, false, fmt.Errorf("flowmap: reading what the screen outlined: %w", err)
 	}
 	return answered.Lit, answered.Cleared, nil
