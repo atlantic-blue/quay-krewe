@@ -3,6 +3,7 @@ package controlplane_test
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -23,7 +24,13 @@ import (
 // FLOW-4: a mockups artifact drawn in a colour or a font that the approved design_system stage
 // does not name is refused.
 //
-// Both are read at the call, because that is where an operator meets them. A mockup nobody could
+// SCREEN-4: a screen written as markup is drawn in the colours and the fonts of the approved
+// design_system stage, in its markup and in its stylesheet, and in nothing else.
+//
+// SYSTEM-3: a mockups artifact is refused while the approved design_system stage names no colour
+// and no font, because there is nothing to hold the screens to.
+//
+// All are read at the call, because that is where an operator meets them. A mockup nobody could
 // build from never reaches the person who would otherwise approve it.
 
 // The colours and fonts the design system names in these tests. The mockup below is drawn in the
@@ -74,11 +81,18 @@ const namedShapes = `{"t": "h", "component": "Heading", "v": "Sign in"},
 // before the mockups are written and approved, and the design system carries the tokens above.
 func designedUpToMockups(t *testing.T, s *controlplane.Server, project string) {
 	t.Helper()
+	designedWithTheSystem(t, s, project, designSystemArtifact)
+}
+
+// designedWithTheSystem walks the same three stages, with the design system the caller wants. A
+// design system carrying no artifact is a design system written as prose, which names nothing.
+func designedWithTheSystem(t *testing.T, s *controlplane.Server, project, system string) {
+	t.Helper()
 	ctx := context.Background()
 	for _, stage := range []struct{ name, artifact string }{
 		{store.StageDiscovery, ""},
 		{store.StageStories, ""},
-		{store.StageDesignSystem, designSystemArtifact},
+		{store.StageDesignSystem, system},
 	} {
 		if _, err := s.SetDesignStage(ctx, &quaycrewv1.SetDesignStageRequest{
 			Project: project, Stage: stage.name, Body: "the " + stage.name + " body", Artifact: stage.artifact,
@@ -309,40 +323,51 @@ func TestWordsOnAScreenAreNotColours(t *testing.T) {
 	}
 }
 
-// A design system written as prose alone names nothing, so there is nothing to hold the mockup to.
-// The write goes through and says so, because refusing every mockup would block a project whose
-// design system is a paragraph.
-func TestADesignSystemWithNoTokensTurnsTheColourCheckOffAndSaysSo(t *testing.T) {
+// SYSTEM-3. A design system written as prose alone names nothing, so there is nothing to hold the
+// screens to. That write used to go through carrying a warning, and a warning holds nothing: the
+// screens of that project were drawn in whatever the session chose. It is refused now, and the
+// refusal names the stage to write and the field to write in it.
+func TestADesignSystemWithNoTokensRefusesTheMockupsWrite(t *testing.T) {
 	s := newServer(&model.FakeRunner{})
-	ctx := context.Background()
 	_, project := newProject(t, s)
-	for _, stage := range []string{store.StageDiscovery, store.StageStories, store.StageDesignSystem} {
-		if _, err := s.SetDesignStage(ctx, &quaycrewv1.SetDesignStageRequest{
-			Project: project, Stage: stage, Body: "one accent colour, and plenty of white space",
-		}); err != nil {
-			t.Fatalf("SetDesignStage %s: %v", stage, err)
-		}
-		if _, err := s.ApproveDesignStage(ctx, &quaycrewv1.ApproveDesignStageRequest{
-			Project: project, Stage: stage,
-		}); err != nil {
-			t.Fatalf("ApproveDesignStage %s: %v", stage, err)
-		}
-	}
+	designedWithTheSystem(t, s, project, "")
 
-	written, err := writeMockups(s, project, aMockupWith(
-		strings.Replace(mockupTokens, `"primary": "#1b6b57"`, `"primary": "#ff0000"`, 1), namedShapes))
-	if err != nil {
-		t.Fatalf("a mockup was refused against a design system that names nothing: %v", err)
-	}
-	said := strings.Join(written.GetWarnings(), " ")
-	if !strings.Contains(said, "design_system") {
-		t.Errorf("the write said %q, and it has to say the colour check did not run", said)
-	}
+	written, err := writeMockups(s, project, aMockup(namedShapes))
 
-	// The shape check is not the colour check, and it still holds.
-	if _, err := writeMockups(s, project, aMockup(`{"t": "btn", "v": "Sign in"}`)); status.Code(err) !=
-		codes.InvalidArgument {
-		t.Errorf("a shape with no component answered %v, want it refused whatever the design system names", err)
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("a mockup written against a design system that names nothing answered %v, "+
+			"want InvalidArgument", err)
+	}
+	said := status.Convert(err).Message()
+	for _, want := range []string{"design_system", "tokens"} {
+		if !strings.Contains(said, want) {
+			t.Errorf("the refusal reads %q, and it has to say %q", said, want)
+		}
+	}
+	// The way off the old behaviour: the write no longer goes through with a warning on it.
+	if written != nil {
+		t.Errorf("the write answered %v, and a refused write writes nothing", written)
+	}
+	if held := mockupsHeld(t, s, project); held != nil {
+		t.Fatalf("the refused write left a mockups stage behind, holding %q", held.GetArtifact())
+	}
+}
+
+// Prose first and the page after is how a stage gets written, and a design system that names
+// nothing is often a design system nobody has written yet. So the refusal above binds an artifact
+// and leaves the prose alone.
+func TestAMockupsStageWithProseAloneIsKeptWhileTheDesignSystemNamesNothing(t *testing.T) {
+	s := newServer(&model.FakeRunner{})
+	_, project := newProject(t, s)
+	designedWithTheSystem(t, s, project, "")
+
+	if _, err := s.SetDesignStage(context.Background(), &quaycrewv1.SetDesignStageRequest{
+		Project: project, Stage: store.StageMockups, Body: "the screens, in words",
+	}); err != nil {
+		t.Fatalf("a mockups stage carrying prose alone was refused: %v", err)
+	}
+	if held := mockupsHeld(t, s, project); held == nil {
+		t.Fatal("the project holds no mockups stage, and the prose was supposed to be kept")
 	}
 }
 
@@ -797,5 +822,253 @@ func TestAScreenWrittenAsShapesIsNotReadForAddresses(t *testing.T) {
 	if _, err := writeMockups(s, project, aMockup(
 		`{"t": "image", "component": "Mark", "v": "https://cdn.example.invalid/logo.png"}`)); err != nil {
 		t.Fatalf("a screen written as shapes was refused: %v", err)
+	}
+}
+
+// SCREEN-4. The colours and the fonts of a screen written as markup.
+//
+// A screen used to carry its own token block, and the check read that. The tokens have one home now,
+// the design_system stage, so a colour reaches a screen another way: the stylesheet of the screen,
+// the style of one part, or the paint of a mark. Each of those is read, and a colour the operator
+// never approved is refused wherever it sits.
+//
+// The words on a screen are not read. A bill reference of "#dedbee" in a paragraph is what a person
+// reads, and a gate that refused it would be refusing words.
+
+// aMarkupMockupOf is a flows.json whose screens are written as markup, by name.
+func aMarkupMockupOf(screens map[string]string) string {
+	var held []string
+	for _, name := range sortedNames(screens) {
+		held = append(held, fmt.Sprintf(
+			`%s: {"name": %s, "surface": "web", "status": "designed", "html": %s}`,
+			strconv.Quote(name), strconv.Quote(name), strconv.Quote(screens[name])))
+	}
+	return fmt.Sprintf(`{
+		"readAt": {"commit": "0000000", "date": "2026-09-23"},
+		"screens": {%s},
+		"stories": [
+			{"id": "walk", "title": "A person walks", "start": %s, "nodes": [[%s, 0, 0]]}
+		]
+	}`, strings.Join(held, ", "), strconv.Quote(sortedNames(screens)[0]), strconv.Quote(sortedNames(screens)[0]))
+}
+
+// sortedNames reads the screens of a test in one order, so a test about the first screen names the
+// screen the check names.
+func sortedNames(screens map[string]string) []string {
+	out := make([]string, 0, len(screens))
+	for name := range screens {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// The stylesheet of a screen is the strongest place to hide a colour: it is one element, it is not
+// words, and every part under it is painted by it.
+func TestAColourWrittenIntoTheStylesheetOfAScreenIsRefused(t *testing.T) {
+	s := newServer(&model.FakeRunner{})
+	_, project := newProject(t, s)
+	designedUpToMockups(t, s, project)
+
+	_, err := writeMockups(s, project, aMarkupMockup(
+		`<style>.lede{color:#ff0000}</style><main data-component="Card"><h1 class="lede">This week</h1></main>`))
+
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("a colour in the stylesheet of a screen answered %v, want InvalidArgument", err)
+	}
+	said := status.Convert(err).Message()
+	for _, want := range []string{"sign-in", "#ff0000", "design_system"} {
+		if !strings.Contains(said, want) {
+			t.Errorf("the refusal reads %q, and it has to say %q", said, want)
+		}
+	}
+	if held := mockupsHeld(t, s, project); held != nil {
+		t.Fatalf("the refused write left a mockups stage behind, holding %q", held.GetArtifact())
+	}
+}
+
+// The style of one part, which is the shortest way to paint something and the easiest to miss.
+func TestAColourWrittenIntoTheStyleOfAPartIsRefused(t *testing.T) {
+	s := newServer(&model.FakeRunner{})
+	_, project := newProject(t, s)
+	designedUpToMockups(t, s, project)
+
+	_, err := writeMockups(s, project, aMarkupMockup(
+		`<main data-component="Card"><h1 style="background:rgb(255, 0, 0)">This week</h1></main>`))
+
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("a colour in the style of a part answered %v, want InvalidArgument", err)
+	}
+	said := status.Convert(err).Message()
+	for _, want := range []string{"sign-in", "rgb(255, 0, 0)", "design_system"} {
+		if !strings.Contains(said, want) {
+			t.Errorf("the refusal reads %q, and it has to say %q", said, want)
+		}
+	}
+}
+
+// A mark is written as a drawing in the markup, and a drawing is painted by its own attributes
+// rather than by a declaration. So the paint of a drawing is read too.
+func TestAColourPaintedOnAMarkIsRefused(t *testing.T) {
+	s := newServer(&model.FakeRunner{})
+	_, project := newProject(t, s)
+	designedUpToMockups(t, s, project)
+
+	_, err := writeMockups(s, project, aMarkupMockup(
+		`<main data-component="Mark"><svg viewBox="0 0 8 8"><circle cx="4" cy="4" r="4" fill="#ff0000"/></svg></main>`))
+
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("a colour painted on a mark answered %v, want InvalidArgument", err)
+	}
+	said := status.Convert(err).Message()
+	for _, want := range []string{"sign-in", "#ff0000"} {
+		if !strings.Contains(said, want) {
+			t.Errorf("the refusal reads %q, and it has to say %q", said, want)
+		}
+	}
+}
+
+// The other half of the rule. A colour the design system names is the design system, written out
+// rather than reached through a custom property, and it is the same colour.
+func TestAColourTheDesignSystemNamesIsKeptInTheMarkup(t *testing.T) {
+	s := newServer(&model.FakeRunner{})
+	_, project := newProject(t, s)
+	designedUpToMockups(t, s, project)
+
+	if _, err := writeMockups(s, project, aMarkupMockup(
+		`<style>.lede{color:#1B6B57;background:var(--t-colour-surface)}</style>`+
+			`<main data-component="Card"><h1 class="lede">This week</h1></main>`)); err != nil {
+		t.Fatalf("a colour the design system names was refused: %v", err)
+	}
+}
+
+// What a screen says is what a person reads. The words are not a style field, so nothing in them is
+// a colour, however much one of them looks like one.
+func TestWordsInTheMarkupOfAScreenAreNotColours(t *testing.T) {
+	s := newServer(&model.FakeRunner{})
+	_, project := newProject(t, s)
+	designedUpToMockups(t, s, project)
+
+	if _, err := writeMockups(s, project, aMarkupMockup(
+		`<main data-component="Card"><p>Your bill reference is #dedbee and it moves on Monday</p></main>`,
+	)); err != nil {
+		t.Fatalf("prose carrying a hash word was refused as a colour: %v", err)
+	}
+}
+
+// The typeface half. A screen reaches a font through a token, because the font file travels in the
+// design system and nothing else is on the machine that draws it.
+func TestAFontFamilyOutsideTheDesignSystemIsRefused(t *testing.T) {
+	s := newServer(&model.FakeRunner{})
+	_, project := newProject(t, s)
+	designedUpToMockups(t, s, project)
+
+	_, err := writeMockups(s, project, aMarkupMockup(
+		`<style>h1{font-family:"Comic Sans MS", cursive}</style>`+
+			`<main data-component="Card"><h1>This week</h1></main>`))
+
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("a font outside the design system answered %v, want InvalidArgument", err)
+	}
+	said := status.Convert(err).Message()
+	for _, want := range []string{"sign-in", "Comic Sans MS", "design_system"} {
+		if !strings.Contains(said, want) {
+			t.Errorf("the refusal reads %q, and it has to say %q", said, want)
+		}
+	}
+}
+
+// The two writings a session is told to use: the custom property the page writes for each font
+// token, and the family that token names.
+func TestAFontFamilyTakenFromTheDesignSystemIsKept(t *testing.T) {
+	s := newServer(&model.FakeRunner{})
+	_, project := newProject(t, s)
+	designedUpToMockups(t, s, project)
+
+	for _, family := range []string{
+		"var(--t-font-sans)",
+		"Inter, system-ui, sans-serif",
+		"JetBrains Mono",
+	} {
+		if _, err := writeMockups(s, project, aMarkupMockup(
+			fmt.Sprintf(`<style>h1{font-family:%s}</style>`, family)+
+				`<main data-component="Card"><h1>This week</h1></main>`)); err != nil {
+			t.Errorf("the font %q comes from the design system and was refused: %v", family, err)
+		}
+	}
+}
+
+// The shorthand puts the family last, after the size and an optional line height. The fixture the
+// skill ships writes its fonts that way, so a rule that read the long form alone would read none of
+// the screens somebody copies from it.
+func TestAFontInTheShorthandOutsideTheDesignSystemIsRefused(t *testing.T) {
+	s := newServer(&model.FakeRunner{})
+	_, project := newProject(t, s)
+	designedUpToMockups(t, s, project)
+
+	_, err := writeMockups(s, project, aMarkupMockup(
+		`<style>h1{font:700 40px/1.1 "Comic Sans MS"}</style>`+
+			`<main data-component="Card"><h1>This week</h1></main>`))
+
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("a font in the shorthand outside the design system answered %v, want InvalidArgument", err)
+	}
+	if said := status.Convert(err).Message(); !strings.Contains(said, "Comic Sans MS") {
+		t.Errorf("the refusal reads %q, and it has to name the font", said)
+	}
+}
+
+// The same shorthand, written the way the shipped fixture writes it.
+func TestAFontInTheShorthandTakenFromTheDesignSystemIsKept(t *testing.T) {
+	s := newServer(&model.FakeRunner{})
+	_, project := newProject(t, s)
+	designedUpToMockups(t, s, project)
+
+	if _, err := writeMockups(s, project, aMarkupMockup(
+		`<style>h1{font:600 15px/1 var(--t-font-sans)}td{font:15px/1.4 var(--t-font-mono)}</style>`+
+			`<main data-component="Card"><h1>This week</h1></main>`)); err != nil {
+		t.Fatalf("the shorthand of the shipped fixture was refused: %v", err)
+	}
+}
+
+// A part nobody can build from is the fault that reaches furthest, so a screen carrying both faults
+// reads that one first. The order is the contract, because an operator fixes what the refusal names.
+func TestTheComponentRuleIsReadBeforeTheColourOfTheMarkup(t *testing.T) {
+	s := newServer(&model.FakeRunner{})
+	_, project := newProject(t, s)
+	designedUpToMockups(t, s, project)
+
+	_, err := writeMockups(s, project, aMarkupMockup(
+		`<style>h1{color:#ff0000}</style><main><h1>This week</h1></main>`))
+
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("a screen carrying both faults answered %v, want InvalidArgument", err)
+	}
+	said := status.Convert(err).Message()
+	if !strings.Contains(said, "data-component") {
+		t.Errorf("the refusal reads %q, and the component rule is read first", said)
+	}
+	if strings.Contains(said, "#ff0000") {
+		t.Errorf("the refusal reads %q, and it names one fault at a time", said)
+	}
+}
+
+// Two reads of one artifact name the same screen. The screens are read in name order, so a mockup
+// of twenty screens is fixed one refusal at a time rather than in whatever order a map answers in.
+func TestTheRefusalNamesTheFirstScreenDrawnOutsideTheDesignSystem(t *testing.T) {
+	s := newServer(&model.FakeRunner{})
+	_, project := newProject(t, s)
+	designedUpToMockups(t, s, project)
+
+	artifact := aMarkupMockupOf(map[string]string{
+		"basket":   `<main data-component="Card"><h1 style="color:#ff0000">Basket</h1></main>`,
+		"checkout": `<main data-component="Card"><h1 style="color:#00ff00">Checkout</h1></main>`,
+	})
+	for at := 0; at < 3; at++ {
+		_, err := writeMockups(s, project, artifact)
+		said := status.Convert(err).Message()
+		if !strings.Contains(said, "basket") || !strings.Contains(said, "#ff0000") {
+			t.Fatalf("read %d refused with %q, and the first screen in name order is basket", at, said)
+		}
 	}
 }
