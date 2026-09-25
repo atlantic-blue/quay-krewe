@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/atlantic-blue/quay-krewe/skills/flow-map/design-system.schema.json",
+  "title": "design-system.json",
+  "description": "What every screen of a project is drawn in: the tokens, the font files and the images, and the base stylesheet every screen is given. It is the artifact of the design_system stage.",
+  "type": "object",
+  "required": ["tokens"],
+  "additionalProperties": false,
+  "properties": {
+    "tokens": {
+      "type": "object",
+      "description": "Every value a screen is drawn in, by the name the page writes into a custom property. The colour and the font groups are required, because a screen is drawn in nothing without them.",
+      "required": ["colour", "font"],
+      "additionalProperties": { "$ref": "#/$defs/group" },
+      "properties": {
+        "colour": { "$ref": "#/$defs/group" },
+        "font": { "$ref": "#/$defs/group" },
+        "radius": { "$ref": "#/$defs/group" },
+        "space": { "$ref": "#/$defs/group" }
+      }
+    },
+    "assets": {
+      "type": "object",
+      "description": "The font files and the images the screens are drawn with. A screen and the stylesheet reach one with url(asset:<name>), so the name is the address.",
+      "propertyNames": { "pattern": "^[a-z0-9-]+$" },
+      "additionalProperties": { "$ref": "#/$defs/asset" }
+    },
+    "css": {
+      "type": "string",
+      "description": "The base stylesheet every screen is given. It paints from the tokens, it reaches an asset with url(asset:<name>), and it holds no other address and no @import."
+    }
+  },
+  "$defs": {
+    "group": {
+      "type": "object",
+      "description": "One group of tokens, a name to a css value.",
+      "minProperties": 1,
+      "propertyNames": { "pattern": "^[a-z0-9-]+$" },
+      "additionalProperties": { "type": "string" }
+    },
+    "asset": {
+      "type": "object",
+      "description": "One file, carried inside the design system so it travels with it.",
+      "required": ["kind", "media", "data"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": ["font", "image"],
+          "description": "What the file is for."
+        },
+        "media": {
+          "enum": ["font/woff2", "font/woff", "image/svg+xml", "image/png", "image/jpeg", "image/webp"],
+          "description": "What the file is, as the media type the page writes into the address."
+        },
+        "data": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The bytes of the file, base64, with no data address prefix."
+        },
+        "family": {
+          "type": "string",
+          "description": "The font family name, required when the kind is font. A font token has to name it, or no screen can reach the file."
+        },
+        "weight": {
+          "type": "string",
+          "description": "A css font weight. It reads 400 when it is not written."
+        },
+        "style": {
+          "enum": ["normal", "italic"],
+          "description": "A css font style. It reads normal when it is not written."
+        },
+        "label": {
+          "type": "string",
+          "description": "What the file is, for a person reading the design system page."
+        }
+      },
+      "allOf": [
+        {
+          "if": { "required": ["kind"], "properties": { "kind": { "const": "font" } } },
+          "then": { "required": ["family"] }
+        }
+      ]
+    }
+  }
+}

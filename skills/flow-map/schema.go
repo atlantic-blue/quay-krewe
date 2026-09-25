@@ -19,3 +19,14 @@ var SchemaJSON []byte
 // SchemaID is what the schema calls itself. A validator wants a name to resolve a reference
 // against, and a refusal that names the file sends the reader to the rule they broke.
 const SchemaID = "https://github.com/atlantic-blue/quay-krewe/skills/flow-map/schema.json"
+
+// SystemSchemaJSON is skills/flow-map/design-system.schema.json, as it is on disk.
+//
+// It is embedded for the reason SchemaJSON is: the skill tells a session to write the design system
+// against this file, and the design_system stage refuses an artifact the same file says is wrong.
+//
+//go:embed design-system.schema.json
+var SystemSchemaJSON []byte
+
+// SystemSchemaID is what the design system schema calls itself.
+const SystemSchemaID = "https://github.com/atlantic-blue/quay-krewe/skills/flow-map/design-system.schema.json"

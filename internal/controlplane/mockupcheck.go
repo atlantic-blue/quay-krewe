@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"regexp"
-	"sort"
 	"strings"
 	"sync"
 
@@ -62,10 +60,6 @@ var styleKeys = map[string]bool{
 
 // fontKeys are the fields whose whole value is a font.
 var fontKeys = map[string]bool{"font": true, "fontFamily": true, "font-family": true}
-
-// aColourLiteral is a colour written out rather than named. It is the pattern the flow map's own
-// tests read the page's markup with, so the page and this check agree on what a colour is.
-var aColourLiteral = regexp.MustCompile(`#[0-9a-fA-F]{3,8}\b|rgba?\([^)]*\)|hsla?\([^)]*\)`)
 
 // checkMockupArtifact reads a mockups artifact and refuses what a session could not build from.
 //
@@ -299,12 +293,6 @@ func valueSet(group map[string]any) map[string]bool {
 	return out
 }
 
-// normalise is how two writings of one value are held to be the same value. A hexadecimal colour
-// is written in either case, and a font list is written with whatever spacing suits the writer.
-func normalise(value string) string {
-	return strings.Join(strings.Fields(strings.ToLower(value)), " ")
-}
-
 // whatTheSchemaSaid turns a validation failure into one line.
 //
 // The library's own message is a tree over several lines, which reads as a stack trace in a
@@ -368,14 +356,4 @@ func asArray(value any) ([]any, bool) {
 func asString(value any) string {
 	held, _ := value.(string)
 	return held
-}
-
-// sortedKeys reads a map in one order, so a refusal about a document names the same thing twice.
-func sortedKeys(held map[string]any) []string {
-	out := make([]string, 0, len(held))
-	for key := range held {
-		out = append(out, key)
-	}
-	sort.Strings(out)
-	return out
 }

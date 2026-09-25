@@ -1,0 +1,45 @@
+{
+  "tokens": {
+    "colour": {
+      "surface": "#fdfbf7",
+      "surface-low": "#f1ece4",
+      "ink": "#1d1c1a",
+      "muted": "#5f5a52",
+      "line": "#ded5c8",
+      "primary": "#1b6b57",
+      "on-primary": "#ffffff",
+      "frame": "#211f1c"
+    },
+    "font": {
+      "sans": "Inter, system-ui, sans-serif",
+      "mono": "JetBrains Mono, monospace"
+    },
+    "radius": {
+      "screen": "24px",
+      "control": "12px",
+      "card": "10px"
+    },
+    "space": {
+      "gap": "9px",
+      "pad": "14px"
+    }
+  },
+  "assets": {
+    "inter-regular": {
+      "kind": "font",
+      "media": "font/woff2",
+      "family": "Inter",
+      "weight": "400",
+      "style": "normal",
+      "label": "Inter regular, a stand in for the real file so the example stays small",
+      "data": "d09GMiBzdGFuZCBpbiBmb3IgdGhlIHJlYWwgZm9udCBmaWxl"
+    },
+    "logo": {
+      "kind": "image",
+      "media": "image/svg+xml",
+      "label": "the mark, drawn in the primary colour",
+      "data": "PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PGNpcmNsZSBjeD0iMTIiIGN5PSIxMiIgcj0iMTAiIGZpbGw9IiMxYjZiNTciLz48L3N2Zz4="
+    }
+  },
+  "css": "@font-face{font-family:\"Inter\";src:url(asset:inter-regular) format(\"woff2\");font-weight:400;font-style:normal}\n\nbody{margin:0;background:var(--t-colour-surface);color:var(--t-colour-ink);font-family:var(--t-font-sans)}\n\n.card{background:var(--t-colour-surface-low);border:1px solid var(--t-colour-line);border-radius:var(--t-radius-card);padding:var(--t-space-pad)}\n\n.button{background:var(--t-colour-primary);color:var(--t-colour-on-primary);border:0;border-radius:var(--t-radius-control);padding:var(--t-space-pad)}\n\n.mark{width:24px;height:24px;background:url(asset:logo) no-repeat center/contain}\n"
+}

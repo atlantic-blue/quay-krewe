@@ -70,6 +70,15 @@ func (s *Server) SetDesignStage(ctx context.Context, req *quaycrewv1.SetDesignSt
 		return nil, err
 	}
 
+	// The design system is read the same way, and before the mockups are ever written. Every screen of
+	// the project is drawn from this one stage, so a design system no screen could be drawn from is a
+	// fault on every screen under it.
+	if req.GetStage() == store.StageDesignSystem {
+		if err := checkDesignSystemArtifact(req.GetArtifact()); err != nil {
+			return nil, err
+		}
+	}
+
 	// The mockups carry one more rule than the other five: a session has to be able to build the
 	// screens from them. It is read before the write, so a mockup nobody could build from never
 	// reaches the operator to approve.
