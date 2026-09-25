@@ -59,6 +59,19 @@ type siteStage struct {
 	Skipped         bool   `json:"skipped"`
 }
 
+// siteSystem is the design system of a project as the page that draws its screens reads it.
+//
+// The tokens and the assets travel as the session wrote them, so nothing between the stage and the
+// screen rewrites a value. The word the operator gave is one field rather than two version numbers,
+// because a page drawing screens has one question about it: does this design system still carry it.
+type siteSystem struct {
+	Approved bool            `json:"approved"`
+	Version  int32           `json:"version"`
+	Tokens   json.RawMessage `json:"tokens"`
+	Assets   json.RawMessage `json:"assets"`
+	CSS      string          `json:"css"`
+}
+
 // siteAnswer is the whole of stages.json.
 type siteAnswer struct {
 	Design siteDesign  `json:"design"`
@@ -78,6 +91,7 @@ func (s *Server) Site() http.Handler {
 	mux.HandleFunc("GET /p/{workspace}/{project}/{$}", s.servePage)
 	mux.HandleFunc("GET /assets/{file}", serveAsset)
 	mux.HandleFunc("GET /p/{workspace}/{project}/stages.json", s.serveStages)
+	mux.HandleFunc("GET /p/{workspace}/{project}/design-system.json", s.serveDesignSystem)
 	mux.HandleFunc("GET /p/{workspace}/{project}/{stage}/flows.json", s.serveFlows)
 	mux.HandleFunc("GET /p/{workspace}/{project}/{stage}/map/{$}", s.serveFlowMap)
 	mux.HandleFunc("GET /p/{workspace}/{project}/{stage}/map", sendToTheFlowMap)
@@ -233,6 +247,88 @@ func (s *Server) serveFlows(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// serveDesignSystem answers the design system of a project: the tokens, the files and the base
+// stylesheet its screens are drawn in.
+//
+// It is one address beside the design, so the page that plays the screens asks for the design system
+// the way it asks for the screens, and a project holds one of them in one place.
+//
+// A design system nobody can read is a 404 rather than a 500. The page has one thing to say to a
+// reader here, "this project has not written a design system yet", and it can only say it when the
+// two states arrive as one status. The write refuses a document no screen could be drawn from, so
+// this reaches only a stage written before that refusal existed.
+func (s *Server) serveDesignSystem(w http.ResponseWriter, r *http.Request) {
+	row, project, failed := s.stageRow(r.Context(),
+		r.PathValue("workspace"), r.PathValue("project"), store.StageDesignSystem)
+	if failed != nil {
+		failed.answer(w, r)
+		return
+	}
+	held, read := readDesignSystem(row.GetArtifact())
+	if !read {
+		siteMissing(fmt.Sprintf("the %s stage of %q carries a design system a page cannot read",
+			store.StageDesignSystem, project.GetName())).answer(w, r)
+		return
+	}
+	held.Approved = row.GetApprovedVersion() == row.GetVersion()
+	held.Version = row.GetVersion()
+	siteJSON(w, r, held)
+}
+
+// anEmptyGroup is what a design system naming no file answers with. A page reading a list of none
+// draws no font rule and asks no question; a page handed null has to check for it everywhere it
+// reads a name.
+var anEmptyGroup = json.RawMessage(`{}`)
+
+// readDesignSystem is the three parts of a design system, and false when the artifact is not one.
+//
+// The stage is held to its schema at the write, so what arrives here is almost always whole. What
+// this reads instead is the older state: a stage written before the design system had a shape, which
+// carries whatever json somebody wrote. A document that is not an object, a tokens block that is not
+// a group of names, a stylesheet that is not text: none of them can be drawn, and each is the same
+// answer to the reader.
+func readDesignSystem(artifact string) (siteSystem, bool) {
+	var whole map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(artifact), &whole); err != nil || whole == nil {
+		return siteSystem{}, false
+	}
+
+	held := siteSystem{Tokens: anEmptyGroup, Assets: anEmptyGroup}
+	for _, part := range []struct {
+		name string
+		into *json.RawMessage
+	}{{"tokens", &held.Tokens}, {"assets", &held.Assets}} {
+		written, named := whole[part.name]
+		if !named {
+			continue
+		}
+		group, readable := anObject(written)
+		if !readable {
+			return siteSystem{}, false
+		}
+		*part.into = group
+	}
+	if written, named := whole["css"]; named {
+		if err := json.Unmarshal(written, &held.CSS); err != nil {
+			return siteSystem{}, false
+		}
+	}
+	return held, true
+}
+
+// anObject is one part of a design system as it was written, and false when it is not a group of
+// names at all. A part written as null is a part nobody wrote, which the page reads as none.
+func anObject(written json.RawMessage) (json.RawMessage, bool) {
+	var names map[string]json.RawMessage
+	if err := json.Unmarshal(written, &names); err != nil {
+		return nil, false
+	}
+	if names == nil {
+		return anEmptyGroup, true
+	}
+	return written, true
+}
+
 // serveFlowMap answers the page that plays one stage's screens.
 //
 // It is the skill's own page, served out of the binary. The page asks the stage for its screens, at
@@ -272,36 +368,51 @@ func sendToTheFlowMap(w http.ResponseWriter, r *http.Request) {
 }
 
 // stageArtifact is the screens one stage carries, and a refusal when it carries none.
+func (s *Server) stageArtifact(ctx context.Context, workspace, project, stage string) (string, *siteRefusal) {
+	row, _, failed := s.stageRow(ctx, workspace, project, stage)
+	if failed != nil {
+		return "", failed
+	}
+	return row.GetArtifact(), nil
+}
+
+// stageRow is the stage an address names, with the project it belongs to, and a refusal when there
+// is nothing there to read.
 //
 // The stage name is read before the project, so an address with a word that is not a stage says that
 // rather than going to the store to find out. A stage nobody wrote and a stage holding nothing are
 // two answers, because they send the reader to two different places.
-func (s *Server) stageArtifact(ctx context.Context, workspace, project, stage string) (string, *siteRefusal) {
+//
+// The project comes back beside the stage so a caller that has its own refusal to write names the
+// project the same way these two do. Every sentence a reader of this surface gets names the part of
+// the address that named nothing, and one place writes them.
+func (s *Server) stageRow(ctx context.Context, workspace, project, stage string) (
+	*quaycrewv1.DesignStage, *quaycrewv1.Project, *siteRefusal) {
 	if _, known := store.DesignStagePosition(stage); !known {
-		return "", siteMissing(fmt.Sprintf("%q is not a design stage: the six are %s",
+		return nil, nil, siteMissing(fmt.Sprintf("%q is not a design stage: the six are %s",
 			stage, strings.Join(store.DesignStages(), ", ")))
 	}
 
 	found, failed := s.siteProject(ctx, workspace, project)
 	if failed != nil {
-		return "", failed
+		return nil, nil, failed
 	}
 
 	held, err := s.store.ListDesignStages(ctx, found.GetId())
 	if err != nil {
-		return "", siteBrokeReading("read the design stages", err)
+		return nil, nil, siteBrokeReading("read the design stages", err)
 	}
 	for _, one := range held {
 		if one.GetStage() != stage {
 			continue
 		}
 		if one.GetArtifact() == "" {
-			return "", siteMissing(fmt.Sprintf("the %s stage of %q carries no artifact",
+			return nil, found, siteMissing(fmt.Sprintf("the %s stage of %q carries no artifact",
 				stage, found.GetName()))
 		}
-		return one.GetArtifact(), nil
+		return one, found, nil
 	}
-	return "", siteMissing(fmt.Sprintf("%q has not written a %s stage", found.GetName(), stage))
+	return nil, found, siteMissing(fmt.Sprintf("%q has not written a %s stage", found.GetName(), stage))
 }
 
 // siteProject is the project an address landed on, with both names resolved the way a person types
