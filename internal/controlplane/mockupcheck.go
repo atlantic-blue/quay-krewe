@@ -6,10 +6,13 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/atlantic-blue/quay-krewe/internal/store"
 	flowmap "github.com/atlantic-blue/quay-krewe/skills/flow-map"
 	"github.com/santhosh-tekuri/jsonschema/v6"
+	"golang.org/x/net/html"
+	"golang.org/x/net/html/atom"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -85,6 +88,24 @@ func (s *Server) checkMockupArtifact(ctx context.Context, project, artifact stri
 			screen, at, ofKind(kind))
 	}
 
+	// The markup rule, beside the shape rule, because both shapes of screen are written while the
+	// format changes over. A part that names no component is a part the building session has to
+	// guess at, whichever way the screen was written.
+	if screen, part, found := aPartWithNoComponent(doc); found {
+		if part.pressed {
+			return nil, status.Errorf(codes.InvalidArgument,
+				"the mockups artifact is refused: the %q screen has a part that can be pressed and "+
+					"names no component: %s. The press is the component, so write "+
+					"data-component=\"Button\" on that part.",
+				screen, part.describe())
+		}
+		return nil, status.Errorf(codes.InvalidArgument,
+			"the mockups artifact is refused: the %q screen holds a visible part outside every named "+
+				"component: %s. Every visible part sits under an element naming the component it "+
+				"stands for, so write data-component=\"Button\" on that part or on a part above it.",
+			screen, part.describe())
+	}
+
 	schema, err := mockupSchema()
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "the flow map schema could not be read: %v", err)
@@ -144,6 +165,171 @@ func aShapeWithNoComponent(doc any) (screen string, at int, kind string, found b
 		}
 	}
 	return "", 0, "", false
+}
+
+// The two rules a screen written as markup is held to.
+//
+// A screen may carry its markup instead of a shape list, and then there is no shape to hold a
+// component name. The name moves onto the markup as data-component, and the same contract holds: a
+// part that can be pressed names the component it stands for, and every visible part sits under one.
+// So a card names itself once and the words inside it need no name of their own.
+
+const (
+	// theComponentAttribute is how a part names the component it stands for.
+	theComponentAttribute = "data-component"
+	// thePressAttribute is how a part opens another screen. The press is the component, so a part
+	// carrying it names one on itself rather than under a card three levels up.
+	thePressAttribute = "data-to"
+	// theWordsShown caps how much of a part's own text a refusal repeats. The words are there to
+	// find the part in a file, and a paragraph of them buries the sentence that says what to do.
+	theWordsShown = 40
+)
+
+// notVisible are the elements whose text the browser reads and nobody else does. A rule that called
+// their text words would refuse every screen carrying a stylesheet, which is most of them.
+var notVisible = map[string]bool{
+	"style": true, "script": true, "title": true, "template": true,
+	"head": true, "meta": true, "link": true,
+}
+
+// drawnWithNoText are the elements that are a part of the screen whatever they hold. A mark carries
+// no words and is still something a session has to build, and the markup inside a drawing is the
+// drawing rather than parts of its own.
+var drawnWithNoText = map[string]bool{"img": true, "svg": true, "canvas": true, "video": true}
+
+// screenPart is one part of a screen, named the way a person would find it: the tag, the class if it
+// has one, and the first words it holds.
+type screenPart struct {
+	tag   string
+	class string
+	words string
+	// pressed says which rule the part broke, because the two refusals say different things to do.
+	pressed bool
+}
+
+// describe names the part in a refusal, in the shape it was written in.
+func (p screenPart) describe() string {
+	said := "<" + p.tag + ">"
+	if p.class != "" {
+		said = fmt.Sprintf("<%s class=%q>", p.tag, p.class)
+	}
+	if p.words != "" {
+		said += fmt.Sprintf(", holding %q", p.words)
+	}
+	return said
+}
+
+// aPartWithNoComponent finds the first part of a screen written as markup that names no component,
+// reading the screens in name order so two reads of one artifact name the same part.
+//
+// It navigates rather than unmarshalling into a type, and markup it cannot parse is no fault of
+// this walk: an artifact whose screens are not screens is the schema's to refuse.
+func aPartWithNoComponent(doc any) (screen string, part screenPart, found bool) {
+	held := asObject(asObject(doc)["screens"])
+	for _, name := range sortedKeys(held) {
+		markup := asString(asObject(held[name])["html"])
+		if strings.TrimSpace(markup) == "" {
+			continue
+		}
+		body := &html.Node{Type: html.ElementNode, DataAtom: atom.Body, Data: "body"}
+		nodes, err := html.ParseFragment(strings.NewReader(markup), body)
+		if err != nil {
+			continue
+		}
+		for _, node := range nodes {
+			if part, found := aPartUnder(node, false); found {
+				return name, part, true
+			}
+		}
+	}
+	return "", screenPart{}, false
+}
+
+// aPartUnder reads one element and everything under it. named says whether anything above this
+// element already names a component, which is what lets a card name itself once.
+func aPartUnder(node *html.Node, named bool) (screenPart, bool) {
+	if node.Type != html.ElementNode {
+		return screenPart{}, false
+	}
+	names := strings.TrimSpace(attributeOf(node, theComponentAttribute)) != ""
+	if strings.TrimSpace(attributeOf(node, thePressAttribute)) != "" && !names {
+		return partOf(node, true), true
+	}
+	if notVisible[node.Data] {
+		return screenPart{}, false
+	}
+	if drawnWithNoText[node.Data] {
+		if named || names {
+			return screenPart{}, false
+		}
+		return partOf(node, false), true
+	}
+	if isTheLastPart(node) && !named && !names {
+		return partOf(node, false), true
+	}
+	for child := node.FirstChild; child != nil; child = child.NextSibling {
+		if part, found := aPartUnder(child, named || names); found {
+			return part, true
+		}
+	}
+	return screenPart{}, false
+}
+
+// isTheLastPart says whether an element is a visible leaf: it holds no element of its own, and it
+// holds text that is not only spacing. Spacing is not words, so a part holding a space, or the
+// space that does not break, holds nothing a person reads.
+func isTheLastPart(node *html.Node) bool {
+	words := false
+	for child := node.FirstChild; child != nil; child = child.NextSibling {
+		switch child.Type {
+		case html.ElementNode:
+			return false
+		case html.TextNode:
+			if strings.TrimSpace(child.Data) != "" {
+				words = true
+			}
+		}
+	}
+	return words
+}
+
+// partOf reads the part a refusal names out of the element it was found on.
+func partOf(node *html.Node, pressed bool) screenPart {
+	return screenPart{
+		tag:     node.Data,
+		class:   strings.TrimSpace(attributeOf(node, "class")),
+		words:   theFirstWordsOf(node),
+		pressed: pressed,
+	}
+}
+
+// theFirstWordsOf is the text of one element, with its spacing collapsed and its length capped.
+func theFirstWordsOf(node *html.Node) string {
+	var said []string
+	for child := node.FirstChild; child != nil; child = child.NextSibling {
+		if child.Type == html.TextNode {
+			said = append(said, child.Data)
+		}
+	}
+	words := strings.Join(strings.Fields(strings.Join(said, " ")), " ")
+	if utf8.RuneCountInString(words) <= theWordsShown {
+		return words
+	}
+	cut := string([]rune(words)[:theWordsShown])
+	if at := strings.LastIndex(cut, " "); at > 0 {
+		cut = cut[:at]
+	}
+	return cut
+}
+
+// attributeOf is one attribute of an element, or nothing where it carries none of that name.
+func attributeOf(node *html.Node, name string) string {
+	for _, held := range node.Attr {
+		if held.Key == name {
+			return held.Val
+		}
+	}
+	return ""
 }
 
 // unnamedValue refuses the first colour or font the design system does not name.
