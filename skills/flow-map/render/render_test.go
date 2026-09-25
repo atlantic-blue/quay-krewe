@@ -26,6 +26,9 @@ import (
 // FRAME-2: the document runs inside a frame that cannot run the script a session wrote, cannot
 // reach an address, and cannot touch the page around it.
 //
+// FRAME-3: the font files and the images of the design system reach that document as data
+// addresses, and an asset name the design system does not carry is left as it is.
+//
 // Both are read off the markup the page's own renderer produces, run here outside a browser, so
 // what these tests read is what an operator sees.
 
@@ -573,4 +576,162 @@ func elementKinds(t *testing.T) []string {
 		}
 	}
 	return out
+}
+
+// FRAME-3. The font file and the mark of the project reach the screen, and they reach it inside the
+// document. The operator then reads the product in the typeface of the project, on a machine with no
+// network, and every byte it draws with came from the design system the operator approved.
+//
+// The fixture is held to two things first, because the green here is cheap to fake: its stylesheet
+// carries no @font-face of its own, so the rule in the document is the one the page wrote; and it
+// names the mark both ways a screen can, in the markup and in the stylesheet.
+func TestTheFontFileAndTheMarkOfTheDesignSystemReachEveryScreen(t *testing.T) {
+	drawn := page(t)
+	flows := fixture(t)
+	system := system(t)
+
+	if strings.Contains(system.CSS, "@font-face") {
+		t.Fatal("the design system writes its own @font-face rule, so this test would pass with no page behind it")
+	}
+	fonts, images := AssetsByKind(system)
+	if len(fonts) == 0 || len(images) == 0 {
+		t.Fatalf("the design system carries %d font files and %d images, so this test proves nothing",
+			len(fonts), len(images))
+	}
+	inTheMarkup := 0
+	for _, screen := range flows.Screens {
+		for name := range images {
+			if strings.Contains(screen.HTML, "asset:"+name) {
+				inTheMarkup++
+			}
+		}
+	}
+	if inTheMarkup == 0 {
+		t.Fatal("no screen of the fixture names an image in its markup, so one of the two ways is never read")
+	}
+	if !strings.Contains(system.CSS, "url(asset:") {
+		t.Fatal("the stylesheet of the design system names no image, so the other way is never read")
+	}
+
+	read, fromTheMarkup := 0, 0
+	for id, screen := range flows.Screens {
+		if screen.HTML == "" {
+			continue
+		}
+		markup, err := drawn.Screen(flows, system, id)
+		if err != nil {
+			t.Fatalf("drawing %s: %v", id, err)
+		}
+		document, found := DocumentIn(markup)
+		if !found {
+			t.Fatalf("%s was drawn without a document:\n%s", id, markup)
+		}
+		read++
+
+		// The font file arrives as a rule the page wrote, carrying the family a screen asks for.
+		for name, asset := range fonts {
+			rule, whyNot := FontFaceFor(document, asset)
+			if rule == "" {
+				t.Errorf("%s is drawn in no rule for the font file %s: %s", id, name, whyNot)
+			}
+		}
+
+		// Both ways the mark is named reach the same address, and nothing is left to fetch.
+		for name, asset := range images {
+			address := DataAddressOf(asset)
+			if !strings.Contains(document, "url("+address+")") {
+				t.Errorf("%s does not draw the image %s from the stylesheet as a data address:\n%s", id, name, document)
+			}
+			if strings.Contains(flows.Screens[id].HTML, "asset:"+name) {
+				fromTheMarkup++
+				if !strings.Contains(document, `src="`+address+`"`) {
+					t.Errorf("%s names the image %s in its markup and does not draw it as a data address:\n%s",
+						id, name, document)
+				}
+			}
+		}
+
+		// Nothing the document draws with is fetched, whatever names it.
+		for _, address := range AddressesIn(document) {
+			if !strings.HasPrefix(address, "data:") && !strings.HasPrefix(address, "#") {
+				t.Errorf("%s draws with the address %q, which is outside the document", id, address)
+			}
+		}
+		for name := range system.Assets {
+			if strings.Contains(document, "asset:"+name) {
+				t.Errorf("%s still names the asset %s by name, so the file never reached the screen:\n%s",
+					id, name, document)
+			}
+		}
+	}
+	if read == 0 {
+		t.Fatal("no screen of the fixture is written as markup, so no document was read")
+	}
+	if fromTheMarkup == 0 {
+		t.Fatal("no document read an image named in the markup, so only one of the two ways was read")
+	}
+}
+
+// A font asset says its family and nothing else is required of it, so the rule the page writes
+// carries the weight and the style the schema defaults to. A rule with neither draws the wrong face
+// of a family that ships several.
+func TestAFontFileThatNamesNoWeightIsWrittenAtFourHundredAndNormal(t *testing.T) {
+	drawn := page(t)
+
+	stored := `{"tokens":{"font":{"display":"Sable, serif"}},"assets":{"sable":` +
+		`{"kind":"font","media":"font/woff2","family":"Sable","data":"c2FibGU="}}}`
+	markup, err := drawn.Screen(oneScreen(t), System{Raw: []byte(stored)}, "one")
+	if err != nil {
+		t.Fatalf("drawing a screen: %v", err)
+	}
+	document, found := DocumentIn(markup)
+	if !found {
+		t.Fatalf("the screen was drawn without a document:\n%s", markup)
+	}
+	rule, whyNot := FontFaceFor(document, Asset{
+		Kind: "font", Media: "font/woff2", Family: "Sable", Data: "c2FibGU=", Weight: "400", Style: "normal",
+	})
+	if rule == "" {
+		t.Errorf("a font file naming no weight and no style is not written at 400 and normal: %s", whyNot)
+	}
+}
+
+// A name the design system does not carry is left as it is, so the fault reaches the operator as a
+// mark that did not draw rather than as a document that quietly dropped it.
+func TestAnAssetNameTheDesignSystemDoesNotCarryIsLeftAsItIs(t *testing.T) {
+	drawn := page(t)
+	system := system(t)
+
+	stored := `{"screens":{"one":{"name":"One","surface":"mobile","status":"designed","html":` +
+		`"<style>.a{background:url(asset:nothere)}</style><img src=\"asset:missing\" alt=\"none\">` +
+		`<img src=\"asset:logo\" alt=\"the mark\">"}}}`
+	markup, err := drawn.Screen(Flows{Raw: []byte(stored)}, system, "one")
+	if err != nil {
+		t.Fatalf("drawing a screen naming an asset nothing carries: %v", err)
+	}
+	document, found := DocumentIn(markup)
+	if !found {
+		t.Fatalf("the screen was drawn without a document:\n%s", markup)
+	}
+	for _, left := range []string{"asset:missing", "url(asset:nothere)"} {
+		if !strings.Contains(document, left) {
+			t.Errorf("the document does not hold %q, and a name nothing carries is left as it is:\n%s",
+				left, document)
+		}
+	}
+	// And the name the design system does carry resolved, or nothing was resolved at all.
+	logo, held := system.Assets["logo"]
+	if !held {
+		t.Fatal("the design system carries no logo, so this test proves nothing")
+	}
+	if !strings.Contains(document, `src="`+DataAddressOf(logo)+`"`) {
+		t.Errorf("the mark of the project did not reach the screen beside the name nothing carries:\n%s", document)
+	}
+}
+
+// oneScreen is the smallest screen written as markup, for a test about the document around it.
+func oneScreen(t *testing.T) Flows {
+	t.Helper()
+	return Flows{Raw: []byte(`{"screens":{"one":{"name":"One","surface":"mobile","status":"designed",` +
+		`"html":"<p data-component=\"Text\">a</p>"}}}`)}
 }

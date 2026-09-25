@@ -41,5 +41,5 @@
       "data": "PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PGNpcmNsZSBjeD0iMTIiIGN5PSIxMiIgcj0iMTAiIGZpbGw9IiMxYjZiNTciLz48L3N2Zz4="
     }
   },
-  "css": "@font-face{font-family:\"Inter\";src:url(asset:inter-regular) format(\"woff2\");font-weight:400;font-style:normal}\n\nbody{margin:0;background:var(--t-colour-surface);color:var(--t-colour-ink);font-family:var(--t-font-sans)}\n\n.card{background:var(--t-colour-surface-low);border:1px solid var(--t-colour-line);border-radius:var(--t-radius-card);padding:var(--t-space-pad)}\n\n.button{background:var(--t-colour-primary);color:var(--t-colour-on-primary);border:0;border-radius:var(--t-radius-control);padding:var(--t-space-pad)}\n\n.mark{width:24px;height:24px;background:url(asset:logo) no-repeat center/contain}\n"
+  "css": "body{margin:0;background:var(--t-colour-surface);color:var(--t-colour-ink);font-family:var(--t-font-sans)}\n\n.card{background:var(--t-colour-surface-low);border:1px solid var(--t-colour-line);border-radius:var(--t-radius-card);padding:var(--t-space-pad)}\n\n.button{background:var(--t-colour-primary);color:var(--t-colour-on-primary);border:0;border-radius:var(--t-radius-control);padding:var(--t-space-pad)}\n\n.mark{width:24px;height:24px;background:url(asset:logo) no-repeat center/contain}\n"
 }

@@ -133,7 +133,20 @@ func (p Page) Screen(flows Flows, system System, id string) (string, error) {
 type System struct {
 	Raw    []byte
 	Tokens map[string]map[string]string `json:"tokens"`
+	Assets map[string]Asset             `json:"assets"`
 	CSS    string                       `json:"css"`
+}
+
+// An Asset is a file the project draws with: a font file or an image. It travels inside the stage
+// as base64, and it reaches a screen as a data address, because a screen reaches no address off the
+// page.
+type Asset struct {
+	Kind   string `json:"kind"`
+	Media  string `json:"media"`
+	Data   string `json:"data"`
+	Family string `json:"family"`
+	Weight string `json:"weight"`
+	Style  string `json:"style"`
 }
 
 // ReadSystem reads a design-system.json.
@@ -185,6 +198,98 @@ func DocumentIn(markup string) (string, bool) {
 		return "", false
 	}
 	return html.UnescapeString(rest[:to]), true
+}
+
+// FontFacesIn is every @font-face rule the document carries, each one as the text inside its
+// braces. A screen reaches a font file through one of these, so a test reads them rather than
+// looking for the words anywhere in the document.
+func FontFacesIn(document string) []string {
+	var out []string
+	rest := document
+	for {
+		from := strings.Index(rest, "@font-face")
+		if from < 0 {
+			return out
+		}
+		rest = rest[from+len("@font-face"):]
+		open := strings.Index(rest, "{")
+		shut := strings.Index(rest, "}")
+		if open < 0 || shut < open {
+			return out
+		}
+		out = append(out, rest[open+1:shut])
+		rest = rest[shut+1:]
+	}
+}
+
+// AddressesIn is every address the document draws with: what each url() names, and what each src
+// attribute names. A screen is only as contained as the addresses in it, so a test reads all of
+// them rather than the ones it thought of.
+func AddressesIn(document string) []string {
+	var out []string
+	for _, found := range anAddressInCSS.FindAllStringSubmatch(document, -1) {
+		out = append(out, strings.Trim(strings.TrimSpace(found[1]), `"'`))
+	}
+	for _, found := range aSourceAttribute.FindAllStringSubmatch(document, -1) {
+		out = append(out, strings.Trim(strings.TrimSpace(found[1]), `"'`))
+	}
+	return out
+}
+
+// An address in a rule, and an address in the markup, whatever quoting each was written with.
+var (
+	anAddressInCSS   = regexp.MustCompile(`(?i)url\(\s*([^)]*?)\s*\)`)
+	aSourceAttribute = regexp.MustCompile(`(?i)\ssrc\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)`)
+)
+
+// FontFaceFor finds the rule that carries one font file, and says what was missing when no rule
+// carries it. Every part is read, because a rule with the right family and the wrong file draws
+// nothing and a rule with no weight draws the wrong face.
+func FontFaceFor(document string, asset Asset) (string, string) {
+	want := []string{
+		`font-family:"` + asset.Family + `"`,
+		"src:url(" + DataAddressOf(asset) + ")",
+		"font-weight:" + asset.Weight,
+		"font-style:" + asset.Style,
+	}
+	faces := FontFacesIn(document)
+	if len(faces) == 0 {
+		return "", "the document carries no @font-face rule at all"
+	}
+	for _, face := range faces {
+		flat := strings.Join(strings.Fields(face), "")
+		missing := ""
+		for _, part := range want {
+			if !strings.Contains(flat, part) {
+				missing = part
+				break
+			}
+		}
+		if missing == "" {
+			return face, ""
+		}
+	}
+	return "", fmt.Sprintf("%d rules were read and none holds all of %v", len(faces), want)
+}
+
+// DataAddressOf is the address a screen reaches an asset at. It is the whole file, inside the
+// document, because a screen reaches no address off the page.
+func DataAddressOf(asset Asset) string {
+	return "data:" + asset.Media + ";base64," + asset.Data
+}
+
+// AssetsByKind splits the assets of a design system into the font files and the images.
+func AssetsByKind(system System) (map[string]Asset, map[string]Asset) {
+	fonts, images := map[string]Asset{}, map[string]Asset{}
+	for name, asset := range system.Assets {
+		switch asset.Kind {
+		case "font":
+			fonts[name] = asset
+		case "image":
+			images[name] = asset
+		}
+	}
+	return fonts, images
 }
 
 // Flows is a flows.json, with the parts a test reads named and the bytes kept whole. The page is
