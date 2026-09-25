@@ -56,6 +56,7 @@ aside{background:var(--panel);border-right:1px solid var(--line);overflow:auto;p
 .story .m{grid-column:2;font-size:12px;color:var(--muted);display:flex;flex-direction:column;gap:6px}
 .story .bars{height:5px}
 .note{font-size:12px;line-height:1.5;color:var(--muted)}
+.sysnote{margin:0;padding:10px 22px;font-size:12px;line-height:1.5;color:var(--muted);border-bottom:1px solid var(--line)}
 
 main{position:relative;min-width:0;min-height:0;display:flex;flex-direction:column}
 .storyhead{padding:14px 20px 10px;display:flex;flex-direction:column;gap:4px;border-bottom:1px solid var(--line);background:var(--panel)}
@@ -147,6 +148,11 @@ main{position:relative;min-width:0;min-height:0;display:flex;flex-direction:colu
    given. A literal value here would be this page's opinion about somebody else's product, so the
    test refuses one. */
 .frame{font-family:var(--t-font-sans);color:var(--t-colour-ink);flex:none}
+/* A screen written as markup is a document of its own. The page sizes the frame and scales it, and
+   reaches no further: everything a person sees inside it came from the design system and from the
+   session. On the map the frame takes no press, so a click still reaches the node under it. */
+.frame iframe.screen{border:0;padding:0;display:block;transform-origin:0 0}
+.node iframe.screen{pointer-events:none}
 .frame-mobile{width:220px}
 .frame-mobile .bezel{width:220px;height:452px;border-radius:30px;background:var(--t-colour-frame);padding:7px;position:relative}
 .frame-mobile .notch{position:absolute;top:8px;left:50%;width:62px;height:17px;margin-left:-31px;border-radius:10px;background:var(--t-colour-frame);z-index:2}
@@ -242,6 +248,8 @@ main{position:relative;min-width:0;min-height:0;display:flex;flex-direction:colu
       <button id="z-in" aria-label="Zoom in">+</button>
     </div>
   </header>
+  <p class="sysnote" id="sysnote" hidden>This project has no approved design system yet, so every
+    screen below is drawn with no colour, no typeface and no stylesheet of its own.</p>
   <div class="body">
     <aside>
       <section style="display:flex;flex-direction:column;gap:10px">
@@ -376,14 +384,95 @@ function renderElements(screen) {
   return ((screen && screen.el) || []).map(renderEl).join("");
 }
 
+// SIZES is the size a session writes css at, for each surface. A screen is written at the size of
+// the real thing, so the css in it is the css the product needs, and the page scales the whole
+// document into the frame rather than asking for a drawing at frame size.
+var SIZES = { mobile: { width: 390, height: 844 }, web: { width: 1280, height: 800 } };
+
+// HOLES is the space each frame leaves for the screen, in this page's pixels. The bezel and the
+// browser chrome keep the size they have, so these are what the document is scaled to fit.
+var HOLES = { mobile: { width: 206, height: 438 }, web: { width: 358, height: 424 } };
+
+// POLICY is everything a screen document is allowed to reach: nothing, beyond an image and a font
+// that travel inside it. The frame allows a script so the page's own courier can work later; what
+// the session wrote is taken out before the document is built.
+var POLICY = "default-src 'none'; img-src data:; font-src data:; style-src 'unsafe-inline'; " +
+  "script-src 'unsafe-inline'; form-action 'none'; base-uri 'none'";
+
+// A script element, and an attribute whose name starts with "on". An artifact written before the
+// gate read for these is still drawn by this page, so the page takes them out itself.
+var A_SCRIPT = /<script\b[\s\S]*?(?:<\/script\s*>|$)/gi;
+var AN_EVENT = /\son[a-z-]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi;
+
+// viewportOf answers the size a screen was written at: the size of its surface, unless the screen
+// names another.
+function viewportOf(screen) {
+  var size = SIZES[surfaceOf(screen)], held = (screen && screen.viewport) || {};
+  return { width: whole(held.width, size.width), height: whole(held.height, size.height) };
+}
+
+function whole(value, fallback) {
+  var n = Math.round(Number(value));
+  return isFinite(n) && n > 0 ? n : fallback;
+}
+
+// safeMarkup is the markup with nothing left in it that can run.
+function safeMarkup(markup) {
+  return String(markup === null || markup === undefined ? "" : markup)
+    .replace(A_SCRIPT, "").replace(AN_EVENT, "");
+}
+
+// composeScreen answers the whole document of one screen: the values of the project, the
+// stylesheet every screen is given, the size it was written at, and the markup of its body. It is
+// the only thing a frame is given, so a rule in one screen cannot reach another.
+function composeScreen(screen, system) {
+  var size = viewportOf(screen), held = system || {};
+  var properties = tokenStyle(held.tokens);
+  // A stylesheet that closed its own element would put the rest of the document outside it.
+  var sheet = safeMarkup(typeof held.css === "string" ? held.css : "").split("</sty" + "le").join("");
+  return "<!doctype html>" +
+    '<meta charset="utf-8">' +
+    '<meta name="viewport" content="width=' + size.width + ',initial-scale=1">' +
+    '<meta http-equiv="Content-Security-Policy" content="' + POLICY + '">' +
+    (properties ? "<style>:root{" + properties + "}</style>" : "") +
+    (sheet ? "<style>" + sheet + "</style>" : "") +
+    "<style>html,body{margin:0;padding:0;width:" + size.width + "px;height:" + size.height +
+    "px;overflow:hidden}</style>" +
+    "<body>" + safeMarkup(screen && screen.html) + "</body>";
+}
+
+// screenFrame is the frame that document goes in. The sandbox attribute gives it an origin of its
+// own, so it cannot read this page, reach storage, move the window or submit a form. The transform
+// fits the document into the hole the frame leaves, which is what keeps the bezel the size it is.
+function screenFrame(screen, system) {
+  var size = viewportOf(screen), hole = HOLES[surfaceOf(screen)];
+  var scale = Math.min(hole.width / size.width, hole.height / size.height);
+  var wide = Math.round(size.width * scale), tall = Math.round(size.height * scale);
+  var style = "width:" + size.width + "px;height:" + size.height + "px" +
+    ";transform:scale(" + Math.round(scale * 10000) / 10000 + ")" +
+    ";margin-right:" + (wide - size.width) + "px;margin-bottom:" + (tall - size.height) + "px" +
+    ";margin-left:" + Math.round((hole.width - wide) / 2) + "px";
+  return '<iframe class="screen" sandbox="allow-scripts" title="' + esc((screen && screen.name) || "") + '"' +
+    ' width="' + size.width + '" height="' + size.height + '" loading="lazy"' +
+    ' style="' + style + '" srcdoc="' + esc(composeScreen(screen, system)) + '"></iframe>';
+}
+
+// writtenInMarkup says which of the two a screen is. The shape list is removed later; until then a
+// screen that carries one is drawn the way it has always been drawn.
+function writtenInMarkup(screen) {
+  return !!(screen && typeof screen.html === "string" && screen.html !== "");
+}
+
 // renderScreen draws one screen inside the frame its surface asks for: a phone for mobile, a
-// browser with an address bar for web. The tokens ride on the frame as custom properties, so every
-// colour and font below it is the project's own.
-function renderScreen(screen, tokens) {
+// browser with an address bar for web. The values of the design system ride on the frame as custom
+// properties, so the furniture around a screen is the project's own as well.
+function renderScreen(screen, system) {
   var surface = surfaceOf(screen);
-  var hasDock = (((screen && screen.el) || []).some(function (e) { return e.t === "dock"; })) ? " hasdock" : "";
-  var style = ' style="' + tokenStyle(tokens) + '"';
-  var inside = '<div class="screen' + hasDock + '">' + renderElements(screen) + "</div>";
+  var written = writtenInMarkup(screen);
+  var hasDock = (!written && ((screen && screen.el) || []).some(function (e) { return e.t === "dock"; })) ? " hasdock" : "";
+  var style = ' style="' + tokenStyle((system || {}).tokens) + '"';
+  var inside = written ? screenFrame(screen, system)
+    : '<div class="screen' + hasDock + '">' + renderElements(screen) + "</div>";
   if (surface === SURFACES.web) {
     return '<div class="frame frame-web" data-surface="web"' + style + '>' +
       '<div class="chrome"><i class="light"></i><i class="light"></i><i class="light"></i>' +
@@ -399,14 +488,14 @@ function renderScreen(screen, tokens) {
 var NODE_W = 360, NODE_H = 452, CAP = 30, COL = 470, ROW = 610, PAD_X = 140, PAD_TOP = 150, PAD_BOTTOM = 120;
 var EDGE = { built: "built", designed: "designed", named: "named", missing: "gap", later: "later", proposed: "proposed" };
 
-var DATA, mode = "map", storyId, zoom = 1, selected = null, playTrail = [];
+var DATA, SYSTEM = null, mode = "map", storyId, zoom = 1, selected = null, playTrail = [];
 var $ = function (s, r) { return (r || document).querySelector(s); };
 var col = function (s) { return "var(--s-" + s + ")"; };
 var remember = function (k, v) { try { localStorage.setItem("flow-map-" + k, v); } catch (e) { /* storage is optional */ } };
 var recall = function (k) { try { return localStorage.getItem("flow-map-" + k); } catch (e) { return null; } };
 
 function screenOf(id) { return DATA.screens[id] || { name: id, status: "gap", q: "No screen with this name is in flows.json." }; }
-function frameOf(s) { return s.status === "gap" ? renderGap(s) : renderScreen(s, DATA.tokens); }
+function frameOf(s) { return s.status === "gap" ? renderGap(s) : renderScreen(s, SYSTEM); }
 function renderGap(s) { return '<div class="gapcard"><div class="q">?</div><b>' + esc(s.name) + "</b><p>" + esc(s.q) + "</p></div>"; }
 
 function counts(ids) {
@@ -704,10 +793,23 @@ $("#z-out").onclick = function () { zoom = Math.max(0.25, zoom - 0.15); applyZoo
 $("#z-fit").onclick = fit;
 window.addEventListener("resize", function () { if (mode === "map") { fit(); } });
 
+// The design system belongs to the project rather than to the mockups, so it sits one level above
+// the screens. A project that has not written one answers 404, which is not a fault: every screen
+// is then drawn with nothing of its own, and the line above the frames says so.
+function readSystem() {
+  return fetch("../../design-system.json").then(function (r) {
+    return r.ok ? r.json() : null;
+  }).catch(function () { return null; });
+}
+
 // The screens come from the stage this page is opened at, which is one step above the page. The
 // site serves the page at <stage>/map/ and the screens at <stage>/flows.json, so a project keeps
 // its screens in the system that holds the rest of its design and publishes nothing.
-fetch("../flows.json").then(function (r) {
+readSystem().then(function (system) {
+  SYSTEM = system;
+  $("#sysnote").hidden = !!(system && system.tokens);
+  return fetch("../flows.json");
+}).then(function (r) {
   if (!r.ok) { throw new Error("the screens answered " + r.status); }
   return r.json();
 }).then(function (d) {

@@ -15,6 +15,7 @@ package render
 import (
 	"encoding/json"
 	"fmt"
+	"html"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -98,10 +99,14 @@ func ReadPage(path string) (Page, error) {
 	}, nil
 }
 
-// Screen draws one screen of a flows.json and answers with the markup, the way the page does.
-func (p Page) Screen(flows Flows, id string) (string, error) {
+// Screen draws one screen of a flows.json and answers with the markup, the way the page does. The
+// design system goes in beside the flows because the values a screen is drawn in live there.
+func (p Page) Screen(flows Flows, system System, id string) (string, error) {
 	vm := goja.New()
 	if err := vm.Set("flowsJSON", string(flows.Raw)); err != nil {
+		return "", err
+	}
+	if err := vm.Set("systemJSON", system.Body()); err != nil {
 		return "", err
 	}
 	if err := vm.Set("screenID", id); err != nil {
@@ -114,12 +119,72 @@ func (p Page) Screen(flows Flows, id string) (string, error) {
 		var d = JSON.parse(flowsJSON);
 		var s = d.screens[screenID];
 		if (!s) { throw new Error("no screen called " + screenID); }
-		return renderScreen(s, d.tokens);
+		return renderScreen(s, JSON.parse(systemJSON));
 	})()`)
 	if err != nil {
 		return "", fmt.Errorf("flowmap: drawing %s: %w", id, err)
 	}
 	return drawn.String(), nil
+}
+
+// System is a design-system.json: the values every screen of the project is drawn in, the files it
+// draws with, and the stylesheet every screen is given. The page reads it beside the flows, because
+// the design system stage is the one the operator approved first.
+type System struct {
+	Raw    []byte
+	Tokens map[string]map[string]string `json:"tokens"`
+	CSS    string                       `json:"css"`
+}
+
+// ReadSystem reads a design-system.json.
+func ReadSystem(path string) (System, error) {
+	body, err := os.ReadFile(path) //nolint:gosec // the path is a fixture, named by a test
+	if err != nil {
+		return System{}, fmt.Errorf("flowmap: reading the design system: %w", err)
+	}
+	var read System
+	if err := json.Unmarshal(body, &read); err != nil {
+		return System{}, fmt.Errorf("flowmap: %s is not readable: %w", path, err)
+	}
+	read.Raw = body
+	return read, nil
+}
+
+// Body is the design system as the page is given it. A project with none is given null, which is
+// what the site answers as a 404 and what the page draws with anyway.
+func (s System) Body() string {
+	if len(s.Raw) == 0 {
+		return "null"
+	}
+	return string(s.Raw)
+}
+
+// TokenValues is every value the tokens name, whatever group it is in.
+func (s System) TokenValues() []string {
+	var out []string
+	for _, set := range s.Tokens {
+		for _, value := range set {
+			out = append(out, value)
+		}
+	}
+	return out
+}
+
+// DocumentIn reads the document a frame was given out of the markup. The page writes it into the
+// srcdoc attribute, escaped, so a test that reads what an operator sees has to unescape it the way
+// a browser does.
+func DocumentIn(markup string) (string, bool) {
+	const open = ` srcdoc="`
+	from := strings.Index(markup, open)
+	if from < 0 {
+		return "", false
+	}
+	rest := markup[from+len(open):]
+	to := strings.Index(rest, `"`)
+	if to < 0 {
+		return "", false
+	}
+	return html.UnescapeString(rest[:to]), true
 }
 
 // Flows is a flows.json, with the parts a test reads named and the bytes kept whole. The page is
@@ -132,12 +197,22 @@ type Flows struct {
 	Stories []Story                      `json:"stories"`
 }
 
-// A Screen is one thing a person looks at.
+// A Screen is one thing a person looks at. HTML is the markup of its body, which a session writes
+// and the page composes into a document of its own.
 type Screen struct {
-	Name    string `json:"name"`
-	Surface string `json:"surface"`
-	Status  string `json:"status"`
-	Route   string `json:"route"`
+	Name     string   `json:"name"`
+	Surface  string   `json:"surface"`
+	Status   string   `json:"status"`
+	Route    string   `json:"route"`
+	HTML     string   `json:"html"`
+	Viewport Viewport `json:"viewport"`
+}
+
+// A Viewport is the size a screen is written at. A screen that names none is drawn at the size of
+// its surface.
+type Viewport struct {
+	Width  int `json:"width"`
+	Height int `json:"height"`
 }
 
 // A Story is a walk over the screens.

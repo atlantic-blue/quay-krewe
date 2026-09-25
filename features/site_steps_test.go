@@ -673,8 +673,9 @@ const playControl = `id="m-play"`
 
 // screensThePageAsksFor reads the address the flow map asks its screens for, out of the page itself.
 // The address is followed rather than written down here, so a page that starts asking somewhere else
-// fails this rather than passing against an address a scenario invented.
-var screensThePageAsksFor = regexp.MustCompile(`fetch\("([^"]+)"\)`)
+// fails this rather than passing against an address a scenario invented. The page asks for two
+// things, its screens and the design system of the project, and this step follows the screens.
+var screensThePageAsksFor = regexp.MustCompile(`fetch\("([^"]*flows\.json)"\)`)
 
 // theFlowMapFrame is the frame one stage opens the flow map in, and the address it opens.
 var theFlowMapFrame = regexp.MustCompile(`<iframe[^>]+src="([^"]*)"`)
@@ -910,10 +911,10 @@ func tokensTheSiteDrew(ctx context.Context) (map[string]map[string]siteToken, er
 // theProjectsTokens is one group of the design system the scenario wrote.
 func theProjectsTokens(ctx context.Context, group string) (map[string]string, error) {
 	held := mockupsFrom(ctx)
-	if held == nil || held.fixture == nil {
+	if held == nil || held.system == nil {
 		return nil, fmt.Errorf("no design system was written, so there are no %s tokens to draw", group)
 	}
-	tokens, written := held.fixture["tokens"].(map[string]any)
+	tokens, written := held.system["tokens"].(map[string]any)
 	if !written {
 		return nil, fmt.Errorf("the design system names no tokens at all")
 	}
