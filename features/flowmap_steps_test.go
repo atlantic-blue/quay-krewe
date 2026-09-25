@@ -32,15 +32,17 @@ const (
 	theScreenMarkup   = `<main data-component="Card"><h1 data-component="Heading">Today</h1><p data-component="Text">Two tides, both after dark.</p><button data-component="Button" data-to="log">Log a tide</button></main>`
 	theScript         = `<script>parent.document.title='taken'</script>`
 	theEventAttribute = `<p data-component="Text" onclick="steal()">Tap here</p>`
+	theMissingMark    = `<img data-component="Logo" src="asset:missing" alt="the mark">`
 )
 
 type flowMapWorld struct {
-	page     flowmap.Page
-	flows    flowmap.Flows
-	system   flowmap.System
-	drawn    string
-	document string
-	screen   string
+	page      flowmap.Page
+	flows     flowmap.Flows
+	system    flowmap.System
+	drawn     string
+	document  string
+	screen    string
+	documents map[string]string
 }
 
 type flowMapKey struct{}
@@ -250,6 +252,132 @@ func initializeFlowMapSteps(sc *godog.ScenarioContext) {
 		}
 		return nil
 	})
+
+	// The four things the font files and the images stand on. The fixture is held to two of them
+	// first, because the green is cheap to fake: the design system writes no @font-face rule of its
+	// own, and the mark is named both ways a screen can name it.
+	sc.Step(`^the design system carries the font file and the mark of the project$`, func(ctx context.Context) error {
+		w := flowMapFrom(ctx)
+		if strings.Contains(w.system.CSS, "@font-face") {
+			return fmt.Errorf("the design system writes its own @font-face rule, so this scenario would pass with no page behind it")
+		}
+		fonts, images := flowmap.AssetsByKind(w.system)
+		if len(fonts) == 0 || len(images) == 0 {
+			return fmt.Errorf("the design system carries %d font files and %d images, so this scenario proves nothing",
+				len(fonts), len(images))
+		}
+		named := 0
+		for _, screen := range w.flows.Screens {
+			for name := range images {
+				if strings.Contains(screen.HTML, "asset:"+name) {
+					named++
+				}
+			}
+		}
+		if named == 0 {
+			return fmt.Errorf("no screen of the project names an image in its markup, so one of the two ways is never read")
+		}
+		if !strings.Contains(w.system.CSS, "url(asset:") {
+			return fmt.Errorf("the stylesheet of the design system names no image, so the other way is never read")
+		}
+		return nil
+	})
+
+	sc.Step(`^the operator opens every screen the project wrote as markup$`, func(ctx context.Context) error {
+		w := flowMapFrom(ctx)
+		w.documents = map[string]string{}
+		for id, screen := range w.flows.Screens {
+			if screen.HTML == "" {
+				continue
+			}
+			if err := w.open(id); err != nil {
+				return err
+			}
+			if w.document == "" {
+				return fmt.Errorf("%s was drawn without a document of its own:\n%s", id, w.drawn)
+			}
+			w.documents[id] = w.document
+		}
+		if len(w.documents) == 0 {
+			return fmt.Errorf("no screen of the project is written as markup, so nothing was opened")
+		}
+		return nil
+	})
+
+	sc.Step(`^each screen is drawn in the font file the design system carries$`, func(ctx context.Context) error {
+		w := flowMapFrom(ctx)
+		fonts, _ := flowmap.AssetsByKind(w.system)
+		for id, document := range w.documents {
+			for name, asset := range fonts {
+				if rule, whyNot := flowmap.FontFaceFor(document, asset); rule == "" {
+					return fmt.Errorf("%s is drawn in no rule for the font file %s: %s", id, name, whyNot)
+				}
+			}
+		}
+		return nil
+	})
+
+	sc.Step(`^the mark of the project reaches the screen, named in the markup and named in the stylesheet$`,
+		func(ctx context.Context) error {
+			w := flowMapFrom(ctx)
+			_, images := flowmap.AssetsByKind(w.system)
+			fromTheMarkup := 0
+			for id, document := range w.documents {
+				for name, asset := range images {
+					address := flowmap.DataAddressOf(asset)
+					if !strings.Contains(document, "url("+address+")") {
+						return fmt.Errorf("%s does not draw the image %s from the stylesheet as a data address:\n%s",
+							id, name, document)
+					}
+					if !strings.Contains(w.flows.Screens[id].HTML, "asset:"+name) {
+						continue
+					}
+					fromTheMarkup++
+					if !strings.Contains(document, `src="`+address+`"`) {
+						return fmt.Errorf("%s names the image %s in its markup and does not draw it as a data address:\n%s",
+							id, name, document)
+					}
+				}
+			}
+			if fromTheMarkup == 0 {
+				return fmt.Errorf("no screen read an image named in its markup, so only one of the two ways was read")
+			}
+			return nil
+		})
+
+	sc.Step(`^no screen fetches anything, because every address it draws with is inside it$`, func(ctx context.Context) error {
+		w := flowMapFrom(ctx)
+		for id, document := range w.documents {
+			for _, address := range flowmap.AddressesIn(document) {
+				if !strings.HasPrefix(address, "data:") && !strings.HasPrefix(address, "#") {
+					return fmt.Errorf("%s draws with the address %q, which is outside the document", id, address)
+				}
+			}
+			for name := range w.system.Assets {
+				if strings.Contains(document, "asset:"+name) {
+					return fmt.Errorf("%s still names the asset %s by name, so the file never reached the screen:\n%s",
+						id, name, document)
+				}
+			}
+		}
+		return nil
+	})
+
+	sc.Step(`^a file the design system does not carry stays named, so the operator reads what is missing$`,
+		func(ctx context.Context) error {
+			w := flowMapFrom(ctx)
+			if err := w.write(theScreenMarkup + theMissingMark); err != nil {
+				return err
+			}
+			if err := w.open(w.screen); err != nil {
+				return err
+			}
+			if !strings.Contains(w.document, "asset:missing") {
+				return fmt.Errorf("a mark the design system does not carry was dropped, so nothing says it is missing:\n%s",
+					w.document)
+			}
+			return nil
+		})
 }
 
 // open draws one screen and keeps both what the page answered and the document the frame was

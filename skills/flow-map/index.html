@@ -422,23 +422,85 @@ function safeMarkup(markup) {
     .replace(A_SCRIPT, "").replace(AN_EVENT, "");
 }
 
+// An asset address is how a screen and the base stylesheet name a file of the design system:
+// url(asset:<name>) in a rule and src="asset:<name>" in the markup. Both are written by a session,
+// in any of the three ways a value is quoted.
+var AN_ASSET_IN_CSS = /url\(\s*(?:"([^"]*)"|'([^']*)'|([^)\s]*))\s*\)/gi;
+var AN_ASSET_IN_MARKUP = /(\ssrc\s*=\s*)(?:"([^"]*)"|'([^']*)'|([^\s>]+))/gi;
+var THE_ASSET_SCHEME = "asset:";
+
+// What a media type and a base64 file may hold. A value outside these would close the attribute or
+// the rule it is written into, so the address is left as it is and nothing is drawn with it.
+var A_MEDIA_TYPE = /^[a-z0-9][a-z0-9.+\/-]*$/i;
+var BASE64 = /^[A-Za-z0-9+\/=]+$/;
+
+// addressOf is where a file of the design system reaches a screen: inside the document, as the
+// bytes the stage carries, because a screen fetches nothing. A name the design system does not hold
+// answers null, and the caller leaves the address as it is, so the fault is a mark that did not
+// draw rather than a mark nobody can account for.
+function addressOf(assets, named) {
+  var name = String(named === null || named === undefined ? "" : named).trim();
+  if (name.slice(0, THE_ASSET_SCHEME.length).toLowerCase() !== THE_ASSET_SCHEME) { return null; }
+  var asset = (assets || {})[name.slice(THE_ASSET_SCHEME.length)];
+  if (!asset || !A_MEDIA_TYPE.test(String(asset.media || "")) || !BASE64.test(String(asset.data || ""))) {
+    return null;
+  }
+  return "data:" + asset.media + ";base64," + asset.data;
+}
+
+// withAssets is the text with every asset address resolved, in a rule and in the markup alike. A
+// session writes css inside its own screen as well as in the base stylesheet, so both are read.
+function withAssets(text, assets) {
+  return String(text === null || text === undefined ? "" : text)
+    .replace(AN_ASSET_IN_CSS, function (whole, quoted, single, bare) {
+      var address = addressOf(assets, quoted || single || bare);
+      return address ? "url(" + address + ")" : whole;
+    })
+    .replace(AN_ASSET_IN_MARKUP, function (whole, upTo, quoted, single, bare) {
+      var address = addressOf(assets, quoted || single || bare);
+      return address ? upTo + '"' + address + '"' : whole;
+    });
+}
+
+// fontFaces is one rule for each font file the design system carries. The page writes these and a
+// session never does: a session writes font-family: var(--t-font-<name>), and the token value names
+// the family the rule declares. The weight and the style are the ones the schema defaults to when
+// the asset names neither, because a family that ships several faces draws the wrong one otherwise.
+function fontFaces(assets) {
+  var held = assets || {}, out = [];
+  Object.keys(held).forEach(function (name) {
+    var asset = held[name], family = String((asset && asset.family) || "");
+    if (!asset || asset.kind !== "font" || family === "" || /[;"<>{}]/.test(family)) { return; }
+    var address = addressOf(held, THE_ASSET_SCHEME + name);
+    if (!address) { return; }
+    var weight = String(asset.weight || "400"), style = String(asset.style || "normal");
+    out.push('@font-face{font-family:"' + family + '";src:url(' + address + ')' +
+      ";font-weight:" + (/^[a-z0-9]+$/i.test(weight) ? weight : "400") +
+      ";font-style:" + (style === "italic" ? "italic" : "normal") + "}");
+  });
+  return out.join("");
+}
+
 // composeScreen answers the whole document of one screen: the values of the project, the
 // stylesheet every screen is given, the size it was written at, and the markup of its body. It is
 // the only thing a frame is given, so a rule in one screen cannot reach another.
 function composeScreen(screen, system) {
   var size = viewportOf(screen), held = system || {};
   var properties = tokenStyle(held.tokens);
+  var faces = fontFaces(held.assets);
   // A stylesheet that closed its own element would put the rest of the document outside it.
-  var sheet = safeMarkup(typeof held.css === "string" ? held.css : "").split("</sty" + "le").join("");
+  var sheet = withAssets(safeMarkup(typeof held.css === "string" ? held.css : ""), held.assets)
+    .split("</sty" + "le").join("");
   return "<!doctype html>" +
     '<meta charset="utf-8">' +
     '<meta name="viewport" content="width=' + size.width + ',initial-scale=1">' +
     '<meta http-equiv="Content-Security-Policy" content="' + POLICY + '">' +
     (properties ? "<style>:root{" + properties + "}</style>" : "") +
+    (faces ? "<style>" + faces + "</style>" : "") +
     (sheet ? "<style>" + sheet + "</style>" : "") +
     "<style>html,body{margin:0;padding:0;width:" + size.width + "px;height:" + size.height +
     "px;overflow:hidden}</style>" +
-    "<body>" + safeMarkup(screen && screen.html) + "</body>";
+    "<body>" + withAssets(safeMarkup(screen && screen.html), held.assets) + "</body>";
 }
 
 // screenFrame is the frame that document goes in. The sandbox attribute gives it an origin of its

@@ -44,3 +44,15 @@ Feature: The flow map plays a project's stories
     When the operator opens a screen a session wrote as markup
     Then every colour it is drawn in is one the design system names
     And the page put no colour and no font of its own into it
+
+  # The step this one exists for. A screen drawn in the system font of the machine is not the
+  # product. The font file and the mark travel inside the design system the operator approved, and
+  # they reach the screen inside its own document, so the product reads the same on a machine with
+  # no network as it does on one with a network.
+  Scenario: A screen is drawn in the font file the design system carries, with no address outside the page
+    Given the design system carries the font file and the mark of the project
+    When the operator opens every screen the project wrote as markup
+    Then each screen is drawn in the font file the design system carries
+    And the mark of the project reaches the screen, named in the markup and named in the stylesheet
+    And no screen fetches anything, because every address it draws with is inside it
+    And a file the design system does not carry stays named, so the operator reads what is missing
