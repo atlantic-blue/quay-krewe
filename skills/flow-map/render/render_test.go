@@ -15,8 +15,16 @@ import (
 // FLOW-1: a screen with surface mobile renders in a phone frame, and a screen with surface web
 // renders in a browser frame.
 //
-// FLOW-2: every colour and font the page draws on a screen comes from the tokens object of the
-// flows.json it was given.
+// FLOW-2: every colour and font the page draws on a screen comes from the design system of the
+// project, which the operator approved before the mockups were written.
+//
+// SCREEN-1: a screen carries the markup of its own body, and the size of the surface it is written
+// at.
+//
+// FRAME-1: that markup is composed into a document of its own, carrying the values of the project.
+//
+// FRAME-2: the document runs inside a frame that cannot run the script a session wrote, cannot
+// reach an address, and cannot touch the page around it.
 //
 // Both are read off the markup the page's own renderer produces, run here outside a browser, so
 // what these tests read is what an operator sees.
@@ -56,15 +64,29 @@ func fixture(t *testing.T) Flows {
 	return read
 }
 
+func system(t *testing.T) System {
+	t.Helper()
+	dir, err := Dir()
+	if err != nil {
+		t.Fatalf("finding the skill: %v", err)
+	}
+	read, err := ReadSystem(filepath.Join(dir, "fixtures", "design-system.json"))
+	if err != nil {
+		t.Fatalf("reading the design system: %v", err)
+	}
+	return read
+}
+
 // FLOW-1. Each surface gets its own frame, and only its own. A page that drew every screen the
 // same way would still pass a test that only looked for a phone.
 func TestAWebScreenIsDrawnInABrowserFrameAndAMobileScreenInAPhone(t *testing.T) {
 	drawn := page(t)
 	flows := fixture(t)
+	system := system(t)
 
 	seen := map[string]int{}
 	for id, screen := range flows.Screens {
-		markup, err := drawn.Screen(flows, id)
+		markup, err := drawn.Screen(flows, system, id)
 		if err != nil {
 			t.Fatalf("drawing %s: %v", id, err)
 		}
@@ -109,6 +131,7 @@ func TestAWebScreenIsDrawnInABrowserFrameAndAMobileScreenInAPhone(t *testing.T) 
 func TestAScreenThatNamesNoSurfaceIsDrawnOnAPhone(t *testing.T) {
 	drawn := page(t)
 	flows := fixture(t)
+	system := system(t)
 
 	var loose map[string]any
 	if err := json.Unmarshal(flows.Raw, &loose); err != nil {
@@ -126,7 +149,7 @@ func TestAScreenThatNamesNoSurfaceIsDrawnOnAPhone(t *testing.T) {
 	}
 	flows.Raw = raw
 
-	markup, err := drawn.Screen(flows, "sign-in")
+	markup, err := drawn.Screen(flows, system, "sign-in")
 	if err != nil {
 		t.Fatalf("drawing a screen with no surface: %v", err)
 	}
@@ -135,35 +158,49 @@ func TestAScreenThatNamesNoSurfaceIsDrawnOnAPhone(t *testing.T) {
 	}
 }
 
-// FLOW-2, in the markup. Every colour the page wrote is one the tokens name, and every colour the
-// tokens name reached the frame.
-func TestEveryColourOnAScreenComesFromTheTokens(t *testing.T) {
+// FLOW-2, in the document an operator reads. Every colour on the screen is one the design system
+// names, and every colour the design system names reached the screen. The flows.json carries no
+// tokens now, so a page that still read them would draw a screen with no value at all.
+func TestEveryColourOnAScreenComesFromTheDesignSystem(t *testing.T) {
 	drawn := page(t)
 	flows := fixture(t)
+	system := system(t)
 
 	named := map[string]bool{}
-	for _, value := range flows.TokenValues() {
+	for _, value := range system.TokenValues() {
 		named[value] = true
 	}
 	if len(named) == 0 {
-		t.Fatal("the fixture names no tokens, so this test proves nothing")
+		t.Fatal("the design system names no value, so this test proves nothing")
 	}
 
-	for id := range flows.Screens {
-		markup, err := drawn.Screen(flows, id)
+	written := 0
+	for id, screen := range flows.Screens {
+		markup, err := drawn.Screen(flows, system, id)
 		if err != nil {
 			t.Fatalf("drawing %s: %v", id, err)
 		}
-		for _, found := range colourLiteral.FindAllString(markup, -1) {
+		read := markup
+		if document, found := DocumentIn(markup); found {
+			read = markup + document
+			written++
+		}
+		for _, found := range colourLiteral.FindAllString(read, -1) {
 			if !named[found] {
-				t.Errorf("%s was drawn with the colour %q, which the tokens do not name", id, found)
+				t.Errorf("%s was drawn with the colour %q, which the design system does not name", id, found)
 			}
 		}
-		for name, value := range flows.Tokens["colour"] {
-			if !strings.Contains(markup, "--t-colour-"+name+":"+value) {
-				t.Errorf("%s does not carry the colour token %s, so the page is not drawing it in the project's own colours", id, name)
+		for name, value := range system.Tokens["colour"] {
+			if !strings.Contains(read, "--t-colour-"+name+":"+value) {
+				t.Errorf("%s does not carry the colour token %s, so it is not drawn in the project's own colours", id, name)
 			}
 		}
+		if screen.HTML != "" && written == 0 {
+			t.Errorf("%s is written as markup and no document reached a frame", id)
+		}
+	}
+	if written == 0 {
+		t.Fatal("no screen of the fixture is written as markup, so the document was never read")
 	}
 }
 
@@ -193,16 +230,247 @@ func TestNoRuleThatPaintsAScreenHoldsAColourOrAFontOfItsOwn(t *testing.T) {
 	}
 }
 
+// SCREEN-1 and FRAME-1. A screen a session wrote as markup reaches an operator as that markup, in
+// a document of its own, at the size of the surface it was written at.
+func TestAScreenWrittenInMarkupIsDrawnInsideAFrame(t *testing.T) {
+	drawn := page(t)
+	flows := fixture(t)
+	system := system(t)
+
+	for id, screen := range flows.Screens {
+		if screen.HTML == "" {
+			continue
+		}
+		markup, err := drawn.Screen(flows, system, id)
+		if err != nil {
+			t.Fatalf("drawing %s: %v", id, err)
+		}
+		for _, want := range []string{"<iframe", `class="screen"`, `loading="lazy"`, `srcdoc="`, `title="` + screen.Name} {
+			if !strings.Contains(markup, want) {
+				t.Errorf("%s is written as markup and its frame carries no %q:\n%s", id, want, markup)
+			}
+		}
+		document, found := DocumentIn(markup)
+		if !found {
+			t.Fatalf("%s was drawn without a document:\n%s", id, markup)
+		}
+		if !strings.Contains(document, "<!doctype html>") {
+			t.Errorf("the document of %s is not a document of its own:\n%s", id, document)
+		}
+		for _, want := range visibleWordsOf(screen.HTML) {
+			if !strings.Contains(document, want) {
+				t.Errorf("the document of %s does not hold %q, which the session wrote", id, want)
+			}
+		}
+		// The frame keeps the size it has today, so the document is scaled into it rather than
+		// pushing the bezel out.
+		if !strings.Contains(markup, "transform:scale(") {
+			t.Errorf("%s is not scaled into its frame, so the bezel does not keep its size:\n%s", id, markup)
+		}
+		return
+	}
+	t.Fatal("no screen of the fixture is written as markup, so this test proves nothing")
+}
+
+// FRAME-2. The markup came out of a store that no gate read, so the page cannot trust it. What an
+// operator opens runs nothing the session wrote, reaches no address, and touches no other screen.
+func TestTheFrameRunsNoScriptTheSessionWrote(t *testing.T) {
+	drawn := page(t)
+	system := system(t)
+
+	stored := `{"screens":{"one":{"name":"One","surface":"mobile","status":"designed","html":` +
+		`"<main data-component=\"Card\"><h1 onclick=\"steal()\">Today</h1>` +
+		`<script>parent.document.title='taken'</script></main>"}}}`
+	markup, err := drawn.Screen(Flows{Raw: []byte(stored)}, system, "one")
+	if err != nil {
+		t.Fatalf("drawing a stored screen: %v", err)
+	}
+	document, found := DocumentIn(markup)
+	if !found {
+		t.Fatalf("the screen was drawn without a document:\n%s", markup)
+	}
+
+	if !strings.Contains(markup, `sandbox="allow-scripts"`) {
+		t.Errorf("the frame does not carry the sandbox attribute, so the document can reach the page:\n%s", markup)
+	}
+	for _, want := range []string{
+		"default-src 'none'", "img-src data:", "font-src data:",
+		"style-src 'unsafe-inline'", "script-src 'unsafe-inline'",
+		"form-action 'none'", "base-uri 'none'",
+	} {
+		if !strings.Contains(document, want) {
+			t.Errorf("the document does not refuse an address with %q:\n%s", want, document)
+		}
+	}
+	for _, refuse := range []string{"<script", "onclick", "steal(", "document.title"} {
+		if strings.Contains(document, refuse) {
+			t.Errorf("the document still holds %q, which the session wrote:\n%s", refuse, document)
+		}
+	}
+	if !strings.Contains(document, "Today") {
+		t.Errorf("the words the session wrote did not survive:\n%s", document)
+	}
+}
+
+// SCREEN-1. A session writes css at the real size of the surface, so the size is the surface's own
+// unless the screen names another.
+func TestTheViewportIsTheSizeOfTheSurface(t *testing.T) {
+	drawn := page(t)
+	system := system(t)
+
+	for _, one := range []struct {
+		surface, viewport string
+		width, height     int
+	}{
+		{surface: "mobile", width: 390, height: 844},
+		{surface: "web", width: 1280, height: 800},
+		{surface: "mobile", viewport: `,"viewport":{"width":320,"height":568}`, width: 320, height: 568},
+	} {
+		stored := fmt.Sprintf(`{"screens":{"one":{"name":"One","surface":%q,"status":"designed",`+
+			`"html":"<p data-component=\"Text\">a</p>"%s}}}`, one.surface, one.viewport)
+		markup, err := drawn.Screen(Flows{Raw: []byte(stored)}, system, "one")
+		if err != nil {
+			t.Fatalf("drawing a %s screen: %v", one.surface, err)
+		}
+		for _, want := range []string{
+			fmt.Sprintf(`width="%d"`, one.width),
+			fmt.Sprintf(`height="%d"`, one.height),
+		} {
+			if !strings.Contains(markup, want) {
+				t.Errorf("a %s screen%s carries no %s:\n%s", one.surface, ofItsOwn(one.viewport), want, markup)
+			}
+		}
+		document, found := DocumentIn(markup)
+		if !found {
+			t.Fatalf("a %s screen was drawn without a document", one.surface)
+		}
+		if !strings.Contains(document, fmt.Sprintf("width:%dpx", one.width)) {
+			t.Errorf("the document of a %s screen is not sized to its viewport:\n%s", one.surface, document)
+		}
+	}
+}
+
+// The discovery stage is played before any design system exists, so the route answers nothing and
+// the page draws the screen with no value of its own rather than inventing one.
+func TestAProjectWithNoDesignSystemDrawsWithNoValueOfThePagesOwn(t *testing.T) {
+	drawn := page(t)
+
+	stored := `{"screens":{"one":{"name":"One","surface":"mobile","status":"designed",` +
+		`"html":"<p data-component=\"Text\">a</p>"}}}`
+	markup, err := drawn.Screen(Flows{Raw: []byte(stored)}, System{}, "one")
+	if err != nil {
+		t.Fatalf("drawing a screen with no design system: %v", err)
+	}
+	document, found := DocumentIn(markup)
+	if !found {
+		t.Fatalf("the screen was drawn without a document:\n%s", markup)
+	}
+	if strings.Contains(document, "--t-") {
+		t.Errorf("the document carries a custom property with no design system behind it:\n%s", document)
+	}
+	for _, found := range colourLiteral.FindAllString(document, -1) {
+		t.Errorf("the page drew the screen in the colour %q, which no design system names", found)
+	}
+	// And the operator is told, because a screen drawn in nothing looks like a screen drawn badly.
+	if !strings.Contains(drawn.HTML, "design system") {
+		t.Error("the page says nothing when a project has no design system")
+	}
+}
+
+// The shape list is removed at step 10, so until then a stored screen that carries one draws the
+// way it does today. A page that only drew markup would empty every mockup already written.
+func TestAScreenWithNoMarkupStillDrawsItsShapeList(t *testing.T) {
+	drawn := page(t)
+	system := system(t)
+
+	stored := `{"screens":{"one":{"name":"One","surface":"mobile","status":"designed",` +
+		`"el":[{"t":"h","component":"Heading","v":"Today"}]}}}`
+	markup, err := drawn.Screen(Flows{Raw: []byte(stored)}, system, "one")
+	if err != nil {
+		t.Fatalf("drawing a screen with a shape list: %v", err)
+	}
+	if strings.Contains(markup, "<iframe") {
+		t.Errorf("a screen with no markup was given a frame:\n%s", markup)
+	}
+	for _, want := range []string{`class="h"`, `data-component="Heading"`, "Today"} {
+		if !strings.Contains(markup, want) {
+			t.Errorf("a screen with a shape list carries no %q:\n%s", want, markup)
+		}
+	}
+}
+
+// SCREEN-1, in the file a session writes against. The markup and the size are what the schema now
+// takes, and the shape list stops being asked for, so a screen can be markup alone.
+func TestTheSchemaTakesMarkupAndTheSizeOfAScreen(t *testing.T) {
+	read := schema(t)
+	screen := definition(t, read, "screen")
+	properties, _ := screen["properties"].(map[string]any)
+
+	if _, there := properties["html"]; !there {
+		t.Fatal("a screen cannot carry its markup, which is what this feature is for")
+	}
+	viewport, _ := properties["viewport"].(map[string]any)
+	if viewport == nil {
+		t.Fatal("a screen cannot say what size it was written at")
+	}
+	sizes, _ := viewport["properties"].(map[string]any)
+	for _, one := range []struct {
+		name     string
+		from, to float64
+	}{{name: "width", from: 240, to: 1920}, {name: "height", from: 320, to: 1600}} {
+		held, _ := sizes[one.name].(map[string]any)
+		if held == nil {
+			t.Fatalf("the viewport has no %s", one.name)
+		}
+		if at, _ := held["minimum"].(float64); at != one.from {
+			t.Errorf("the %s of a viewport starts at %v rather than %v", one.name, held["minimum"], one.from)
+		}
+		if at, _ := held["maximum"].(float64); at != one.to {
+			t.Errorf("the %s of a viewport stops at %v rather than %v", one.name, held["maximum"], one.to)
+		}
+	}
+	if required(screen, "el") {
+		t.Error("the schema still asks a screen for a shape list, so a screen cannot be markup alone")
+	}
+	if required(read, "tokens") {
+		t.Error("the schema still asks the flows for tokens, which the design system stage now holds")
+	}
+}
+
+// visibleWordsOf is the words a person reads on a screen, taken out of the markup, so a test can
+// look for them in the document the frame was given.
+func visibleWordsOf(markup string) []string {
+	var out []string
+	for _, part := range strings.Split(markup, ">") {
+		words := strings.TrimSpace(strings.Split(part, "<")[0])
+		if len(words) > 3 && !strings.Contains(words, "=") {
+			out = append(out, words)
+		}
+	}
+	if len(out) > 3 {
+		return out[:3]
+	}
+	return out
+}
+
+// ofItsOwn names the case in a failure, because the same check runs for a default size and for a
+// size the screen asked for.
+func ofItsOwn(viewport string) string {
+	if viewport == "" {
+		return ""
+	}
+	return " naming its own size"
+}
+
 // Every kind of shape the schema allows is a kind the page can draw. A type the schema names and
 // the page does not know renders as nothing, and a screen then quietly loses a shape.
 func TestThePageDrawsEveryKindOfShapeTheSchemaAllows(t *testing.T) {
 	drawn := page(t)
-	flows := fixture(t)
 
 	for _, kind := range elementKinds(t) {
-		one := fmt.Sprintf(`{"tokens":%s,"screens":{"one":{"name":"One","surface":"mobile","status":"designed",
-			"el":[{"t":%q,"component":"Thing","v":[]}]}}}`, tokensJSON(t, flows), kind)
-		markup, err := drawn.Screen(Flows{Raw: []byte(one)}, "one")
+		one := fmt.Sprintf(`{"screens":{"one":{"name":"One","surface":"mobile","status":"designed",
+			"el":[{"t":%q,"component":"Thing","v":[]}]}}}`, kind)
+		markup, err := drawn.Screen(Flows{Raw: []byte(one)}, system(t), "one")
 		if err != nil {
 			t.Fatalf("drawing a %s: %v", kind, err)
 		}
@@ -305,13 +573,4 @@ func elementKinds(t *testing.T) []string {
 		}
 	}
 	return out
-}
-
-func tokensJSON(t *testing.T, flows Flows) string {
-	t.Helper()
-	body, err := json.Marshal(flows.Tokens)
-	if err != nil {
-		t.Fatalf("writing the tokens: %v", err)
-	}
-	return string(body)
 }
