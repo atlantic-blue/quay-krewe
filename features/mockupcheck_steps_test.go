@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/atlantic-blue/quay-krewe/internal/store"
 	render "github.com/atlantic-blue/quay-krewe/skills/flow-map/render"
@@ -94,6 +95,16 @@ func initializeMockupCheckSteps(sc *godog.ScenarioContext) {
 				}
 				delete(shape, "component")
 				return nil
+			})
+		})
+
+	// A screen written as markup carries its component names on the markup, so this takes one off a
+	// part that holds the words a person reads.
+	sc.Step(`^the operator writes the mockups stage with words outside every named component$`,
+		func(ctx context.Context) error {
+			return writeMockupFixture(ctx, func(flows map[string]any) error {
+				return unnameTheComponentOf(flows, theMarkupScreen,
+					`<h1 data-component="Heading">`, `<h1>`)
 			})
 		})
 
@@ -235,4 +246,24 @@ func asJSON(held any) (string, error) {
 		return "", err
 	}
 	return string(body), nil
+}
+
+// theMarkupScreen is the screen of the fixture that is written as markup, where a component name
+// sits on an element rather than on a shape.
+const theMarkupScreen = "dashboard"
+
+// unnameTheComponentOf takes the component name off one part of a screen written as markup.
+//
+// It refuses a screen it did not change, because a scenario that broke nothing would pass against
+// the rule it was written to prove.
+func unnameTheComponentOf(flows map[string]any, screen, part, without string) error {
+	screens, _ := flows["screens"].(map[string]any)
+	held, _ := screens[screen].(map[string]any)
+	markup, _ := held["html"].(string)
+	if !strings.Contains(markup, part) {
+		return fmt.Errorf("the %s screen of the fixture holds no %s, so this scenario would prove nothing",
+			screen, part)
+	}
+	held["html"] = strings.Replace(markup, part, without, 1)
+	return nil
 }
