@@ -4,25 +4,6 @@
     "commit": "4c1f9a2",
     "date": "2026-09-08"
   },
-  "tokens": {
-    "colour": {
-      "ink": "#141414",
-      "paper": "#faf9f7",
-      "accent": "#2f6f5e",
-      "quiet": "#6b6b6b"
-    },
-    "font": {
-      "body": "Inter, system-ui, sans-serif",
-      "figure": "InterTabular, monospace"
-    },
-    "space": {
-      "row": 8,
-      "block": 24
-    },
-    "radius": {
-      "card": 12
-    }
-  },
   "screens": {
     "bills": {
       "name": "Every bill",
@@ -30,11 +11,7 @@
       "status": "built",
       "route": "/",
       "source": "app/routes/bills.tsx",
-      "el": [
-        { "t": "h", "v": "Every bill", "component": "Heading" },
-        { "t": "list", "v": ["Water, 42.10, due Friday", "Power, 88.00, paid"], "component": "BillRow" },
-        { "t": "btn", "v": "Add a bill", "to": "bill", "component": "Button" }
-      ],
+      "html": "<h1 data-component=\"Heading\">Every bill</h1><ul data-component=\"BillRow\"><li>Water, 42.10, due Friday</li><li>Power, 88.00, paid</li></ul><button data-component=\"Button\" data-to=\"bill\">Add a bill</button>",
       "notes": ["The rows are sorted by the day a bill is due, nearest first."]
     },
     "bill": {
@@ -43,12 +20,7 @@
       "status": "built",
       "route": "/bills/:id",
       "source": "app/routes/bill.tsx",
-      "el": [
-        { "t": "h", "v": "Water", "component": "Heading" },
-        { "t": "field", "v": "Amount", "component": "MoneyField" },
-        { "t": "field", "v": "Due", "component": "DateField" },
-        { "t": "btn", "v": "Save", "to": "bills", "component": "Button" }
-      ]
+      "html": "<h1 data-component=\"Heading\">Water</h1><label data-component=\"MoneyField\">Amount</label><label data-component=\"DateField\">Due</label><button data-component=\"Button\" data-to=\"bills\">Save</button>"
     },
     "settings": {
       "name": "Settings",
@@ -56,11 +28,7 @@
       "status": "built",
       "route": "/settings",
       "source": "app/routes/settings.tsx",
-      "el": [
-        { "t": "h", "v": "Settings", "component": "Heading" },
-        { "t": "field", "v": "Who else sees these bills", "component": "TextField" },
-        { "t": "link", "v": "Back", "to": "bills", "component": "Link" }
-      ]
+      "html": "<h1 data-component=\"Heading\">Settings</h1><label data-component=\"TextField\">Who else sees these bills</label><a data-component=\"Link\" data-to=\"bills\">Back</a>"
     }
   },
   "stories": [],

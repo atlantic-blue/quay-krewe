@@ -37,7 +37,7 @@
   "$defs": {
     "screen": {
       "type": "object",
-      "required": ["name", "surface", "status"],
+      "required": ["name", "surface", "status", "html"],
       "properties": {
         "name": { "type": "string", "description": "What a person calls this screen." },
         "surface": {
@@ -54,7 +54,7 @@
         "q": { "type": "string", "description": "The open question, on a screen whose status is gap." },
         "html": {
           "type": "string",
-          "description": "The markup of the body of this screen, written in the design system of the project. The page composes it into a document of its own and draws it in a frame that runs no script of the session."
+          "description": "The markup of the body of this screen, written in the design system of the project. It is how a screen is written: every visible part sits under an element naming the component it stands for, and a part that opens another screen carries data-to. The page composes it into a document of its own and draws it in a frame that runs no script of the session."
         },
         "viewport": {
           "type": "object",
@@ -64,39 +64,9 @@
             "height": { "type": "integer", "minimum": 320, "maximum": 1600 }
           }
         },
-        "el": {
-          "type": "array",
-          "description": "The shapes on the screen, from the top down.",
-          "items": { "$ref": "#/$defs/element" }
-        },
+        "el": false,
         "notes": { "type": "array", "items": { "type": "string" } },
         "defects": { "type": "array", "items": { "type": "string" } }
-      }
-    },
-    "element": {
-      "type": "object",
-      "description": "One shape on a screen. It names the kind of shape and the component it stands for, so a building session can read which component goes where.",
-      "required": ["t", "component"],
-      "properties": {
-        "t": {
-          "enum": ["h", "p", "eyebrow", "top", "card", "btn", "btn2", "link", "links", "input", "fields",
-            "list", "rows", "chips", "opts", "tiles", "stat", "quote", "code", "image", "table", "nav", "dock", "spacer"],
-          "description": "The kind of shape."
-        },
-        "component": {
-          "type": "string",
-          "minLength": 1,
-          "description": "The name of the library component this shape stands for, for example Button."
-        },
-        "to": { "type": "string", "description": "The screen this shape opens when a person presses it." },
-        "active": { "type": "string", "description": "Which item of a nav or a dock is the one being read." },
-        "on": { "type": "array", "items": { "type": "integer" }, "description": "Which options are chosen." },
-        "multi": { "type": "boolean", "description": "More than one option may be chosen." },
-        "sub": { "type": "string" },
-        "right": { "type": "string" },
-        "head": { "type": "array", "items": { "type": "string" } },
-        "rows": { "type": "array", "items": { "type": "array", "items": { "type": "string" } } },
-        "v": { "description": "What the shape says. A string, a list of strings, or a list of items with v and to." }
       }
     },
     "story": {

@@ -33,7 +33,6 @@ Write a second file. It holds the screens that exist today, and nothing else.
 
     {
       "readAt": {"repository": "<owner>/<name>", "commit": "<sha>", "date": "<yyyy-mm-dd>"},
-      "tokens": {"colour": {}, "font": {}, "space": {}, "radius": {}},
       "screens": {
         "<id>": {
           "name": "<what a person calls it>",
@@ -41,19 +40,25 @@ Write a second file. It holds the screens that exist today, and nothing else.
           "status": "built",
           "route": "/<path>",
           "source": "<the file it came from>",
-          "el": [{"t": "h", "v": "<the words on the screen>", "component": "Heading"}]
+          "html": "<the markup of the screen>"
         }
       },
       "stories": [],
       "dataModel": []
     }
 
+Write the markup of each screen you found. One heading and one list is enough. You are writing down
+what is there, not designing it. Name the component each part stands for with
+`data-component="<the name>"`, and name the screen a part opens with `data-to="<the id>"`.
+
 Four rules hold for every screen.
 
 - The status reads `built`. Discovery writes down what exists. A screen nobody built is not yours.
 - The surface reads `web` or `mobile`. Each one is drawn in its own frame.
 - The source names the file you read the screen from.
-- Each colour, font, space and radius comes from `tokens`. Write no colour beside a shape.
+- Write no colour and no font in the markup. Write the token values you read into the discovery
+  document instead, under list 3. The design system stage is where they go, and the operator
+  approves that stage before anybody draws a screen in them.
 
 `example/flows.json` beside this brief is a whole file for a repository of three routes. Copy it.
 

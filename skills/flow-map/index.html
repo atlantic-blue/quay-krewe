@@ -143,10 +143,12 @@ main{position:relative;min-width:0;min-height:0;display:flex;flex-direction:colu
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 
 /* screen:start
-   Everything that paints a screen lives between these two marks, and every colour, font, radius
-   and space in here is a custom property the page writes from the tokens of the flows.json it was
-   given. A literal value here would be this page's opinion about somebody else's product, so the
-   test refuses one. */
+   The furniture around a screen lives between these two marks: the bezel, the notch, the browser
+   chrome, the address bar, and the hole each frame leaves for the screen. Nothing here paints a
+   part of a screen. A screen is a document of its own, so everything a person reads inside it comes
+   from the design system and from the session. Every colour, font, radius and space here is a
+   custom property the page writes from the tokens it was given. A literal value would be this
+   page's opinion about somebody else's product, so the test refuses one. */
 .frame{font-family:var(--t-font-sans);color:var(--t-colour-ink);flex:none}
 /* A screen written as markup is a document of its own. The page sizes the frame and scales it, and
    reaches no further: everything a person sees inside it came from the design system and from the
@@ -164,72 +166,9 @@ main{position:relative;min-width:0;min-height:0;display:flex;flex-direction:colu
 .frame-web .addr{flex:1;margin-left:6px;height:17px;border-radius:9px;background:var(--t-colour-surface);border:1px solid var(--t-colour-line);
   font-family:var(--t-font-mono);font-size:9px;line-height:15px;padding:0 8px;color:var(--t-colour-muted);overflow:hidden;white-space:nowrap}
 .frame-web .screen{height:424px;border:1px solid var(--t-colour-line);border-top:0;border-radius:0 0 var(--t-radius-card) var(--t-radius-card)}
-.screen{background:var(--t-colour-surface);color:var(--t-colour-ink);overflow:hidden;position:relative;display:flex;flex-direction:column;
-  gap:var(--t-space-gap);padding:var(--t-space-pad);font-size:11px;line-height:1.35}
-.screen.hasdock{padding-bottom:58px}
-.screen .h{font-size:16px;font-weight:700;line-height:1.22;letter-spacing:-.02em}
-.screen .p{font-size:10.5px;line-height:1.45;color:var(--t-colour-muted)}
-.screen .eb{font-size:9px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--t-colour-muted)}
-.screen .card{background:var(--t-colour-surface-low);border-radius:var(--t-radius-card);padding:9px 10px;display:flex;flex-direction:column;gap:3px;
-  font-size:10.5px;line-height:1.4;color:var(--t-colour-muted)}
-.screen .card .k{font-size:8.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--t-colour-primary)}
-.screen .card .v{font-size:12px;font-weight:650;color:var(--t-colour-ink)}
-.screen .btn{background:var(--t-colour-primary);color:var(--t-colour-on-primary);border-radius:var(--t-radius-control);padding:10px;
-  text-align:center;font-weight:650;font-size:11.5px}
-/* On a phone the last action sits at the bottom of the screen. In a browser it follows the shape
-   above it, because a page scrolls and the bottom of the window is not the end of the form. */
-.frame-mobile .screen .btn{margin-top:auto}
-.frame-mobile .screen .btn~.btn,.frame-mobile .screen .btn~.btn2,.frame-mobile .screen .btn2~.btn{margin-top:0}
-.screen .btn2{border:1.5px solid var(--t-colour-line);border-radius:var(--t-radius-control);padding:9px;text-align:center;font-weight:600;font-size:11.5px}
-.screen .lnk{font-size:11px;font-weight:600;color:var(--t-colour-primary);text-align:center}
-.screen .links{display:flex;justify-content:center;gap:14px}
-.screen .top{display:flex;justify-content:space-between;align-items:center;font-size:10px;font-weight:600;color:var(--t-colour-muted)}
-.screen .top .r{color:var(--t-colour-primary)}
-.screen .input{border:1.5px solid var(--t-colour-line);border-radius:var(--t-radius-control);padding:6px 8px;font-family:var(--t-font-mono);
-  font-size:9.5px;color:var(--t-colour-muted)}
-.screen .fields{display:flex;flex-direction:column;gap:4px}
-.screen .fields div{border:1.5px solid var(--t-colour-line);border-radius:var(--t-radius-control);padding:6px 8px;font-size:10px;color:var(--t-colour-muted)}
-.screen .list{display:flex;flex-direction:column;gap:3px;font-size:10px;color:var(--t-colour-muted)}
-.screen .list div::before{content:"\00b7";margin-right:6px;color:var(--t-colour-primary);font-weight:800}
-.screen .rows{display:flex;flex-direction:column;border-radius:var(--t-radius-card);background:var(--t-colour-surface-low);overflow:hidden}
-.screen .rows div{display:flex;justify-content:space-between;align-items:center;gap:6px;padding:8px 10px;font-size:10.5px;font-weight:600;
-  border-top:1px solid var(--t-colour-surface)}
-.screen .rows div:first-child{border-top:0}
-.screen .rows small{display:block;font-weight:500;color:var(--t-colour-muted);font-size:9.5px}
-.screen .chips{display:flex;flex-wrap:wrap;gap:5px}
-.screen .chips span{background:var(--t-colour-surface-low);border-radius:14px;padding:4px 9px;font-size:9.5px;font-weight:600}
-.screen .opts{display:flex;flex-direction:column;gap:4px}
-.screen .opts div{display:flex;align-items:center;gap:8px;font-size:10.5px;line-height:1.3;padding:7px 9px;border-radius:var(--t-radius-control);
-  background:var(--t-colour-surface-low)}
-.screen .opts div i{flex:none;width:12px;height:12px;border-radius:50%;border:1.5px solid var(--t-colour-line);background:var(--t-colour-surface)}
-.screen .opts.multi div i{border-radius:3px}
-.screen .opts div.on i{border-color:var(--t-colour-primary);background:var(--t-colour-primary)}
-.screen .tiles{display:grid;grid-template-columns:1fr 1fr;gap:5px}
-.screen .tiles div{background:var(--t-colour-surface-low);border-radius:var(--t-radius-card);padding:8px 7px;font-size:9.5px;font-weight:600;
-  line-height:1.25;min-height:34px;display:flex;align-items:flex-end}
-.screen .tiles div.on{box-shadow:inset 0 0 0 1.5px var(--t-colour-primary)}
-.screen .stat{text-align:center;padding:6px 0}
-.screen .stat b{display:block;font-size:24px;font-weight:800;letter-spacing:-.03em;color:var(--t-colour-primary)}
-.screen .stat span{font-size:10px;color:var(--t-colour-muted);line-height:1.4}
-.screen .quote{background:var(--t-colour-surface-low);border-radius:var(--t-radius-card);padding:9px 10px;font-size:10px;line-height:1.4;color:var(--t-colour-muted)}
-.screen .quote b{display:block;color:var(--t-colour-ink);font-size:10.5px;margin-bottom:2px}
-.screen .code{font-family:var(--t-font-mono);font-size:10px;line-height:1.6;background:var(--t-colour-surface-low);border-radius:var(--t-radius-card);padding:10px}
-.screen .image{flex:1;min-height:52px;border:1.5px dashed var(--t-colour-line);border-radius:var(--t-radius-card);display:flex;align-items:center;
-  justify-content:center;font-size:9.5px;color:var(--t-colour-muted)}
-.screen .table{display:flex;flex-direction:column;border:1px solid var(--t-colour-line);border-radius:var(--t-radius-card);overflow:hidden;font-size:9.5px}
-.screen .table div{display:flex;gap:8px;padding:6px 8px;border-top:1px solid var(--t-colour-line)}
-.screen .table div:first-child{border-top:0;background:var(--t-colour-surface-low);font-weight:700}
-.screen .table span{flex:1;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
-.screen .nav{display:flex;align-items:center;gap:12px;padding-bottom:6px;border-bottom:1px solid var(--t-colour-line);font-size:10px;font-weight:600;
-  color:var(--t-colour-muted)}
-.screen .nav span.on{color:var(--t-colour-primary)}
-.screen .dock{position:absolute;left:0;right:0;bottom:0;height:50px;display:flex;background:var(--t-colour-surface);
-  border-top:1px solid var(--t-colour-line);padding:6px 4px 10px}
-.screen .dock div{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;font-size:8.5px;font-weight:600;color:var(--t-colour-muted)}
-.screen .dock div i{width:16px;height:16px;border-radius:5px;background:var(--t-colour-surface-low)}
-.screen .dock div.on{color:var(--t-colour-primary)}
-.screen .dock div.on i{background:var(--t-colour-primary)}
-.screen .spacer{flex:1}
+/* The hole itself, which is the surface of the project showing through until the document in the
+   frame has painted. */
+.screen{background:var(--t-colour-surface);overflow:hidden}
 /* screen:end */
 </style>
 
@@ -313,75 +252,6 @@ function tokenStyle(tokens) {
     });
   });
   return out.join(";");
-}
-
-function hot(to) { return to ? ' data-to="' + esc(to) + '"' : ""; }
-
-// named puts the component an element stands for on the element itself, so a person reading the
-// mockup can hover it and a build can read which component goes where.
-function named(e) {
-  return e && e.component ? ' data-component="' + esc(e.component) + '" title="' + esc(e.component) + '"' : "";
-}
-
-function box(cls, e, inner, extra) {
-  return '<div class="' + cls + '"' + named(e) + (extra || "") + ">" + inner + "</div>";
-}
-
-function lines(values) {
-  return (values || []).map(function (v) { return esc(v); });
-}
-
-function renderEl(e) {
-  switch (e.t) {
-    case "h": return box("h", e, esc(e.v));
-    case "p": return box("p", e, esc(e.v));
-    case "eyebrow": return box("eb", e, esc(e.v));
-    case "top": return box("top", e, "<span>" + esc(e.v) + "</span><span class=\"r\"" + hot(e.to) + ">" + esc(e.right) + "</span>");
-    case "card": return box("card", e, (e.v || []).length > 1
-      ? '<span class="k">' + esc(e.v[0]) + "</span>" + e.v.slice(1).map(function (l, i) {
-        return '<span class="' + (i === 0 ? "v" : "") + '">' + esc(l) + "</span>";
-      }).join("")
-      : "<span>" + esc((e.v || [])[0]) + "</span>");
-    case "btn": return box("btn", e, esc(e.v), hot(e.to));
-    case "btn2": return box("btn2", e, esc(e.v), hot(e.to));
-    case "link": return box("lnk", e, esc(e.v), hot(e.to));
-    case "links": return box("links", e, (e.v || []).map(function (l) {
-      return '<span class="lnk"' + hot(l.to) + ">" + esc(l.v) + "</span>";
-    }).join(""));
-    case "input": return box("input", e, esc(e.v));
-    case "fields": return box("fields", e, lines(e.v).map(function (f) { return "<div>" + f + "</div>"; }).join(""));
-    case "list": return box("list", e, lines(e.v).map(function (l) { return "<div>" + l + "</div>"; }).join(""));
-    case "rows": return box("rows", e, (e.v || []).map(function (r) {
-      return "<div" + hot(r.to) + "><span>" + esc(r.v) + (r.sub ? "<small>" + esc(r.sub) + "</small>" : "") + "</span></div>";
-    }).join(""));
-    case "chips": return box("chips", e, lines(e.v).map(function (c) { return "<span>" + c + "</span>"; }).join(""));
-    case "opts": return box("opts" + (e.multi ? " multi" : ""), e, (e.v || []).map(function (o, i) {
-      return '<div class="' + ((e.on || []).indexOf(i) >= 0 ? "on" : "") + '"' + hot(o && o.to) + "><i></i>" + esc(o && o.v !== undefined ? o.v : o) + "</div>";
-    }).join(""));
-    case "tiles": return box("tiles", e, (e.v || []).map(function (o, i) {
-      return '<div class="' + ((e.on || []).indexOf(i) >= 0 ? "on" : "") + '">' + esc(o) + "</div>";
-    }).join(""));
-    case "stat": return box("stat", e, "<b>" + esc(e.v) + "</b><span>" + esc(e.sub) + "</span>");
-    case "quote": return box("quote", e, "<b>" + esc(e.v) + "</b>" + esc(e.sub));
-    case "code": return box("code", e, esc(e.v));
-    case "image": return box("image", e, esc(e.v));
-    case "table": return box("table", e, "<div>" + lines(e.head).map(function (h) { return "<span>" + h + "</span>"; }).join("") + "</div>" +
-      (e.rows || []).map(function (row) {
-        return "<div>" + lines(row).map(function (cell) { return "<span>" + cell + "</span>"; }).join("") + "</div>";
-      }).join(""));
-    case "nav": return box("nav", e, (e.v || []).map(function (n) {
-      return '<span class="' + (n.v === e.active ? "on" : "") + '"' + hot(n.to) + ">" + esc(n.v) + "</span>";
-    }).join(""));
-    case "dock": return box("dock", e, (e.v || []).map(function (n) {
-      return '<div class="' + (n.v === e.active ? "on" : "") + '"' + hot(n.to) + "><i></i>" + esc(n.v) + "</div>";
-    }).join(""));
-    case "spacer": return box("spacer", e, "");
-    default: return "";
-  }
-}
-
-function renderElements(screen) {
-  return ((screen && screen.el) || []).map(renderEl).join("");
 }
 
 // SIZES is the size a session writes css at, for each surface. A screen is written at the size of
@@ -550,22 +420,16 @@ function screenFrame(screen, system) {
     ' style="' + style + '" srcdoc="' + esc(composeScreen(screen, system)) + '"></iframe>';
 }
 
-// writtenInMarkup says which of the two a screen is. The shape list is removed later; until then a
-// screen that carries one is drawn the way it has always been drawn.
-function writtenInMarkup(screen) {
-  return !!(screen && typeof screen.html === "string" && screen.html !== "");
-}
-
 // renderScreen draws one screen inside the frame its surface asks for: a phone for mobile, a
 // browser with an address bar for web. The values of the design system ride on the frame as custom
 // properties, so the furniture around a screen is the project's own as well.
+//
+// Every screen goes in a frame, including one a stored artifact left with no markup. That frame
+// draws nothing, and the Gaps view is what tells the operator why.
 function renderScreen(screen, system) {
   var surface = surfaceOf(screen);
-  var written = writtenInMarkup(screen);
-  var hasDock = (!written && ((screen && screen.el) || []).some(function (e) { return e.t === "dock"; })) ? " hasdock" : "";
   var style = ' style="' + tokenStyle((system || {}).tokens) + '"';
-  var inside = written ? screenFrame(screen, system)
-    : '<div class="screen' + hasDock + '">' + renderElements(screen) + "</div>";
+  var inside = screenFrame(screen, system);
   if (surface === SURFACES.web) {
     return '<div class="frame frame-web" data-surface="web"' + style + '>' +
       '<div class="chrome"><i class="light"></i><i class="light"></i><i class="light"></i>' +
@@ -679,14 +543,14 @@ function pressesUnder(node, out) {
 //
 // The parse comes from outside: this block touches no document, and the markup of a screen is read
 // with the parser of the browser rather than with a pattern written here. A screen with no markup is
-// read as far as the file goes, which is the status it carries and the shapes it still holds.
+// read as far as the file goes, which is the status it carries.
 function gapsOf(flows, parse) {
   var held = (flows && flows.screens) || {}, rows = [];
   var say = function (id, kind, words) {
     rows.push({ id: id, kind: kind, c: THE_ROW_COLOUR[kind] || "gap", t: words });
   };
   Object.keys(held).sort().forEach(function (id) {
-    var s = held[id] || {}, name = s.name || id, shapes = s.el || [];
+    var s = held[id] || {}, name = s.name || id;
     var markup = typeof s.html === "string" ? s.html : "";
     (s.defects || []).forEach(function (x) { say(id, "Missing", x); });
     if (s.status === "gap") { say(id, "Question", s.q); }
@@ -695,13 +559,8 @@ function gapsOf(flows, parse) {
       say(id, "Not designed", name + " is named in " + (s.ref || "a step") + ". No screen design exists.");
     }
     if (!SURFACES[s.surface]) { say(id, "No surface", name + " names no surface, so it is drawn on a phone."); }
-    shapes.forEach(function (e) {
-      if (!e.component) { say(id, "No component", "A " + e.t + " on " + name + " names no component."); }
-    });
     if (markup.trim() === "") {
-      if (!shapes.length) {
-        say(id, "No markup", name + " has nothing to draw. Write the body of the screen in html.");
-      }
+      say(id, "No markup", name + " has nothing to draw. Write the body of the screen in html.");
       return;
     }
     var body = parse ? parse(markup) : null;

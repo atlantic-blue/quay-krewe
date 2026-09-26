@@ -21,14 +21,18 @@ import (
 // What the mockups stage is held to, beyond being json.
 //
 // A mockup is a page a person plays, and then a session builds the screens on it. The session has
-// to read which library component each shape stands for. A shape that names none is a picture
+// to read which library component each part stands for. A part that names none is a picture
 // nobody can build from, and the fault is found at the end, by the person who asked for the
 // screen. So the artifact is read here, before the store keeps it.
 //
-// Two rules. Every shape names a component, which is the schema's own rule and is reported here
-// with the screen and the shape in the message. And every colour and font a screen is drawn in is
-// one the approved design_system stage names, because the design system is the stage the operator
-// agreed first and a mockup that leaves it is a second design system nobody approved.
+// Two rules. Every part names a component, which is read off the markup and reported here with the
+// screen and the part in the message. And every colour and font a screen is drawn in is one the
+// approved design_system stage names, because the design system is the stage the operator agreed
+// first and a mockup that leaves it is a second design system nobody approved.
+//
+// A screen used to be written as a list of shapes instead. That form is gone, and a session that
+// still writes it is told the field to write in, because a session told only that its file is
+// wrong has nothing to do.
 //
 // Nothing here runs for the other five stages. They carry whatever json they carry.
 
@@ -79,19 +83,20 @@ func (s *Server) checkMockupArtifact(ctx context.Context, project, artifact stri
 		return nil, nil
 	}
 
-	// The shape check first, then the schema. Both refuse a shape with no component, and the one
-	// that names the screen is the one worth reading. The schema is what catches everything else.
-	if screen, at, kind, found := aShapeWithNoComponent(doc); found {
+	// The form that went, before anything else reads the file. The schema refuses it too, and what
+	// a schema says is a path in a document: it tells a session its file is wrong and nothing about
+	// what to write. This says the field, so the session has work to do.
+	if screen, found := aScreenWrittenAsAShapeList(doc); found {
 		return nil, status.Errorf(codes.InvalidArgument,
-			"the mockups artifact is refused: the %q screen has a shape at el %d%s that names no component. "+
-				"Every shape names the component it stands for, for example Button, so a session building "+
-				"the screen reads which component goes where.",
-			screen, at, ofKind(kind))
+			"the mockups artifact is refused: the %q screen is written as a list of shapes, in el. "+
+				"A screen is written as the markup of its body: write that markup in html, with "+
+				"data-component=\"<the component>\" on every part of it. skills/flow-map/SKILL.md "+
+				"says what a screen document holds.",
+			screen)
 	}
 
-	// The markup rule, beside the shape rule, because both shapes of screen are written while the
-	// format changes over. A part that names no component is a part the building session has to
-	// guess at, whichever way the screen was written.
+	// A part that names no component is a part the building session has to guess at, which is the
+	// fault the whole check exists for.
 	if screen, part, found := aPartWithNoComponent(doc); found {
 		if part.pressed {
 			return nil, status.Errorf(codes.InvalidArgument,
@@ -142,49 +147,24 @@ func (s *Server) checkMockupArtifact(ctx context.Context, project, artifact stri
 	return nil, unnamedValue(doc, named)
 }
 
-// ofKind names the shape in the refusal when the shape said what kind it is. A shape carrying
-// neither a kind nor a component gets its position and nothing else, which is still enough to
-// find it.
-func ofKind(kind string) string {
-	if kind == "" {
-		return ""
-	}
-	return fmt.Sprintf(", of kind %q", kind)
-}
-
-// aShapeWithNoComponent finds the first shape that names no component, reading the screens in name
-// order so two reads of one artifact name the same shape.
+// aScreenWrittenAsAShapeList finds the first screen still written in the form that went, reading
+// the screens in name order so two reads of one artifact name the same screen.
 //
 // It navigates rather than unmarshalling into a type, because an artifact whose screens are not
 // screens at all is the schema's to refuse and this walk must find nothing rather than fail.
-func aShapeWithNoComponent(doc any) (screen string, at int, kind string, found bool) {
-	screens, ok := asObject(doc)["screens"]
-	if !ok {
-		return "", 0, "", false
-	}
-	held := asObject(screens)
+func aScreenWrittenAsAShapeList(doc any) (screen string, found bool) {
+	held := asObject(asObject(doc)["screens"])
 	for _, name := range sortedKeys(held) {
-		elements, ok := asArray(asObject(held[name])["el"])
-		if !ok {
-			continue
-		}
-		for at, element := range elements {
-			shape, ok := element.(map[string]any)
-			if !ok {
-				continue
-			}
-			if strings.TrimSpace(asString(shape["component"])) == "" {
-				return name, at, asString(shape["t"]), true
-			}
+		if _, written := asArray(asObject(held[name])["el"]); written {
+			return name, true
 		}
 	}
-	return "", 0, "", false
+	return "", false
 }
 
-// The two rules a screen written as markup is held to.
+// The two rules a screen is held to.
 //
-// A screen may carry its markup instead of a shape list, and then there is no shape to hold a
-// component name. The name moves onto the markup as data-component, and the same contract holds: a
+// A screen is the markup of its body, so the component name sits on the markup as data-component: a
 // part that can be pressed names the component it stands for, and every visible part sits under one.
 // So a card names itself once and the words inside it need no name of their own.
 
