@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 	"sync"
 	"unicode/utf8"
@@ -128,9 +129,15 @@ func (s *Server) checkMockupArtifact(ctx context.Context, project, artifact stri
 	if err != nil {
 		return nil, err
 	}
+	// A design system that names nothing used to leave the mockup kept and carrying a warning, and a
+	// warning holds nothing: the screens of that project were then drawn in whatever the session
+	// chose. So the write is refused, and the refusal names work somebody can do, because the stage
+	// has a shape of its own to be written against.
 	if named.empty() {
-		return []string{"the approved design_system stage names no colour and no font, so the mockup was " +
-			"kept without that check: write its tokens to have the mockups held to them"}, nil
+		return nil, status.Errorf(codes.InvalidArgument,
+			"the mockups artifact is refused: the approved design_system stage names no colour and no font, "+
+				"so nothing holds the screens of this mockup to anything. Write the tokens of that stage "+
+				"first, with krewe stage set [<address>] design_system --artifact <file>, and approve it.")
 	}
 	return nil, unnamedValue(doc, named)
 }
@@ -380,6 +387,9 @@ func unnamedValue(doc any, named designTokens) error {
 					"stage does not name it: take every colour and font from that stage.",
 				name, kind, value)
 		}
+		if painted, found := aValuePaintedOutside(asString(asObject(screens[name])["html"]), named); found {
+			return refusalForThePaint(name, painted)
+		}
 	}
 	return nil
 }
@@ -437,6 +447,9 @@ func unnamedIn(key, text string, named designTokens) (kind, value string, found 
 type designTokens struct {
 	colour map[string]bool
 	font   map[string]bool
+	// family is each font on its own, read out of the font values. A font token names a list, such as
+	// "Inter, system-ui, sans-serif", and a screen may reach for one family of that list.
+	family map[string]bool
 }
 
 func (d designTokens) empty() bool { return len(d.colour) == 0 && len(d.font) == 0 }
@@ -467,9 +480,11 @@ func (s *Server) approvedDesignSystemTokens(ctx context.Context, project string)
 		if tokens, ok := groups["tokens"]; ok {
 			groups = asObject(tokens)
 		}
+		fonts := asObject(groups["font"])
 		return designTokens{
 			colour: valueSet(asObject(groups["colour"])),
-			font:   valueSet(asObject(groups["font"])),
+			font:   valueSet(fonts),
+			family: familySet(fonts),
 		}, nil
 	}
 	return designTokens{}, nil
@@ -481,6 +496,20 @@ func valueSet(group map[string]any) map[string]bool {
 	for _, value := range group {
 		if text := asString(value); text != "" {
 			out[normalise(text)] = true
+		}
+	}
+	return out
+}
+
+// familySet is each font a token group names, one family at a time. It is read the way the design
+// system reads a font asset's family, so the two checks agree about what a token names.
+func familySet(group map[string]any) map[string]bool {
+	out := map[string]bool{}
+	for _, value := range group {
+		for _, one := range strings.Split(asString(value), ",") {
+			if family := normalise(strings.Trim(strings.TrimSpace(one), `"'`)); family != "" {
+				out[family] = true
+			}
 		}
 	}
 	return out
@@ -760,4 +789,187 @@ func refusalFor(screen string, fault screenFault) error {
 			"address of its own: the fonts and the images come from the approved design_system stage, "+
 			"written as %s<name> under the name that stage holds them by, and a part of the screen itself "+
 			"is named as #<name>.", screen, fault.said, fault.where, theAssetScheme)
+}
+
+// What a screen written as markup may be drawn in.
+//
+// A screen used to carry its own token block, and the check read that. The tokens have one home now,
+// the design_system stage, so a value reaches a screen another way: the stylesheet of the screen, the
+// style of one part, or the paint of a mark. Each of those is read here, and the screens are read in
+// name order with each screen in document order, so two reads of one artifact name the same value.
+//
+// The words on a screen are not read. A bill reference of "#dedbee" in a paragraph is what a person
+// reads, and a gate that refused it would be refusing words rather than a design system.
+
+// thePaintAttributes are the attributes that paint rather than describe. A mark is written as a
+// drawing in the markup, and a drawing carries its colours here rather than in a declaration.
+var thePaintAttributes = map[string]bool{
+	"fill": true, "stroke": true, "stop-color": true, "flood-color": true,
+	"lighting-color": true, "color": true, "bgcolor": true,
+}
+
+// theFontProperty reads a font out of a stylesheet or out of the style of one part. The boundary in
+// front of the name is what keeps font-size and font-weight out of it, and keeps the custom
+// properties the page writes out of it as well.
+var theFontProperty = regexp.MustCompile(`(?i)(?:^|[;{}\s])(font-family|font)\s*:\s*([^;}]+)`)
+
+// theFamilyInTheShorthand takes the family list out of a font shorthand. The grammar puts the size
+// last of the parts in front of it, with an optional line height after a slash, so the family is
+// what follows the last size. The fixture the skill ships writes its fonts this way, so a reading of
+// the long form alone would read none of the screens somebody copies from it.
+var theFamilyInTheShorthand = regexp.MustCompile(
+	`(?i)^.*\d[\d.]*(?:px|pt|pc|em|rem|ex|ch|%|vh|vw|vmin|vmax|cm|mm|in)?(?:\s*/\s*\S+)?\s+(.+)$`)
+
+// theFontProperty names the two writings a session is told to use. A token is reached through the
+// custom property the page writes for it.
+const theFontPropertyPrefix = "var(--t-font-"
+
+// paintedValue is one value a screen is drawn in that the design system does not name.
+type paintedValue struct {
+	// kind is "colour" or "font", because the two say different things to do.
+	kind string
+	// said is the value as it was written, so an operator finds it in the file.
+	said string
+	// where names the place it sits: the stylesheet of the screen, or the style or the paint of one
+	// part.
+	where string
+}
+
+// aValuePaintedOutside finds the first colour or font of one screen's markup that the approved design
+// system does not name.
+//
+// Markup it cannot parse is no fault of this walk: an artifact whose screens are not screens is the
+// schema's to refuse.
+func aValuePaintedOutside(markup string, named designTokens) (paintedValue, bool) {
+	if strings.TrimSpace(markup) == "" {
+		return paintedValue{}, false
+	}
+	body := &html.Node{Type: html.ElementNode, DataAtom: atom.Body, Data: "body"}
+	nodes, err := html.ParseFragment(strings.NewReader(markup), body)
+	if err != nil {
+		return paintedValue{}, false
+	}
+	for _, node := range nodes {
+		if painted, found := whatIsPaintedUnder(node, named); found {
+			return painted, true
+		}
+	}
+	return paintedValue{}, false
+}
+
+// whatIsPaintedUnder reads one element and everything under it, in the order the markup was written.
+func whatIsPaintedUnder(node *html.Node, named designTokens) (paintedValue, bool) {
+	if node.Type == html.ElementNode {
+		if node.Data == "style" {
+			if painted, found := whatAStylesheetPaints(theTextOf(node), named); found {
+				painted.where = "the stylesheet of the screen"
+				return painted, true
+			}
+		}
+		if painted, found := whatAnAttributePaints(node, named); found {
+			return painted, true
+		}
+	}
+	for child := node.FirstChild; child != nil; child = child.NextSibling {
+		if painted, found := whatIsPaintedUnder(child, named); found {
+			return painted, true
+		}
+	}
+	return paintedValue{}, false
+}
+
+// whatAnAttributePaints reads the attributes of one element, in the order they were written.
+func whatAnAttributePaints(node *html.Node, named designTokens) (paintedValue, bool) {
+	part := partOf(node, false).describe()
+	for _, held := range node.Attr {
+		name := strings.ToLower(held.Key)
+		switch {
+		case name == "style":
+			if painted, found := whatAStylesheetPaints(held.Val, named); found {
+				painted.where = "the style of " + part
+				return painted, true
+			}
+		case thePaintAttributes[name]:
+			if colour, found := anUnnamedColour(held.Val, named); found {
+				return paintedValue{kind: "colour", said: colour,
+					where: "the " + name + " of " + part}, true
+			}
+		}
+	}
+	return paintedValue{}, false
+}
+
+// whatAStylesheetPaints reads a <style> element of a screen, or the style of one of its parts. The
+// colours come first, because a colour is the thing a screen is mostly drawn in and a rule usually
+// carries several of them beside one font.
+func whatAStylesheetPaints(sheet string, named designTokens) (paintedValue, bool) {
+	if colour, found := anUnnamedColour(sheet, named); found {
+		return paintedValue{kind: "colour", said: colour}, true
+	}
+	for _, held := range theFontProperty.FindAllStringSubmatch(sheet, -1) {
+		family := strings.TrimSpace(held[2])
+		if strings.EqualFold(held[1], "font") {
+			shorthand := theFamilyInTheShorthand.FindStringSubmatch(family)
+			if shorthand == nil {
+				continue
+			}
+			family = strings.TrimSpace(shorthand[1])
+		}
+		if !theDesignSystemNamesTheFont(family, named) {
+			return paintedValue{kind: "font", said: family}, true
+		}
+	}
+	return paintedValue{}, false
+}
+
+// anUnnamedColour is the first colour written into a value that the design system does not name.
+func anUnnamedColour(value string, named designTokens) (string, bool) {
+	for _, colour := range aColourLiteral.FindAllString(value, -1) {
+		if !named.colour[normalise(colour)] {
+			return colour, true
+		}
+	}
+	return "", false
+}
+
+// theDesignSystemNamesTheFont says whether a screen may be drawn in one font value.
+//
+// Two writings are named. The custom property the page writes for a font token, which is what a
+// session is told to write, and a family a font token names, because a token value is a family list
+// and a screen may reach for one family of it.
+func theDesignSystemNamesTheFont(value string, named designTokens) bool {
+	held := normalise(value)
+	if held == "" || named.font[held] {
+		return true
+	}
+	for _, one := range strings.Split(held, ",") {
+		family := strings.Trim(strings.TrimSpace(one), `"'`)
+		if family == "" {
+			continue
+		}
+		if strings.HasPrefix(family, theFontPropertyPrefix) && strings.HasSuffix(family, ")") {
+			continue
+		}
+		if !named.family[family] {
+			return false
+		}
+	}
+	return true
+}
+
+// refusalForThePaint says what the screen is drawn in and what to write instead. Each kind says a
+// different thing to do, and both name the screen, because a mockup runs to dozens of them.
+func refusalForThePaint(screen string, painted paintedValue) error {
+	if painted.kind == "font" {
+		return status.Errorf(codes.InvalidArgument,
+			"the mockups artifact is refused: the %q screen is drawn in the font %q, in %s, and the "+
+				"approved design_system stage does not name it: write %s<name>), and the font file a "+
+				"screen draws from travels in that stage.",
+			screen, painted.said, painted.where, theFontPropertyPrefix)
+	}
+	return status.Errorf(codes.InvalidArgument,
+		"the mockups artifact is refused: the %q screen is drawn in the colour %q, in %s, and the "+
+			"approved design_system stage does not name it: take every colour from that stage, "+
+			"written as var(--t-colour-<name>).",
+		screen, painted.said, painted.where)
 }
