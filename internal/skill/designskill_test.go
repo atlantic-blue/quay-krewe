@@ -19,7 +19,7 @@ import (
 func TestTheShippedDesignSkillLoads(t *testing.T) {
 	design := shippedSkill(t, "design")
 
-	if design.Version != 1 {
+	if design.Version != 2 {
 		t.Errorf("the design skill is version %d, and a session is pinned to the one it started with", design.Version)
 	}
 	if !slices.Contains(design.Binaries, "krewe") {
