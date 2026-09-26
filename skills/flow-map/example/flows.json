@@ -1,0 +1,71 @@
+{
+  "project": "Harbour",
+  "readAt": {
+    "repository": "acme/harbour",
+    "commit": "0b1c9de",
+    "date": "2026-09-26"
+  },
+  "screens": {
+    "today": {
+      "name": "Today",
+      "surface": "mobile",
+      "status": "designed",
+      "route": "/",
+      "ref": "step 1.1",
+      "html": "<style>.screen{display:flex;flex-direction:column;gap:var(--t-space-pad);padding:var(--t-space-pad);height:844px}.top{display:flex;align-items:center;gap:var(--t-space-gap)}.top h1{font-size:20px}.top .muted{margin-left:auto;font-size:13px}.next{display:flex;flex-direction:column;gap:var(--t-space-tight)}.next .when{font-family:var(--t-font-display);font-size:40px;line-height:1}.next .what{font-size:14px}.rows{display:flex;flex-direction:column;gap:var(--t-space-gap);margin:0;padding:0;list-style:none}.rows li{display:flex;justify-content:space-between;padding-bottom:var(--t-space-gap);border-bottom:1px solid var(--t-colour-line);font-size:14px}.dock{display:flex;justify-content:space-between;align-items:center;gap:var(--t-space-gap);margin-top:auto;padding-top:var(--t-space-gap);border-top:1px solid var(--t-colour-line);font-size:13px}</style><main class=\"screen\"><header class=\"top\" data-component=\"TopBar\"><svg class=\"mark\" viewBox=\"0 0 24 24\" width=\"28\" height=\"28\" aria-hidden=\"true\" data-component=\"Mark\"><circle cx=\"12\" cy=\"12\" r=\"11\" fill=\"var(--t-colour-primary)\"></circle><path d=\"M4 15c2.6 1.9 5.4 1.9 8 0s5.4-1.9 8 0\" fill=\"none\" stroke=\"var(--t-colour-on-primary)\" stroke-width=\"2\"></path></svg><h1>Harbour</h1><span class=\"muted\">Tuesday 14 April</span></header><section class=\"card next\" data-component=\"NextTideCard\"><span class=\"muted\">Next high water</span><span class=\"when\">19:42</span><span class=\"what\">4.8 metres, and the wind drops after dark.</span></section><ul class=\"rows\" data-component=\"TideList\"><li><span>Low water</span><span>01:58, 0.9 m</span></li><li><span>High water</span><span>07:21, 4.6 m</span></li><li><span>Low water</span><span>13:44, 1.1 m</span></li></ul><a class=\"button\" data-component=\"Button\" data-to=\"log\">Write down what you saw</a><nav class=\"dock\" data-component=\"Dock\"><span>Today</span><span class=\"muted\" data-component=\"DockLink\" data-to=\"log\">The log</span><span class=\"muted\">Places</span></nav></main>",
+      "notes": [
+        "The next high water is the one thing a person opens this for, so it is the largest thing on the screen."
+      ]
+    },
+    "log": {
+      "name": "The log",
+      "surface": "web",
+      "status": "designed",
+      "route": "/log",
+      "ref": "step 1.2",
+      "html": "<style>.page{display:grid;grid-template-columns:240px 1fr;height:800px}.side{display:flex;flex-direction:column;gap:var(--t-space-gap);padding:var(--t-space-pad);border-right:1px solid var(--t-colour-line);background:var(--t-colour-surface-low)}.side .brand{display:flex;align-items:center;gap:var(--t-space-gap)}.side .brand h2{font-size:18px}.side nav{display:flex;flex-direction:column;gap:var(--t-space-tight);font-size:14px}.side nav .on{color:var(--t-colour-primary)}.main{display:flex;flex-direction:column;gap:var(--t-space-pad);padding:32px 40px;overflow:hidden}.main h1{font-size:32px}table{width:100%;border-collapse:collapse;font-size:14px}th{text-align:left;padding:10px 12px;border-bottom:1px solid var(--t-colour-line);color:var(--t-colour-muted);font-weight:400}td{padding:12px;border-bottom:1px solid var(--t-colour-line)}.figures{display:flex;gap:var(--t-space-gap)}.figures .card{flex:1;display:flex;flex-direction:column;gap:var(--t-space-tight)}.figures .big{font-family:var(--t-font-display);font-size:28px;line-height:1}</style><div class=\"page\"><aside class=\"side\" data-component=\"SideNav\"><div class=\"brand\"><img class=\"mark\" src=\"asset:mark\" alt=\"\" data-component=\"Mark\"><h2>Harbour</h2></div><nav><span class=\"on\">The log</span><span>Places</span><span>People</span><span data-component=\"NavLink\" data-to=\"today\">Today on the phone</span></nav></aside><main class=\"main\"><header data-component=\"PageHeader\"><h1>The log</h1><p class=\"muted\">Every tide somebody wrote down, newest first.</p></header><section class=\"figures\" data-component=\"FigureRow\"><div class=\"card\"><span class=\"muted\">Entries this month</span><span class=\"big\">38</span></div><div class=\"card\"><span class=\"muted\">People writing</span><span class=\"big\">6</span></div><div class=\"card\"><span class=\"muted\">Highest water</span><span class=\"big\">5.1 m</span></div></section><table data-component=\"LogTable\"><thead><tr><th>When</th><th>Place</th><th>Height</th><th>Who</th></tr></thead><tbody><tr><td>14 April, 07:21</td><td>Salcombe bar</td><td>4.6 m</td><td>Ana</td></tr><tr><td>13 April, 18:55</td><td>Salcombe bar</td><td>4.4 m</td><td>Ana</td></tr><tr><td>13 April, 06:40</td><td>Kingsbridge</td><td>3.9 m</td><td>Tom</td></tr><tr><td>12 April, 19:10</td><td>Salcombe bar</td><td>4.7 m</td><td>Priya</td></tr></tbody></table><a class=\"button\" data-component=\"Button\" data-to=\"today\">Write down what you saw</a></main></div>",
+      "notes": [
+        "The three figures are read far more often than the table, so they sit above it."
+      ]
+    }
+  },
+  "stories": [
+    {
+      "id": "read-then-write",
+      "title": "A person reads the next tide and writes down the one they saw",
+      "story": "Somebody checks the phone before they leave the house, and writes up what they saw on a laptop that evening.",
+      "steps": "two screens",
+      "start": "today",
+      "lanes": [
+        "On the phone",
+        "In a browser"
+      ],
+      "nodes": [
+        [
+          "today",
+          0,
+          0
+        ],
+        [
+          "log",
+          1,
+          1
+        ]
+      ],
+      "edges": [
+        [
+          "today",
+          "log",
+          "Write down what you saw",
+          "designed"
+        ],
+        [
+          "log",
+          "today",
+          "Today on the phone",
+          "designed"
+        ]
+      ]
+    }
+  ]
+}

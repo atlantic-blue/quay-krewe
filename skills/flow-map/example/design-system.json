@@ -1,0 +1,46 @@
+{
+  "tokens": {
+    "colour": {
+      "surface": "#fbfaf8",
+      "surface-low": "#f1eeea",
+      "ink": "#17181a",
+      "muted": "#5a6068",
+      "line": "#ddd8d1",
+      "primary": "#2f5d50",
+      "on-primary": "#fbfaf8",
+      "frame": "#1f2022"
+    },
+    "font": {
+      "display": "Harbour Display, Georgia, serif",
+      "sans": "system-ui, -apple-system, Segoe UI, sans-serif"
+    },
+    "radius": {
+      "screen": "24px",
+      "card": "14px",
+      "control": "10px"
+    },
+    "space": {
+      "tight": "6px",
+      "gap": "12px",
+      "pad": "20px"
+    }
+  },
+  "assets": {
+    "harbour-display": {
+      "kind": "font",
+      "media": "font/woff2",
+      "family": "Harbour Display",
+      "weight": "400",
+      "style": "normal",
+      "label": "The display face. These bytes stand in for the real file, so the example stays small. Put the real woff2 here, base64, with no data address in front of it.",
+      "data": "d29mZjIgc3RhbmQgaW4gZm9yIHRoZSByZWFsIGRpc3BsYXkgZm9udCBmaWxl"
+    },
+    "mark": {
+      "kind": "image",
+      "media": "image/svg+xml",
+      "label": "The mark of the project, painted in the primary colour.",
+      "data": "PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PGNpcmNsZSBjeD0iMTIiIGN5PSIxMiIgcj0iMTEiIGZpbGw9IiMyZjVkNTAiLz48cGF0aCBkPSJNNCAxNWMyLjYgMS45IDUuNCAxLjkgOCAwczUuNC0xLjkgOCAwIiBmaWxsPSJub25lIiBzdHJva2U9IiNmYmZhZjgiIHN0cm9rZS13aWR0aD0iMiIvPjwvc3ZnPg=="
+    }
+  },
+  "css": "*{box-sizing:border-box}\nbody{margin:0;background:var(--t-colour-surface);color:var(--t-colour-ink);font-family:var(--t-font-sans);font-size:15px;line-height:1.45}\nh1,h2{margin:0;font-family:var(--t-font-display);font-weight:400;letter-spacing:-.01em}\n.muted{color:var(--t-colour-muted)}\n.card{background:var(--t-colour-surface-low);border:1px solid var(--t-colour-line);border-radius:var(--t-radius-card);padding:var(--t-space-pad)}\n.button{display:inline-block;background:var(--t-colour-primary);color:var(--t-colour-on-primary);border:0;border-radius:var(--t-radius-control);padding:14px 18px;font-family:var(--t-font-sans);font-size:15px;text-align:center;text-decoration:none}\n.mark{width:28px;height:28px;background:url(asset:mark) no-repeat center/contain}\n"
+}

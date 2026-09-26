@@ -4,19 +4,24 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
 
+	"github.com/atlantic-blue/quay-krewe/internal/store"
 	flowmap "github.com/atlantic-blue/quay-krewe/skills/flow-map/render"
 	"github.com/cucumber/godog"
 )
 
-// The flow map scenarios touch the control plane nowhere. What they prove is a property of the
+// Most of these scenarios touch the control plane nowhere. What they prove is a property of the
 // page the skill ships: which frame a surface is drawn in, what an operator reads inside it, and
 // where the colours come from. So they run the page's own render block over the skill's fixture
 // and read the markup it answers with.
+//
+// The last one is the exception. The worked example beside the brief is written to the control
+// plane, because what holds an example right is the check that reads a real mockup.
 
 // aColour is a colour written into the markup or into a rule.
 var aColour = regexp.MustCompile(`#[0-9a-fA-F]{3,8}\b|\brgba?\(|\bhsla?\(`)
@@ -625,6 +630,119 @@ func initializeFlowMapSteps(sc *godog.ScenarioContext) {
 		}
 		return nil
 	})
+
+	// The worked example, held to the check that reads a real mockup. The design system goes first,
+	// because a screen is refused against the colours and the fonts the operator approved, so an
+	// example written against its own design system is the only one a session can copy whole.
+	sc.Step(`^the design system the flow map example ships is approved$`, func(ctx context.Context) error {
+		artifact, err := theFlowMapExampleFile("design-system.json")
+		if err != nil {
+			return err
+		}
+		if err := writeStage(ctx, store.StageDesignSystem, "the design system of the example", artifact); err != nil {
+			return err
+		}
+		if w := worldFrom(ctx); w.lastErr != nil {
+			return fmt.Errorf("the design system the example ships was refused: %w", w.lastErr)
+		}
+		if err := approveStage(ctx, store.StageDesignSystem); err != nil {
+			return err
+		}
+		if w := worldFrom(ctx); w.lastErr != nil {
+			return fmt.Errorf("approving the design system the example ships was refused: %w", w.lastErr)
+		}
+		return nil
+	})
+
+	sc.Step(`^a session writes the screens the flow map example ships$`, func(ctx context.Context) error {
+		artifact, err := theFlowMapExampleFile("flows.json")
+		if err != nil {
+			return err
+		}
+		return writeStage(ctx, store.StageMockups, "the screens of the example", artifact)
+	})
+
+	// Both surfaces, because a session copies the one nearest what it is writing, and a project
+	// designed on a phone and in a browser needs a screen of each to copy.
+	sc.Step(`^the example ships a screen on a phone and a screen in a browser$`, func() error {
+		flows, err := theFlowMapExample()
+		if err != nil {
+			return err
+		}
+		surfaces := map[string]bool{}
+		for id, screen := range flows.Screens {
+			if strings.TrimSpace(screen.HTML) == "" {
+				return fmt.Errorf("the %s screen of the example carries no markup, so there is nothing to copy", id)
+			}
+			surfaces[screen.Surface] = true
+		}
+		for _, surface := range []string{"mobile", "web"} {
+			if !surfaces[surface] {
+				return fmt.Errorf("the example ships no %s screen: it ships %v", surface, namesOf(surfaces))
+			}
+		}
+		return nil
+	})
+
+	// A brief that never names the example leaves a session with a page of rules and nothing to
+	// copy, and the example is the part that shows what a screen looks like written out.
+	sc.Step(`^the flow map brief names the example beside it$`, func() error {
+		dir, err := flowmap.Dir()
+		if err != nil {
+			return err
+		}
+		brief, err := os.ReadFile(filepath.Join(dir, "SKILL.md")) //nolint:gosec // the path is the skill's own brief
+		if err != nil {
+			return fmt.Errorf("reading the flow map brief: %w", err)
+		}
+		for _, named := range []string{"example/design-system.json", "example/flows.json"} {
+			if !strings.Contains(string(brief), named) {
+				return fmt.Errorf("the brief never names %s, so nothing sends a session to the example", named)
+			}
+		}
+		return nil
+	})
+}
+
+// theFlowMapExampleFile reads one file of the worked example as it is written on disk, because the
+// bytes a session copies are the bytes the check has to keep.
+func theFlowMapExampleFile(name string) (string, error) {
+	dir, err := flowmap.Dir()
+	if err != nil {
+		return "", err
+	}
+	at := filepath.Join(dir, "example", name)
+	body, err := os.ReadFile(at) //nolint:gosec // the path is the skill's own example
+	if err != nil {
+		return "", fmt.Errorf("reading the example the flow map skill ships: %w", err)
+	}
+	return string(body), nil
+}
+
+// theFlowMapExample is the example's flows.json, read the way the page reads one.
+func theFlowMapExample() (flowmap.Flows, error) {
+	dir, err := flowmap.Dir()
+	if err != nil {
+		return flowmap.Flows{}, err
+	}
+	flows, err := flowmap.ReadFlows(filepath.Join(dir, "example", "flows.json"))
+	if err != nil {
+		return flowmap.Flows{}, err
+	}
+	if len(flows.Screens) == 0 {
+		return flowmap.Flows{}, fmt.Errorf("the example ships no screen, so this step proves nothing")
+	}
+	return flows, nil
+}
+
+// namesOf is the keys of a set, sorted, so a refusal reads the same way twice.
+func namesOf(held map[string]bool) []string {
+	var names []string
+	for name := range held {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 // theGapRow is the first row of one kind about one screen.
