@@ -15,13 +15,15 @@ package render
 import (
 	"encoding/json"
 	"fmt"
-	"html"
+	stdhtml "html"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 
 	"github.com/dop251/goja"
+	"golang.org/x/net/html"
+	"golang.org/x/net/html/atom"
 )
 
 // The page's own marks. The render block is the part that draws a screen, and the style block is
@@ -77,22 +79,22 @@ func ReadPage(path string) (Page, error) {
 	if err != nil {
 		return Page{}, fmt.Errorf("flowmap: reading the page: %w", err)
 	}
-	html := string(body)
+	page := string(body)
 
-	render, err := between(html, renderOpen, scriptClose)
+	render, err := between(page, renderOpen, scriptClose)
 	if err != nil {
 		return Page{}, fmt.Errorf("flowmap: the page has no %s block, so nothing can draw a screen", renderOpen)
 	}
-	screen, err := between(html, styleOpen, styleClose)
+	screen, err := between(page, styleOpen, styleClose)
 	if err != nil {
 		return Page{}, fmt.Errorf("flowmap: the page has no %s mark, so nothing says which rules paint a screen", styleOpen)
 	}
-	sheet, err := between(html, "<style>", "</style>")
+	sheet, err := between(page, "<style>", "</style>")
 	if err != nil {
 		return Page{}, fmt.Errorf("flowmap: the page has no stylesheet")
 	}
 	return Page{
-		HTML:         html,
+		HTML:         page,
 		Render:       render,
 		ScreenStyles: screen,
 		OtherStyles:  cssComment.ReplaceAllString(strings.Replace(sheet, screen, "", 1), ""),
@@ -197,7 +199,7 @@ func DocumentIn(markup string) (string, bool) {
 	if to < 0 {
 		return "", false
 	}
-	return html.UnescapeString(rest[:to]), true
+	return stdhtml.UnescapeString(rest[:to]), true
 }
 
 // FontFacesIn is every @font-face rule the document carries, each one as the text inside its
@@ -431,6 +433,122 @@ func (p Page) PressFrom(data string, fromTheFrame bool) (string, bool, error) {
 		return "", false, fmt.Errorf("flowmap: reading what the page answered: %w", err)
 	}
 	return answered.To, answered.Read, nil
+}
+
+// A GapRow is one line of the Gaps view: the screen it is about, the kind of thing that is
+// missing, and the sentence an operator reads.
+type GapRow struct {
+	Screen string `json:"id"`
+	Kind   string `json:"kind"`
+	Words  string `json:"t"`
+}
+
+// Gaps is the page reading everything missing from one file, the way the Gaps view reads it: a
+// screen with nothing to draw, a part that names no component, a press that opens a screen the file
+// does not hold, and every row the view read off a shape list.
+//
+// The markup is parsed outside the render block and handed in. The block touches no document, and
+// this engine carries no DOMParser, so the page passes the parser of the browser and this harness
+// passes a stand in over golang.org/x/net/html, which is the parser the control plane reads the
+// same markup with.
+func (p Page) Gaps(flows Flows) ([]GapRow, error) {
+	vm := goja.New()
+	if err := vm.Set("flowsJSON", string(flows.Raw)); err != nil {
+		return nil, err
+	}
+	if err := vm.Set("parseMarkupJSON", theNodesIn); err != nil {
+		return nil, err
+	}
+	if _, err := vm.RunString(p.Render); err != nil {
+		return nil, fmt.Errorf("flowmap: the render block did not run: %w", err)
+	}
+	if _, err := vm.RunString(theParserStandIn); err != nil {
+		return nil, fmt.Errorf("flowmap: the parser stand in did not run: %w", err)
+	}
+	value, err := vm.RunString("JSON.stringify(gapsOf(JSON.parse(flowsJSON), aParsedBody))")
+	if err != nil {
+		return nil, fmt.Errorf("flowmap: reading what is missing: %w", err)
+	}
+	var rows []GapRow
+	if err := json.Unmarshal([]byte(value.String()), &rows); err != nil {
+		return nil, fmt.Errorf("flowmap: reading the rows the view answered: %w", err)
+	}
+	return rows, nil
+}
+
+// theParserStandIn stands in for the parser of the browser, over the parse above. It answers the
+// body of a screen document as the parts of a document the reading uses: the tag, the attributes, the
+// text, and the nodes under it. A page passes DOMParser here, and a fake that accepted markup a
+// browser refuses would make a green run mean nothing, so the markup is parsed by
+// golang.org/x/net/html, which is the parser the control plane reads the same screens with.
+const theParserStandIn = `
+function aParsedBody(markup) { return aParsedNode(JSON.parse(parseMarkupJSON(String(markup)))); }
+
+function aParsedNode(read) {
+	var node = {
+		nodeType: read.kind === "text" ? 3 : 1,
+		tagName: String(read.tag || "").toUpperCase(),
+		nodeValue: read.kind === "text" ? String(read.text || "") : null,
+		childNodes: [],
+		getAttribute: function (name) {
+			var held = read.attrs || {};
+			return Object.prototype.hasOwnProperty.call(held, name) ? held[name] : null;
+		}
+	};
+	(read.nodes || []).forEach(function (one) { node.childNodes.push(aParsedNode(one)); });
+	return node;
+}
+`
+
+// a parsedNode is one node of a screen's markup, in the shape the stand in reads.
+type parsedNode struct {
+	Kind  string            `json:"kind"`
+	Tag   string            `json:"tag"`
+	Text  string            `json:"text"`
+	Attrs map[string]string `json:"attrs"`
+	Nodes []parsedNode      `json:"nodes"`
+}
+
+// theNodesIn parses the markup of one screen and answers the body of it as json. Markup that cannot
+// be parsed answers an empty body, because a screen the parser refuses is the schema's to refuse and
+// not this reading's.
+func theNodesIn(markup string) string {
+	body := parsedNode{Kind: "element", Tag: "body"}
+	holder := &html.Node{Type: html.ElementNode, DataAtom: atom.Body, Data: "body"}
+	nodes, err := html.ParseFragment(strings.NewReader(markup), holder)
+	if err == nil {
+		for _, node := range nodes {
+			if read, held := asParsedNode(node); held {
+				body.Nodes = append(body.Nodes, read)
+			}
+		}
+	}
+	said, err := json.Marshal(body)
+	if err != nil {
+		return `{"kind":"element","tag":"body"}`
+	}
+	return string(said)
+}
+
+// asParsedNode reads one element or one piece of text, and everything under it.
+func asParsedNode(node *html.Node) (parsedNode, bool) {
+	switch node.Type {
+	case html.TextNode:
+		return parsedNode{Kind: "text", Text: node.Data}, true
+	case html.ElementNode:
+		read := parsedNode{Kind: "element", Tag: node.Data, Attrs: map[string]string{}}
+		for _, held := range node.Attr {
+			read.Attrs[held.Key] = held.Val
+		}
+		for child := node.FirstChild; child != nil; child = child.NextSibling {
+			if one, held := asParsedNode(child); held {
+				read.Nodes = append(read.Nodes, one)
+			}
+		}
+		return read, true
+	default:
+		return parsedNode{}, false
+	}
 }
 
 // A Courier is the script the page writes into a screen document, running outside a browser over a

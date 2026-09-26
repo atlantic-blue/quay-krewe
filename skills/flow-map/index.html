@@ -574,6 +574,151 @@ function renderScreen(screen, system) {
   return '<div class="frame frame-mobile" data-surface="mobile"' + style + '>' +
     '<div class="bezel"><i class="notch"></i>' + inside + "</div></div>";
 }
+
+// What is missing, read off the file rather than off the screen. The Gaps view is the one list an
+// operator reads before approving a mockup, so a screen it says nothing about reads as a screen with
+// nothing wrong with it.
+//
+// The rules below are the ones the control plane refuses a write for, in
+// internal/controlplane/mockupcheck.go. The check is the gate and this is the report: an artifact
+// stored before the gate existed carries what the gate would refuse, and that artifact is what an
+// operator opens.
+
+// THE_ROW_COLOUR is the status each kind of row is drawn in, so the list reads in the colours of the
+// map beside it.
+var THE_ROW_COLOUR = {
+  Missing: "gap", Question: "gap", "Not reachable": "unwired", "Not designed": "named",
+  "No surface": "gap", "No component": "named", "No markup": "gap", "No screen": "gap"
+};
+
+// NOT_VISIBLE are the elements whose text the browser reads and nobody else does. DRAWN_WITH_NO_TEXT
+// are the parts that are a part of the screen whatever they hold: a mark carries no words and is
+// still something a session has to build. THE_WORDS_SHOWN caps how much of a part's own text a row
+// repeats, because the words are there to find the part rather than to read it again.
+var NOT_VISIBLE = { style: 1, script: 1, title: 1, template: 1, head: 1, meta: 1, link: 1 };
+var DRAWN_WITH_NO_TEXT = { img: 1, svg: 1, canvas: 1, video: 1 };
+var THE_WORDS_SHOWN = 40;
+
+function tagOf(node) { return String((node && node.tagName) || "").toLowerCase(); }
+
+function attributeOf(node, name) {
+  var held = node && node.getAttribute ? node.getAttribute(name) : null;
+  return String(held === null || held === undefined ? "" : held).trim();
+}
+
+// nodesUnder is every node one element holds, of the kind asked for: 1 for an element and 3 for a
+// piece of text.
+function nodesUnder(node, kind) {
+  var out = [], held = (node && node.childNodes) || [];
+  for (var at = 0; at < held.length; at++) {
+    if (held[at] && held[at].nodeType === kind) { out.push(held[at]); }
+  }
+  return out;
+}
+
+// theTextOf is the text one element holds itself, which is not the text of the parts inside it.
+function theTextOf(node) {
+  return nodesUnder(node, 3).map(function (piece) {
+    return String(piece.nodeValue === null || piece.nodeValue === undefined ? "" : piece.nodeValue);
+  }).join(" ");
+}
+
+// isTheLastPart says whether an element is a visible leaf: it holds no element of its own, and it
+// holds text that is not only spacing.
+function isTheLastPart(node) {
+  return nodesUnder(node, 1).length === 0 && theTextOf(node).trim() !== "";
+}
+
+// theFirstWordsOf is the text of one element, with its spacing collapsed and its length capped.
+function theFirstWordsOf(node) {
+  var words = theTextOf(node).split(/\s+/).filter(function (w) { return w !== ""; }).join(" ");
+  if (words.length <= THE_WORDS_SHOWN) { return words; }
+  var cut = words.slice(0, THE_WORDS_SHOWN), at = cut.lastIndexOf(" ");
+  return at > 0 ? cut.slice(0, at) : cut;
+}
+
+// describePart names a part the way a person would find it: the tag, the class if it has one, and
+// the first words it holds.
+function describePart(node) {
+  var tag = tagOf(node), held = attributeOf(node, "class"), words = theFirstWordsOf(node);
+  var said = held === "" ? "<" + tag + ">" : "<" + tag + " class=" + JSON.stringify(held) + ">";
+  return words === "" ? said : said + ", holding " + JSON.stringify(words);
+}
+
+// aPartWithNoComponent reads one element and everything under it, and answers the first part that
+// names no component. named says whether anything above this element already names one, which is
+// what lets a card name itself once and leave the words inside it alone.
+function aPartWithNoComponent(node, named) {
+  if (!node || node.nodeType !== 1) { return null; }
+  var names = attributeOf(node, "data-component") !== "";
+  if (attributeOf(node, "data-to") !== "" && !names) { return node; }
+  if (NOT_VISIBLE[tagOf(node)]) { return null; }
+  if (DRAWN_WITH_NO_TEXT[tagOf(node)]) { return named || names ? null : node; }
+  if (isTheLastPart(node) && !named && !names) { return node; }
+  var children = nodesUnder(node, 1);
+  for (var at = 0; at < children.length; at++) {
+    var found = aPartWithNoComponent(children[at], named || names);
+    if (found) { return found; }
+  }
+  return null;
+}
+
+// pressesUnder is every screen the parts of one markup open, in the order they were written.
+function pressesUnder(node, out) {
+  var found = out || [];
+  nodesUnder(node, 1).forEach(function (child) {
+    var to = attributeOf(child, "data-to");
+    if (to !== "" && found.indexOf(to) < 0) { found.push(to); }
+    pressesUnder(child, found);
+  });
+  return found;
+}
+
+// gapsOf is every row of the Gaps view, for the whole file, in screen name order, so two reads of
+// one file answer the same list.
+//
+// The parse comes from outside: this block touches no document, and the markup of a screen is read
+// with the parser of the browser rather than with a pattern written here. A screen with no markup is
+// read as far as the file goes, which is the status it carries and the shapes it still holds.
+function gapsOf(flows, parse) {
+  var held = (flows && flows.screens) || {}, rows = [];
+  var say = function (id, kind, words) {
+    rows.push({ id: id, kind: kind, c: THE_ROW_COLOUR[kind] || "gap", t: words });
+  };
+  Object.keys(held).sort().forEach(function (id) {
+    var s = held[id] || {}, name = s.name || id, shapes = s.el || [];
+    var markup = typeof s.html === "string" ? s.html : "";
+    (s.defects || []).forEach(function (x) { say(id, "Missing", x); });
+    if (s.status === "gap") { say(id, "Question", s.q); }
+    if (s.status === "unwired") { say(id, "Not reachable", name + " is built. No route opens it."); }
+    if (s.status === "named") {
+      say(id, "Not designed", name + " is named in " + (s.ref || "a step") + ". No screen design exists.");
+    }
+    if (!SURFACES[s.surface]) { say(id, "No surface", name + " names no surface, so it is drawn on a phone."); }
+    shapes.forEach(function (e) {
+      if (!e.component) { say(id, "No component", "A " + e.t + " on " + name + " names no component."); }
+    });
+    if (markup.trim() === "") {
+      if (!shapes.length) {
+        say(id, "No markup", name + " has nothing to draw. Write the body of the screen in html.");
+      }
+      return;
+    }
+    var body = parse ? parse(markup) : null;
+    if (!body) { return; }
+    var part = aPartWithNoComponent(body, false);
+    if (part) {
+      say(id, "No component", "A part of " + name + " names no component: " + describePart(part) +
+        '. Write data-component="<the component>" on it.');
+    }
+    pressesUnder(body).forEach(function (to) {
+      if (!held[to]) {
+        say(id, "No screen", "A part of " + name + " opens " + to + ", and the file holds no screen of that name.");
+      }
+    });
+  });
+  return rows;
+}
 </script>
 
 <script>
@@ -826,19 +971,19 @@ function go(to) {
   if (DATA.screens[to]) { playTrail.push(to); renderPlay(); }
 }
 
+// theMarkupOf reads the markup of one screen with the parser of the browser, in a document of its
+// own. That document has no browsing context, so it fetches nothing and runs nothing, and the page
+// reads the parts of a screen the way a person sees them rather than by matching text.
+function theMarkupOf(markup) {
+  try {
+    return new DOMParser().parseFromString(String(markup), "text/html").body;
+  } catch (e) {
+    return null;
+  }
+}
+
 function renderGaps() {
-  var rows = [];
-  Object.keys(DATA.screens).forEach(function (id) {
-    var s = DATA.screens[id];
-    (s.defects || []).forEach(function (x) { rows.push({ id: id, kind: "Missing", c: "gap", t: x }); });
-    if (s.status === "gap") { rows.push({ id: id, kind: "Question", c: "gap", t: s.q }); }
-    if (s.status === "unwired") { rows.push({ id: id, kind: "Not reachable", c: "unwired", t: s.name + " is built. No route opens it." }); }
-    if (s.status === "named") { rows.push({ id: id, kind: "Not designed", c: "named", t: s.name + " is named in " + (s.ref || "a step") + ". No screen design exists." }); }
-    if (!SURFACES[s.surface]) { rows.push({ id: id, kind: "No surface", c: "gap", t: s.name + " names no surface, so it is drawn on a phone." }); }
-    (s.el || []).forEach(function (e) {
-      if (!e.component) { rows.push({ id: id, kind: "No component", c: "named", t: "A " + e.t + " on " + s.name + " names no component." }); }
-    });
-  });
+  var rows = gapsOf(DATA, theMarkupOf);
   var seen = {};
   var groups = DATA.stories.map(function (st) {
     return {

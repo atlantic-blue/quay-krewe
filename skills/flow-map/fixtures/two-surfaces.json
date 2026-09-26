@@ -59,6 +59,24 @@
         { "t": "dock", "component": "TabBar", "active": "Log", "v": [{ "v": "Today", "to": "home" }, { "v": "Log" }] }
       ],
       "defects": ["Nothing says what happens when the tide is already logged."]
+    },
+    "places": {
+      "name": "Places",
+      "surface": "mobile",
+      "status": "designed",
+      "route": "/places",
+      "source": "docs/design/mobile.md",
+      "ref": "step 2.6",
+      "html": "<style>*{box-sizing:border-box}.wrap{display:flex;flex-direction:column;height:100%;padding:28px var(--t-space-pad) 0}h1{margin:0;font:700 30px/1.15 var(--t-font-sans);letter-spacing:-.02em}.lede{margin:10px 0 0;font:500 15px/1.4 var(--t-font-sans);color:var(--t-colour-muted)}.rows{display:flex;flex-direction:column;gap:var(--t-space-gap);margin-top:18px}.rows div{display:flex;justify-content:space-between;align-items:center;gap:12px;font:600 16px/1.3 var(--t-font-sans)}.rows small{font-weight:500;font-size:13px;color:var(--t-colour-muted)}</style><div class=\"wrap\"><h1 data-component=\"Heading\">Places</h1><div class=\"rows\" data-component=\"List\"><div class=\"card\" data-component=\"ListRow\" data-to=\"home\">Whitstable<small>High water at 07:02</small></div><div class=\"card\" data-component=\"ListRow\" data-to=\"harbour\">Ramsgate harbour<small>Nothing written yet</small></div></div></div>",
+      "viewport": { "width": 390, "height": 844 }
+    },
+    "moon": {
+      "name": "Moon phase",
+      "surface": "mobile",
+      "status": "designed",
+      "route": "/moon",
+      "source": "docs/design/mobile.md",
+      "ref": "step 2.7"
     }
   },
   "stories": [
@@ -74,11 +92,12 @@
     {
       "id": "log-a-tide-on-the-phone",
       "title": "A person logs a tide on the phone",
-      "steps": "2 screens",
+      "steps": "4 screens",
       "story": "She opens the phone at the water, logs what it did, and lands back on today.",
       "start": "home",
-      "nodes": [["home", 0, 0], ["log", 1, 0]],
-      "edges": [["home", "log", "Log this tide", "built"], ["log", "home", "Save this tide", "designed"]]
+      "nodes": [["home", 0, 0], ["log", 1, 0], ["places", 0, 1], ["moon", 1, 1]],
+      "edges": [["home", "log", "Log this tide", "built"], ["log", "home", "Save this tide", "designed"],
+        ["home", "places", "Whitstable", "designed"], ["places", "moon", "Tonight", "named"]]
     }
   ],
   "dataModel": {

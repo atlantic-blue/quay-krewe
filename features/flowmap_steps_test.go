@@ -34,6 +34,11 @@ const (
 	theScript         = `<script>parent.document.title='taken'</script>`
 	theEventAttribute = `<p data-component="Text" onclick="steal()">Tap here</p>`
 	theMissingMark    = `<img data-component="Logo" src="asset:missing" alt="the mark">`
+	// The words sit in a part that names no component, so nothing says which component a building
+	// session puts there. The gate refuses this shape now, and an artifact stored before the gate is
+	// what an operator opens, so the view is where it is read.
+	theWordsOutsideEveryComponent = `<section class="tides"><h1 data-component="Heading">Today</h1>` +
+		`<p class="note">Two tides, both after dark.</p></section>`
 )
 
 type flowMapWorld struct {
@@ -47,6 +52,7 @@ type flowMapWorld struct {
 	courier   *flowmap.Courier
 	opens     string
 	posted    string
+	gaps      []flowmap.GapRow
 }
 
 type flowMapKey struct{}
@@ -506,6 +512,104 @@ func initializeFlowMapSteps(sc *godog.ScenarioContext) {
 			return nil
 		})
 
+	// What is missing. The screen carries markup a gate never read, which is the artifact an operator
+	// opens, and the view has to name the part a building session would have to guess at.
+	sc.Step(`^a screen a session wrote as markup, holding words outside every named component$`,
+		func(ctx context.Context) error {
+			return flowMapFrom(ctx).write(theWordsOutsideEveryComponent)
+		})
+
+	sc.Step(`^the operator reads what is missing from the project$`, func(ctx context.Context) error {
+		w := flowMapFrom(ctx)
+		rows, err := w.page.Gaps(w.flows)
+		if err != nil {
+			return err
+		}
+		if len(rows) == 0 {
+			return fmt.Errorf("the view answers no row at all, so an operator reads an empty page as good news")
+		}
+		w.gaps = rows
+		return nil
+	})
+
+	sc.Step(`^the view names the part that names no component, by its tag, its class and its first words$`,
+		func(ctx context.Context) error {
+			w := flowMapFrom(ctx)
+			row, found := theGapRow(w.gaps, w.screen, "No component")
+			if !found {
+				return fmt.Errorf("the view says nothing about the part of %s that names no component:\n%s",
+					w.screen, whatTheViewSaid(w.gaps))
+			}
+			for _, want := range []string{"<p", "note", "Two tides, both after dark."} {
+				if !strings.Contains(row.Words, want) {
+					return fmt.Errorf("the row does not name %q, so the operator cannot find the part: %q", want, row.Words)
+				}
+			}
+			return nil
+		})
+
+	sc.Step(`^it names the screen with nothing to draw$`, func(ctx context.Context) error {
+		w := flowMapFrom(ctx)
+		empty, err := screensDrawingNothing(w.flows)
+		if err != nil {
+			return err
+		}
+		if len(empty) == 0 {
+			return fmt.Errorf("every screen of the project draws something, so this step proves nothing")
+		}
+		for _, id := range empty {
+			if _, found := theGapRow(w.gaps, id, "No markup"); !found {
+				return fmt.Errorf("%s draws nothing and the view says nothing about it:\n%s", id, whatTheViewSaid(w.gaps))
+			}
+		}
+		return nil
+	})
+
+	sc.Step(`^it names the press that opens a screen the project does not hold$`, func(ctx context.Context) error {
+		w := flowMapFrom(ctx)
+		read := 0
+		for id, screen := range w.flows.Screens {
+			for _, found := range aPartThatOpens.FindAllStringSubmatch(screen.HTML, -1) {
+				if _, held := w.flows.Screens[found[1]]; held {
+					continue
+				}
+				read++
+				row, there := theGapRow(w.gaps, id, "No screen")
+				if !there {
+					return fmt.Errorf("%s holds a press that opens %s, which the project does not hold, and the view says nothing:\n%s",
+						id, found[1], whatTheViewSaid(w.gaps))
+				}
+				if !strings.Contains(row.Words, found[1]) {
+					return fmt.Errorf("the row for %s does not name the screen %s the press opens: %q", id, found[1], row.Words)
+				}
+			}
+		}
+		if read == 0 {
+			return fmt.Errorf("no press of the project opens a screen it does not hold, so this step proves nothing")
+		}
+		return nil
+	})
+
+	sc.Step(`^it still names every defect the project holds$`, func(ctx context.Context) error {
+		w := flowMapFrom(ctx)
+		defects, err := theDefectsOf(w.flows)
+		if err != nil {
+			return err
+		}
+		if len(defects) == 0 {
+			return fmt.Errorf("the project holds no defect, so this step proves nothing")
+		}
+		for id, said := range defects {
+			for _, one := range said {
+				row, found := theGapRow(w.gaps, id, "Missing")
+				if !found || !strings.Contains(row.Words, one) {
+					return fmt.Errorf("the view no longer names the defect %q of %s:\n%s", one, id, whatTheViewSaid(w.gaps))
+				}
+			}
+		}
+		return nil
+	})
+
 	sc.Step(`^on the map a press reaches the node under the screen$`, func(ctx context.Context) error {
 		w := flowMapFrom(ctx)
 		if !strings.Contains(strings.Join(strings.Fields(w.page.ScreenStyles), ""), ".nodeiframe.screen{pointer-events:none}") {
@@ -513,6 +617,69 @@ func initializeFlowMapSteps(sc *godog.ScenarioContext) {
 		}
 		return nil
 	})
+}
+
+// theGapRow is the first row of one kind about one screen.
+func theGapRow(rows []flowmap.GapRow, screen, kind string) (flowmap.GapRow, bool) {
+	for _, row := range rows {
+		if row.Screen == screen && row.Kind == kind {
+			return row, true
+		}
+	}
+	return flowmap.GapRow{}, false
+}
+
+// whatTheViewSaid is every row the view answered, so a failure names what there was instead.
+func whatTheViewSaid(rows []flowmap.GapRow) string {
+	if len(rows) == 0 {
+		return "the view answered no row at all"
+	}
+	said := make([]string, 0, len(rows))
+	for _, row := range rows {
+		said = append(said, fmt.Sprintf("%s: %s: %s", row.Screen, row.Kind, row.Words))
+	}
+	return strings.Join(said, "\n")
+}
+
+// screensDrawingNothing are the screens carrying no markup and no shape list. The shape list is not
+// part of the typed flows, so the bytes are read.
+func screensDrawingNothing(flows flowmap.Flows) ([]string, error) {
+	var loose struct {
+		Screens map[string]struct {
+			HTML string `json:"html"`
+			El   []any  `json:"el"`
+		} `json:"screens"`
+	}
+	if err := json.Unmarshal(flows.Raw, &loose); err != nil {
+		return nil, fmt.Errorf("reading the project's screens again: %w", err)
+	}
+	var out []string
+	for id, screen := range loose.Screens {
+		if screen.HTML == "" && len(screen.El) == 0 {
+			out = append(out, id)
+		}
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+// theDefectsOf is what each screen of a project says is missing from it.
+func theDefectsOf(flows flowmap.Flows) (map[string][]string, error) {
+	var loose struct {
+		Screens map[string]struct {
+			Defects []string `json:"defects"`
+		} `json:"screens"`
+	}
+	if err := json.Unmarshal(flows.Raw, &loose); err != nil {
+		return nil, fmt.Errorf("reading the project's screens again: %w", err)
+	}
+	out := map[string][]string{}
+	for id, screen := range loose.Screens {
+		if len(screen.Defects) > 0 {
+			out[id] = screen.Defects
+		}
+	}
+	return out, nil
 }
 
 // aPartThatOpens is a part of a screen that opens another one, with the name of that screen.
