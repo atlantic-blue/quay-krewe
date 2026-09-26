@@ -12,9 +12,14 @@ Feature: A mockup is refused unless every shape names its component
   as data-component. A part that can be pressed names one on itself. Every visible part sits under
   one. So a card names itself once, and the words inside it need no name of their own.
 
-  A screen is drawn in the colours and the fonts of its tokens, and those come from the
-  design_system stage, which the operator approved before the mockups could be written. A value
-  that stage does not name is a second design system nobody agreed to, so it is refused too.
+  A screen is drawn in the colours and the fonts of the design_system stage, which the operator
+  approved before the mockups could be written. The stylesheet of a screen, the style of one part and
+  the paint of a mark are all read, and a value that stage does not name is a second design system
+  nobody agreed to, so it is refused. A font reaches a screen as a token, and the file it draws from
+  travels in the design system.
+
+  A design system that names no colour and no font refuses the mockups write, and the refusal says to
+  write the tokens of that stage first. Nothing else holds the screens to anything.
 
   A screen is drawn and it is never run. A script, an attribute whose name starts with "on", and any
   address other than an asset of the design system or a part of the screen itself are all refused.
@@ -87,6 +92,28 @@ Feature: A mockup is refused unless every shape names its component
     When the operator writes the mockups stage drawn in the font "Comic Sans MS, cursive"
     Then the control plane refuses it as invalid
     And the refusal suggests "Comic Sans MS"
+
+  # A screen is written as markup now, so a colour arrives in the stylesheet of that screen, in the
+  # style of one part, or in the paint of a mark. Every colour an operator sees in a mockup is a
+  # colour that operator already approved, so a screen cannot carry a second design system.
+  Scenario: A colour written into the markup of a screen is refused
+    When the operator writes the mockups stage with the colour "#ff0000" in the markup of a screen
+    Then the control plane refuses it as invalid
+    And the refusal suggests "dashboard"
+    And the refusal suggests "#ff0000"
+    And the refusal suggests "design_system"
+    And the project holds no mockups stage
+
+  # A design system written as prose alone names nothing. That write used to go through carrying a
+  # warning, and a warning holds nothing: the screens were then drawn in whatever the session chose.
+  # A project whose design system names nothing cannot write a mockup at all.
+  Scenario: A mockup is refused while the design system names no tokens
+    Given the design system is approved naming nothing
+    When the operator writes the mockups stage with a component on every shape
+    Then the control plane refuses it as invalid
+    And the refusal suggests "design_system"
+    And the refusal suggests "tokens"
+    And the project holds no mockups stage
 
   # Prose first and the page after is how a stage gets written. A mockups stage with nothing to read
   # has nothing to refuse.

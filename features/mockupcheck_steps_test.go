@@ -117,6 +117,33 @@ func initializeMockupCheckSteps(sc *godog.ScenarioContext) {
 			})
 		})
 
+	// The screen is written as markup, so a colour arrives inside the stylesheet of that screen
+	// rather than in a token block. It is the place a session paints from.
+	sc.Step(`^the operator writes the mockups stage with the colour "([^"]*)" in the markup of a screen$`,
+		func(ctx context.Context, colour string) error {
+			return writeMockupFixture(ctx, func(flows map[string]any) error {
+				return paintTheMarkupOf(flows, theMarkupScreen, colour)
+			})
+		})
+
+	// A design system written as prose names nothing, and nothing is what the screens are then held
+	// to. Writing the stage again takes the word off it, so it is approved again here.
+	sc.Step(`^the design system is approved naming nothing$`, func(ctx context.Context) error {
+		if err := writeStage(ctx, store.StageDesignSystem, "one accent colour, and plenty of space", ""); err != nil {
+			return err
+		}
+		if w := worldFrom(ctx); w.lastErr != nil {
+			return fmt.Errorf("writing the design system as prose was refused: %w", w.lastErr)
+		}
+		if err := approveStage(ctx, store.StageDesignSystem); err != nil {
+			return err
+		}
+		if w := worldFrom(ctx); w.lastErr != nil {
+			return fmt.Errorf("approving the design system was refused: %w", w.lastErr)
+		}
+		return nil
+	})
+
 	sc.Step(`^the operator writes the mockups stage drawn in the colour "([^"]*)"$`,
 		func(ctx context.Context, colour string) error {
 			return writeMockupFixture(ctx, func(flows map[string]any) error {
@@ -298,5 +325,30 @@ func loadAFontFromTheNetwork(flows map[string]any, screen string) error {
 			"so this scenario would prove nothing", screen)
 	}
 	held["html"] = theFontOnTheNetwork + markup
+	return nil
+}
+
+// theStylesheetEnd is where the stylesheet of a screen closes. A declaration written in front of it
+// is painted over every part of that screen.
+const theStylesheetEnd = "</style>"
+
+// paintTheMarkupOf writes one colour into the stylesheet of one screen.
+//
+// It refuses a screen it could not paint, because a scenario that broke nothing would pass against
+// the rule it was written to prove.
+func paintTheMarkupOf(flows map[string]any, screen, colour string) error {
+	screens, _ := flows["screens"].(map[string]any)
+	held, _ := screens[screen].(map[string]any)
+	markup, _ := held["html"].(string)
+	if !strings.Contains(markup, theStylesheetEnd) {
+		return fmt.Errorf("the %s screen of the fixture carries no stylesheet, "+
+			"so this scenario would prove nothing", screen)
+	}
+	if strings.Contains(markup, colour) {
+		return fmt.Errorf("the %s screen of the fixture is already painted in %s, "+
+			"so this scenario would prove nothing", screen, colour)
+	}
+	held["html"] = strings.Replace(markup,
+		theStylesheetEnd, fmt.Sprintf("h1{color:%s}%s", colour, theStylesheetEnd), 1)
 	return nil
 }
