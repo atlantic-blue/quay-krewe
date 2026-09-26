@@ -25,7 +25,8 @@ disagrees with it, and the operator must see which one you did.
     krewe stage set <workspace>/<project> <stage> --file <path>
 
 The mockups stage carries a flows.json beside its prose. Write that with `--artifact <path>`, and
-give the page's address with `--url <address>`. The flow-map skill says how to draw it.
+give the page's address with `--url <address>`. Read `skills/flow-map/SKILL.md` before that
+stage. It says how a screen is written, and it ships an example.
 
 ## 3. Write the design, once all six stages carry the word
 
@@ -46,7 +47,7 @@ operator approved. Every step names the contracts it builds, and the scope of ea
 Write one path document for each part. Write it with `krewe path set <feature> --file <path>`.
 
 A milestone heading reads `# 4. <title>`. A step heading reads `## 1. <title>`. Step numbers are
-unique across the whole document. Two steps under different milestones cannot share a number.
+unique across the whole document.
 
 Put these seven labels under a step heading. Each label sits alone on its own line.
 
