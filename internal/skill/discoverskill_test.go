@@ -16,7 +16,7 @@ import (
 func TestTheShippedDiscoverSkillLoads(t *testing.T) {
 	discover := shippedSkill(t, "discover")
 
-	if discover.Version != 1 {
+	if discover.Version != 2 {
 		t.Errorf("the discover skill is version %d, and a session is pinned to the one it started with", discover.Version)
 	}
 	if !slices.Contains(discover.Binaries, "krewe") {

@@ -18,7 +18,7 @@ import (
 func TestTheShippedFlowMapSkillLoads(t *testing.T) {
 	flowMap := shippedSkill(t, "flow-map")
 
-	if flowMap.Version != 1 {
+	if flowMap.Version != 2 {
 		t.Errorf("the flow map skill is version %d, and a session is pinned to the one it started with", flowMap.Version)
 	}
 	if len(flowMap.Binaries) != 0 {
