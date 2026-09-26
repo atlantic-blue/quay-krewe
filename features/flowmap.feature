@@ -78,3 +78,18 @@ Feature: The flow map plays a project's stories
     And it names the screen with nothing to draw
     And it names the press that opens a screen the project does not hold
     And it still names every defect the project holds
+
+  # The step this one exists for. A session that never wrote a screen for this system reads the
+  # brief and copies the example beside it. So the example is held to the check that reads a real
+  # mockup: an example the control plane would refuse teaches every session the shape it refuses.
+  Scenario: The flow map skill ships a screen that the mockups check keeps
+    Given a running control plane
+    And a workspace named "acme"
+    And a project named "house-bills"
+    And the stages before the design system are approved
+    And the design system the flow map example ships is approved
+    When a session writes the screens the flow map example ships
+    Then the mockups stage carries the artifact it was given
+    And the write says nothing is wrong
+    And the example ships a screen on a phone and a screen in a browser
+    And the flow map brief names the example beside it
