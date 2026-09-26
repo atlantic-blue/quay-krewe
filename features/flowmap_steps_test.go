@@ -514,9 +514,17 @@ func initializeFlowMapSteps(sc *godog.ScenarioContext) {
 
 	// What is missing. The screen carries markup a gate never read, which is the artifact an operator
 	// opens, and the view has to name the part a building session would have to guess at.
+	//
+	// One screen of the project is left with nothing to draw. A write asks every screen for its
+	// markup now, so the only artifact carrying such a screen is one that was stored before, and that
+	// is the artifact an operator opens the Gaps view on.
 	sc.Step(`^a screen a session wrote as markup, holding words outside every named component$`,
 		func(ctx context.Context) error {
-			return flowMapFrom(ctx).write(theWordsOutsideEveryComponent)
+			w := flowMapFrom(ctx)
+			if err := w.write(theWordsOutsideEveryComponent); err != nil {
+				return err
+			}
+			return w.storeAScreenNobodyDrew()
 		})
 
 	sc.Step(`^the operator reads what is missing from the project$`, func(ctx context.Context) error {
@@ -641,13 +649,11 @@ func whatTheViewSaid(rows []flowmap.GapRow) string {
 	return strings.Join(said, "\n")
 }
 
-// screensDrawingNothing are the screens carrying no markup and no shape list. The shape list is not
-// part of the typed flows, so the bytes are read.
+// screensDrawingNothing are the screens carrying no markup.
 func screensDrawingNothing(flows flowmap.Flows) ([]string, error) {
 	var loose struct {
 		Screens map[string]struct {
 			HTML string `json:"html"`
-			El   []any  `json:"el"`
 		} `json:"screens"`
 	}
 	if err := json.Unmarshal(flows.Raw, &loose); err != nil {
@@ -655,12 +661,50 @@ func screensDrawingNothing(flows flowmap.Flows) ([]string, error) {
 	}
 	var out []string
 	for id, screen := range loose.Screens {
-		if screen.HTML == "" && len(screen.El) == 0 {
+		if screen.HTML == "" {
 			out = append(out, id)
 		}
 	}
 	sort.Strings(out)
 	return out, nil
+}
+
+// storeAScreenNobodyDrew takes the markup off the screen the mobile story ends on, leaving the
+// project in the state an operator meets: an artifact stored before every screen was asked for its
+// markup, holding one screen nobody has drawn.
+func (w *flowMapWorld) storeAScreenNobodyDrew() error {
+	var loose map[string]any
+	if err := json.Unmarshal(w.flows.Raw, &loose); err != nil {
+		return fmt.Errorf("reading the project again: %w", err)
+	}
+	screens, _ := loose["screens"].(map[string]any)
+	for _, id := range sortedScreenNames(screens) {
+		one, _ := screens[id].(map[string]any)
+		if one == nil || id == w.screen {
+			continue
+		}
+		delete(one, "html")
+		raw, err := json.Marshal(loose)
+		if err != nil {
+			return fmt.Errorf("writing the changed project: %w", err)
+		}
+		w.flows.Raw = raw
+		held := w.flows.Screens[id]
+		held.HTML = ""
+		w.flows.Screens[id] = held
+		return nil
+	}
+	return fmt.Errorf("the project holds no second screen, so nothing can be left undrawn")
+}
+
+// sortedScreenNames reads the screens in one order, so the same screen is left undrawn every run.
+func sortedScreenNames(screens map[string]any) []string {
+	out := make([]string, 0, len(screens))
+	for id := range screens {
+		out = append(out, id)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // theDefectsOf is what each screen of a project says is missing from it.

@@ -177,7 +177,7 @@ Feature: A project's stages are read over http
   # published a page to a web host, and nobody copied a file next to another file.
   Scenario: The mockups stage plays its story from the stored artifact
     Given the stages up to the design system are approved, naming the project's colours and fonts
-    And the operator writes the mockups stage with a component on every shape
+    And the operator writes the mockups stage with a component on every part
     And the site is served on a local address
     When the operator opens the flow map of the "mockups" stage
     Then the site answers 200
@@ -194,7 +194,7 @@ Feature: A project's stages are read over http
   # project for them and draw nothing. The site sends the operator to the address that plays.
   Scenario: The flow map address without its last slash sends the operator to the one with it
     Given the stages up to the design system are approved, naming the project's colours and fonts
-    And the operator writes the mockups stage with a component on every shape
+    And the operator writes the mockups stage with a component on every part
     And the site is served on a local address
     When the operator opens the flow map of the "mockups" stage without its last slash
     Then the site sends the operator to the flow map of the "mockups" stage

@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
 // The two contracts this page stands on.
@@ -37,9 +39,11 @@ import (
 // VIEW-1: each node of the map draws its screen in a frame, and the frames are lazy, so a story of
 // ten screens does not build ten documents before the operator has read the first one.
 //
-// VIEW-2: the Gaps view reads the markup of every screen as well as the shape list, and reports a
-// screen with nothing to draw, a part that names no component, and a press that opens a screen the
-// file does not hold, beside every row it read off a shape list.
+// VIEW-2: the Gaps view reads the markup of every screen and reports a screen with nothing to
+// draw, a part that names no component, and a press that opens a screen the file does not hold.
+//
+// SCREEN-5: a screen is written one way. The shape list is gone from the schema and from the page,
+// and a stored artifact that still carries one draws nothing and is named in the Gaps view.
 //
 // Both are read off the markup the page's own renderer produces, run here outside a browser, so
 // what these tests read is what an operator sees.
@@ -403,9 +407,12 @@ func TestAProjectWithNoDesignSystemDrawsWithNoValueOfThePagesOwn(t *testing.T) {
 	}
 }
 
-// The shape list is removed at step 10, so until then a stored screen that carries one draws the
-// way it does today. A page that only drew markup would empty every mockup already written.
-func TestAScreenWithNoMarkupStillDrawsItsShapeList(t *testing.T) {
+// SCREEN-5. The way off the old form, read on the page.
+//
+// A stored artifact may still hold a shape list, because a stored artifact is never rewritten. The
+// page draws the frame and nothing in it, and the Gaps view is what tells the operator why. A page
+// that kept drawing shapes would keep the second renderer this step exists to remove.
+func TestAScreenWrittenAsAShapeListDrawsNothing(t *testing.T) {
 	drawn := page(t)
 	system := system(t)
 
@@ -413,14 +420,14 @@ func TestAScreenWithNoMarkupStillDrawsItsShapeList(t *testing.T) {
 		`"el":[{"t":"h","component":"Heading","v":"Today"}]}}}`
 	markup, err := drawn.Screen(Flows{Raw: []byte(stored)}, system, "one")
 	if err != nil {
-		t.Fatalf("drawing a screen with a shape list: %v", err)
+		t.Fatalf("drawing a screen that carries a shape list: %v", err)
 	}
-	if strings.Contains(markup, "<iframe") {
-		t.Errorf("a screen with no markup was given a frame:\n%s", markup)
+	if !strings.Contains(markup, "<iframe") {
+		t.Errorf("a stored screen was drawn outside a frame, so the page draws a screen two ways:\n%s", markup)
 	}
-	for _, want := range []string{`class="h"`, `data-component="Heading"`, "Today"} {
-		if !strings.Contains(markup, want) {
-			t.Errorf("a screen with a shape list carries no %q:\n%s", want, markup)
+	for _, gone := range []string{`class="h"`, `data-component="Heading"`, "Today"} {
+		if strings.Contains(markup, gone) {
+			t.Errorf("the page drew %q off a shape list, and the shape list is gone:\n%s", gone, markup)
 		}
 	}
 }
@@ -455,11 +462,42 @@ func TestTheSchemaTakesMarkupAndTheSizeOfAScreen(t *testing.T) {
 			t.Errorf("the %s of a viewport stops at %v rather than %v", one.name, held["maximum"], one.to)
 		}
 	}
-	if required(screen, "el") {
-		t.Error("the schema still asks a screen for a shape list, so a screen cannot be markup alone")
+	if !required(screen, "html") {
+		t.Error("the schema does not ask a screen for its markup, so a screen with nothing to draw can be written")
+	}
+	if refuses, there := properties["el"]; !there || refuses != false {
+		t.Errorf("the schema reads %v under el, and it has to refuse the property outright", properties["el"])
+	}
+	if _, there := read["$defs"].(map[string]any)["element"]; there {
+		t.Error("the schema still defines a shape, so the 24 kinds are still in the file a session writes against")
 	}
 	if required(read, "tokens") {
 		t.Error("the schema still asks the flows for tokens, which the design system stage now holds")
+	}
+}
+
+// SCREEN-5, in the compiler rather than in the file. A property schema of false refuses the
+// property, and the whole backstop rests on the compiler reading it that way.
+func TestTheSchemaRefusesAScreenThatCarriesAShapeList(t *testing.T) {
+	read := schema(t)
+	screen := definition(t, read, "screen")
+	properties, _ := screen["properties"].(map[string]any)
+	if refuses, there := properties["el"]; !there || refuses != false {
+		t.Fatalf("the schema reads %v under el, so there is nothing to compile", properties["el"])
+	}
+
+	compiled, err := compileTheSchema(read)
+	if err != nil {
+		t.Fatalf("compiling the schema: %v", err)
+	}
+	one := map[string]any{
+		"readAt":  map[string]any{"commit": "0000000", "date": "2026-09-23"},
+		"screens": map[string]any{"one": map[string]any{"name": "One", "surface": "mobile", "status": "designed", "el": []any{}}},
+		"stories": []any{map[string]any{"id": "one", "title": "A person reads", "start": "one",
+			"nodes": []any{[]any{"one", 0, 0}}}},
+	}
+	if err := compiled.Validate(one); err == nil {
+		t.Error("the schema took a screen carrying a shape list, so nothing backs the refusal up")
 	}
 }
 
@@ -488,46 +526,25 @@ func ofItsOwn(viewport string) string {
 	return " naming its own size"
 }
 
-// Every kind of shape the schema allows is a kind the page can draw. A type the schema names and
-// the page does not know renders as nothing, and a screen then quietly loses a shape.
-func TestThePageDrawsEveryKindOfShapeTheSchemaAllows(t *testing.T) {
-	drawn := page(t)
-
-	for _, kind := range elementKinds(t) {
-		one := fmt.Sprintf(`{"screens":{"one":{"name":"One","surface":"mobile","status":"designed",
-			"el":[{"t":%q,"component":"Thing","v":[]}]}}}`, kind)
-		markup, err := drawn.Screen(Flows{Raw: []byte(one)}, system(t), "one")
-		if err != nil {
-			t.Fatalf("drawing a %s: %v", kind, err)
-		}
-		if !strings.Contains(markup, `data-component="Thing"`) {
-			t.Errorf("the page draws nothing for a shape of kind %q, which the schema allows", kind)
-		}
-	}
-}
-
-// The schema is what step 5 refuses a mockup against, so the two rules it has to carry are pinned
-// here: a screen names its surface, and every shape names the component it stands for.
-func TestTheSchemaAsksForASurfaceAndAComponent(t *testing.T) {
+// The schema is what the mockups stage is refused against, so the rule it has to carry is pinned
+// here: a screen names its surface. The component rule moved onto the markup, where the control
+// plane reads it with a parser.
+func TestTheSchemaAsksForASurface(t *testing.T) {
 	read := schema(t)
 
 	screen := definition(t, read, "screen")
 	if !required(screen, "surface") {
 		t.Error("the schema does not ask a screen for a surface, so nothing says which frame it is drawn in")
 	}
-	element := definition(t, read, "element")
-	if !required(element, "component") {
-		t.Error("the schema does not ask a shape for a component, so a build cannot read which component goes where")
-	}
 
-	// And the fixture answers both, or the skill ships an example that its own schema refuses.
+	// And the fixture answers it, and carries its markup, or the skill ships an example its own
+	// schema refuses.
 	flows := fixture(t)
 	var loose struct {
 		Screens map[string]struct {
 			Surface string `json:"surface"`
-			El      []struct {
-				Component string `json:"component"`
-			} `json:"el"`
+			HTML    string `json:"html"`
+			El      []any  `json:"el"`
 		} `json:"screens"`
 	}
 	if err := json.Unmarshal(flows.Raw, &loose); err != nil {
@@ -537,10 +554,11 @@ func TestTheSchemaAsksForASurfaceAndAComponent(t *testing.T) {
 		if one.Surface != "mobile" && one.Surface != "web" {
 			t.Errorf("the fixture screen %s names the surface %q", id, one.Surface)
 		}
-		for at, shape := range one.El {
-			if strings.TrimSpace(shape.Component) == "" {
-				t.Errorf("shape %d of the fixture screen %s names no component", at, id)
-			}
+		if strings.TrimSpace(one.HTML) == "" {
+			t.Errorf("the fixture screen %s carries no markup, so the skill ships a screen the gate refuses", id)
+		}
+		if len(one.El) > 0 {
+			t.Errorf("the fixture screen %s is written as a list of shapes, which the gate refuses", id)
 		}
 	}
 }
@@ -562,6 +580,17 @@ func schema(t *testing.T) map[string]any {
 	return read
 }
 
+// compileTheSchema compiles the file a session writes against, with the same library the control
+// plane compiles it with, so what this test reads is what refuses a write.
+func compileTheSchema(read map[string]any) (*jsonschema.Schema, error) {
+	const id = "https://github.com/atlantic-blue/quay-krewe/skills/flow-map/schema.json"
+	compiler := jsonschema.NewCompiler()
+	if err := compiler.AddResource(id, read); err != nil {
+		return nil, err
+	}
+	return compiler.Compile(id)
+}
+
 func definition(t *testing.T, read map[string]any, name string) map[string]any {
 	t.Helper()
 	defs, _ := read["$defs"].(map[string]any)
@@ -580,25 +609,6 @@ func required(one map[string]any, field string) bool {
 		}
 	}
 	return false
-}
-
-// elementKinds is every value the schema allows for the kind of a shape.
-func elementKinds(t *testing.T) []string {
-	t.Helper()
-	element := definition(t, schema(t), "element")
-	properties, _ := element["properties"].(map[string]any)
-	kind, _ := properties["t"].(map[string]any)
-	allowed, _ := kind["enum"].([]any)
-	if len(allowed) == 0 {
-		t.Fatal("the schema allows no kind of shape, so this test proves nothing")
-	}
-	out := make([]string, 0, len(allowed))
-	for _, one := range allowed {
-		if name, ok := one.(string); ok {
-			out = append(out, name)
-		}
-	}
-	return out
 }
 
 // FRAME-3. The font file and the mark of the project reach the screen, and they reach it inside the
@@ -992,31 +1002,28 @@ func TestTheGapsViewNamesAPartOfAScreenThatNamesNoComponent(t *testing.T) {
 // once: no markup and no shape list is nothing to draw.
 func TestTheGapsViewNamesAScreenWithNothingToDraw(t *testing.T) {
 	drawn := page(t)
-	flows := fixture(t)
+
+	// A stored artifact, because the gate asks a new one for its markup. One screen is written and
+	// one is not, so a view that called every screen empty would fail here too.
+	stored := `{"screens":{` +
+		`"drawn":{"name":"Drawn","surface":"mobile","status":"designed",` +
+		`"html":"<main data-component=\"Card\"><p>Two tides today</p></main>"},` +
+		`"empty":{"name":"Empty","surface":"mobile","status":"designed"}}}`
+	flows := Flows{Raw: []byte(stored)}
 
 	rows, err := drawn.Gaps(flows)
 	if err != nil {
-		t.Fatalf("reading what is missing from the fixture: %v", err)
+		t.Fatalf("reading what is missing: %v", err)
 	}
-	empty := screensWithNothingToDraw(t, flows)
-	if len(empty) == 0 {
-		t.Fatal("no screen of the fixture draws nothing, so this test proves nothing")
+	row, found := theRow(rows, "empty", "No markup")
+	if !found {
+		t.Fatalf("a screen with nothing to draw and the view says nothing about it:\n%s", rowsRead(rows))
 	}
-	for _, id := range empty {
-		if _, found := theRow(rows, id, "No markup"); !found {
-			t.Errorf("%s draws nothing and the view says nothing about it:\n%s", id, rowsRead(rows))
-		}
+	if !strings.Contains(row.Words, "html") {
+		t.Errorf("the row reads %q, and it has to name the field to write", row.Words)
 	}
-	for id, screen := range flows.Screens {
-		if _, found := theRow(rows, id, "No markup"); !found {
-			continue
-		}
-		if screen.HTML != "" {
-			t.Errorf("%s is written as markup and the view calls it a screen with nothing to draw", id)
-		}
-		if held := drawsAShapeList(t, flows, id); held {
-			t.Errorf("%s draws a shape list and the view calls it a screen with nothing to draw", id)
-		}
+	if _, there := theRow(rows, "drawn", "No markup"); there {
+		t.Errorf("a screen written as markup was called a screen with nothing to draw:\n%s", rowsRead(rows))
 	}
 }
 
@@ -1059,13 +1066,14 @@ func TestTheGapsViewNamesAPressThatOpensAScreenTheFileDoesNotHold(t *testing.T) 
 	}
 }
 
-// VIEW-2, the half that must not be lost. The view reported five kinds of row when a screen was a
-// list of shapes, and a reading that only understood markup would drop every one of them.
-func TestTheGapsViewKeepsEveryRowItReadOffAShapeList(t *testing.T) {
+// SCREEN-5, in the view. A stored artifact may hold a shape list, and after this step the page
+// draws nothing for it, so the operator has to be told that rather than shown an empty phone. The
+// rows the view reads off the file itself keep working, because they are read off the status.
+func TestAStoredShapeListReadsAsAScreenWithNothingToDraw(t *testing.T) {
 	drawn := page(t)
 
 	stored := `{"screens":{` +
-		`"one":{"name":"One","surface":"mobile","status":"designed","el":[{"t":"h","v":"Today"}],` +
+		`"one":{"name":"One","surface":"mobile","status":"designed","el":[{"t":"h","component":"Heading","v":"Today"}],` +
 		`"defects":["Nothing says what happens when the tide is already logged."]},` +
 		`"two":{"name":"Two","surface":"mobile","status":"gap","q":"Does a logged tide sync?"},` +
 		`"three":{"name":"Three","surface":"mobile","status":"unwired","el":[{"t":"h","component":"Heading","v":"Three"}]},` +
@@ -1080,22 +1088,28 @@ func TestTheGapsViewKeepsEveryRowItReadOffAShapeList(t *testing.T) {
 		kind   string
 		holds  string
 	}{
+		{screen: "one", kind: "No markup", holds: "html"},
 		{screen: "one", kind: "Missing", holds: "already logged"},
-		{screen: "one", kind: "No component", holds: "names no component"},
 		{screen: "two", kind: "Question", holds: "Does a logged tide sync?"},
+		{screen: "three", kind: "No markup", holds: "html"},
 		{screen: "three", kind: "Not reachable", holds: "No route opens it"},
 		{screen: "four", kind: "Not designed", holds: "step 2.4"},
 		{screen: "five", kind: "No surface", holds: "names no surface"},
+		{screen: "five", kind: "No markup", holds: "html"},
 	} {
 		row, found := theRow(rows, want.screen, want.kind)
 		if !found {
-			t.Errorf("the view reports no %q row for %s, and it reported one before this step:\n%s",
-				want.kind, want.screen, rowsRead(rows))
+			t.Errorf("the view reports no %q row for %s:\n%s", want.kind, want.screen, rowsRead(rows))
 			continue
 		}
 		if !strings.Contains(row.Words, want.holds) {
 			t.Errorf("the %q row for %s does not say %q: %q", want.kind, want.screen, want.holds, row.Words)
 		}
+	}
+	// And the row about a shape that names no component goes with the shapes, or the operator is
+	// sent to repair a form that cannot be written.
+	if row, found := theRow(rows, "one", "No component"); found {
+		t.Errorf("the view still reads a shape for its component: %q", row.Words)
 	}
 }
 
@@ -1151,35 +1165,6 @@ func rowsRead(rows []GapRow) string {
 		said = append(said, fmt.Sprintf("%s: %s: %s", row.Screen, row.Kind, row.Words))
 	}
 	return strings.Join(said, "\n")
-}
-
-// screensWithNothingToDraw are the screens of a file that carry no markup and no shape list, read
-// off the bytes because a shape list is not part of the typed flows.
-func screensWithNothingToDraw(t *testing.T, flows Flows) []string {
-	t.Helper()
-	var out []string
-	for id := range flows.Screens {
-		if flows.Screens[id].HTML == "" && !drawsAShapeList(t, flows, id) {
-			out = append(out, id)
-		}
-	}
-	sort.Strings(out)
-	return out
-}
-
-// drawsAShapeList says whether one screen carries shapes. The list goes at step 10, and until then a
-// screen carrying one draws.
-func drawsAShapeList(t *testing.T, flows Flows, id string) bool {
-	t.Helper()
-	var loose struct {
-		Screens map[string]struct {
-			El []any `json:"el"`
-		} `json:"screens"`
-	}
-	if err := json.Unmarshal(flows.Raw, &loose); err != nil {
-		t.Fatalf("reading the file again: %v", err)
-	}
-	return len(loose.Screens[id].El) > 0
 }
 
 // pressesIn is every screen the parts of one markup open.

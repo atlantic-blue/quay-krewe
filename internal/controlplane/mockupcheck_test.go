@@ -54,8 +54,29 @@ const mockupTokens = `"tokens": {
 	"space": {"gap": "9px", "pad": "14px"}
 }`
 
-// aMockup is a whole flows.json the schema accepts, with the shapes of its one screen written in.
-func aMockup(elements string) string {
+// aMockup is a whole flows.json the schema accepts, with the markup of its one screen written in.
+func aMockup(markup string) string {
+	return fmt.Sprintf(`{
+		"readAt": {"commit": "0000000", "date": "2026-09-23"},
+		%s,
+		"screens": {
+			"sign-in": {"name": "Sign in", "surface": "web", "status": "designed", "html": %s}
+		},
+		"stories": [
+			{"id": "sign-in", "title": "A person signs in", "start": "sign-in", "nodes": [["sign-in", 0, 0]]}
+		]
+	}`, mockupTokens, strconv.Quote(markup))
+}
+
+// aMockupWith is the same file with one token group replaced, which is how a mockup comes to be
+// drawn in a colour the design system never named.
+func aMockupWith(tokens, markup string) string {
+	return strings.Replace(aMockup(markup), mockupTokens, tokens, 1)
+}
+
+// aShapeListMockup is the same file with its one screen written the way screens used to be
+// written. Every shape in it names its component, so what a refusal reads is the form itself.
+func aShapeListMockup(elements string) string {
 	return fmt.Sprintf(`{
 		"readAt": {"commit": "0000000", "date": "2026-09-23"},
 		%s,
@@ -68,12 +89,11 @@ func aMockup(elements string) string {
 	}`, mockupTokens, elements)
 }
 
-// aMockupWith is the same file with one token group replaced, which is how a mockup comes to be
-// drawn in a colour the design system never named.
-func aMockupWith(tokens, elements string) string {
-	return strings.Replace(aMockup(elements), mockupTokens, tokens, 1)
-}
+// theNamedScreen breaks no rule: every visible part sits under a component, and it is drawn in
+// nothing at all, so a test about one rule is not quietly a test about another.
+const theNamedScreen = `<main data-component="Card"><h1>Sign in</h1><p>Your tides, on every machine.</p></main>`
 
+// namedShapes is the old form with nothing else wrong with it.
 const namedShapes = `{"t": "h", "component": "Heading", "v": "Sign in"},
 	{"t": "btn", "component": "Button", "v": "Sign in", "to": "sign-in"}`
 
@@ -130,23 +150,21 @@ func mockupsHeld(t *testing.T, s *controlplane.Server, project string) *quaycrew
 	return nil
 }
 
-// FLOW-3. The refusal this step exists for. It has to name the screen and the shape: a mockup runs
-// to dozens of screens, and an operator told only that a component is missing has to read the
-// whole file to find out where.
-func TestAMockupWithAShapeThatNamesNoComponentIsRefused(t *testing.T) {
+// SCREEN-5. There is one way to write a screen, and this is what a session that writes the other
+// one is told. It names the screen, because a mockup runs to dozens of them, and it names the
+// field to write instead, because a session told only that its file is wrong has nothing to do.
+func TestAMockupWrittenAsAListOfShapesIsRefused(t *testing.T) {
 	s := newServer(&model.FakeRunner{})
 	_, project := newProject(t, s)
 	designedUpToMockups(t, s, project)
 
-	_, err := writeMockups(s, project, aMockup(
-		`{"t": "h", "component": "Heading", "v": "Sign in"},
-		 {"t": "btn", "v": "Sign in"}`))
+	_, err := writeMockups(s, project, aShapeListMockup(namedShapes))
 
 	if status.Code(err) != codes.InvalidArgument {
-		t.Fatalf("a shape with no component answered %v, want InvalidArgument", err)
+		t.Fatalf("a screen written as a list of shapes answered %v, want InvalidArgument", err)
 	}
 	said := status.Convert(err).Message()
-	for _, want := range []string{"sign-in", "component", "el 1", "btn"} {
+	for _, want := range []string{"sign-in", "html", "markup"} {
 		if !strings.Contains(said, want) {
 			t.Errorf("the refusal reads %q, and it has to say %q", said, want)
 		}
@@ -156,30 +174,31 @@ func TestAMockupWithAShapeThatNamesNoComponentIsRefused(t *testing.T) {
 	}
 }
 
-// An empty component is the same fault as no component at all. A session reads the name to pick a
-// component, and there is nothing to read either way.
-func TestAMockupWithAnEmptyComponentIsRefused(t *testing.T) {
+// The refusal is the session's to act on, so it comes before the schema. A schema fault names a
+// path in a document and says nothing about what to write, and it would be the first thing read.
+func TestTheShapeListRefusalIsReadBeforeTheSchema(t *testing.T) {
 	s := newServer(&model.FakeRunner{})
 	_, project := newProject(t, s)
 	designedUpToMockups(t, s, project)
 
-	_, err := writeMockups(s, project, aMockup(`{"t": "btn", "component": "   ", "v": "Sign in"}`))
+	_, err := writeMockups(s, project, aShapeListMockup(namedShapes))
 	if status.Code(err) != codes.InvalidArgument {
-		t.Fatalf("a shape whose component is spaces answered %v, want InvalidArgument", err)
+		t.Fatalf("a screen written as a list of shapes answered %v, want InvalidArgument", err)
 	}
-	if said := status.Convert(err).Message(); !strings.Contains(said, "sign-in") {
-		t.Errorf("the refusal reads %q, and it has to name the screen", said)
+	said := status.Convert(err).Message()
+	if strings.Contains(said, "schema") {
+		t.Errorf("the refusal reads %q, and a session reading that goes to the schema rather than to its own file", said)
 	}
 }
 
-// The other half of the contract. A mockup that names a component on every shape is kept, so the
-// check refuses a fault rather than refusing the stage.
+// The other half of the contract. A mockup written as markup is kept, so the check refuses a fault
+// rather than refusing the stage.
 func TestAMockupThatNamesEveryComponentGoesIn(t *testing.T) {
 	s := newServer(&model.FakeRunner{})
 	_, project := newProject(t, s)
 	designedUpToMockups(t, s, project)
 
-	written, err := writeMockups(s, project, aMockup(namedShapes))
+	written, err := writeMockups(s, project, aMockup(theNamedScreen))
 	if err != nil {
 		t.Fatalf("a mockup naming every component was refused: %v", err)
 	}
@@ -191,19 +210,19 @@ func TestAMockupThatNamesEveryComponentGoesIn(t *testing.T) {
 	}
 }
 
-// Two screens, both wrong. A map is read in whatever order the runtime feels like, so a refusal
-// that read one would name a different screen on a different day and two operators comparing
-// notes would disagree about what the file says.
-func TestTheRefusalNamesTheSameShapeEveryTime(t *testing.T) {
+// Two screens, both in the old form. A map is read in whatever order the runtime feels like, so a
+// refusal that read one would name a different screen on a different day, and two operators
+// comparing notes would disagree about what the file says.
+func TestTheShapeListRefusalNamesTheSameScreenEveryTime(t *testing.T) {
 	s := newServer(&model.FakeRunner{})
 	_, project := newProject(t, s)
 	designedUpToMockups(t, s, project)
 
-	two := strings.Replace(aMockup(`{"t": "btn", "v": "Sign in"}`),
+	two := strings.Replace(aShapeListMockup(namedShapes),
 		`"screens": {`,
 		`"screens": {
 			"account": {"name": "Account", "surface": "web", "status": "designed",
-				"el": [{"t": "h", "v": "Account"}]},`, 1)
+				"el": [{"t": "h", "component": "Heading", "v": "Account"}]},`, 1)
 
 	for attempt := range 8 {
 		_, err := writeMockups(s, project, two)
@@ -242,7 +261,7 @@ func TestAMockupDrawnInAColourTheDesignSystemDoesNotNameIsRefused(t *testing.T) 
 	designedUpToMockups(t, s, project)
 
 	_, err := writeMockups(s, project, aMockupWith(
-		strings.Replace(mockupTokens, `"primary": "#1b6b57"`, `"primary": "#ff0000"`, 1), namedShapes))
+		strings.Replace(mockupTokens, `"primary": "#1b6b57"`, `"primary": "#ff0000"`, 1), theNamedScreen))
 
 	if status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("a colour outside the design system answered %v, want InvalidArgument", err)
@@ -264,7 +283,7 @@ func TestAMockupDrawnInAFontTheDesignSystemDoesNotNameIsRefused(t *testing.T) {
 
 	_, err := writeMockups(s, project, aMockupWith(
 		strings.Replace(mockupTokens, `"sans": "Inter, system-ui, sans-serif"`,
-			`"sans": "Comic Sans MS, cursive"`, 1), namedShapes))
+			`"sans": "Comic Sans MS, cursive"`, 1), theNamedScreen))
 
 	if status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("a font outside the design system answered %v, want InvalidArgument", err)
@@ -282,44 +301,8 @@ func TestAColourIsTheSameColourInEitherCase(t *testing.T) {
 	designedUpToMockups(t, s, project)
 
 	upper := strings.Replace(mockupTokens, `"surface": "#fdfbf7"`, `"surface": "#FDFBF7"`, 1)
-	if _, err := writeMockups(s, project, aMockupWith(upper, namedShapes)); err != nil {
+	if _, err := writeMockups(s, project, aMockupWith(upper, theNamedScreen)); err != nil {
 		t.Fatalf("the same colour in capitals was refused: %v", err)
-	}
-}
-
-// A colour written onto one screen, rather than into the tokens. The refusal names that screen,
-// because the fault is on it and not on the file.
-func TestAColourWrittenOntoAScreenIsRefused(t *testing.T) {
-	s := newServer(&model.FakeRunner{})
-	_, project := newProject(t, s)
-	designedUpToMockups(t, s, project)
-
-	_, err := writeMockups(s, project, aMockup(
-		`{"t": "btn", "component": "Button", "v": "Sign in", "style": "background: #ff0000"}`))
-
-	if status.Code(err) != codes.InvalidArgument {
-		t.Fatalf("a colour written onto a screen answered %v, want InvalidArgument", err)
-	}
-	said := status.Convert(err).Message()
-	for _, want := range []string{"sign-in", "#ff0000"} {
-		if !strings.Contains(said, want) {
-			t.Errorf("the refusal reads %q, and it has to say %q", said, want)
-		}
-	}
-}
-
-// What a screen says is what a person reads. A gate that searched every string for something
-// shaped like a colour would refuse the words on the screen, which is worse than missing a colour
-// nobody wrote in a field meant for one.
-func TestWordsOnAScreenAreNotColours(t *testing.T) {
-	s := newServer(&model.FakeRunner{})
-	_, project := newProject(t, s)
-	designedUpToMockups(t, s, project)
-
-	if _, err := writeMockups(s, project, aMockup(
-		`{"t": "p", "component": "Text", "v": "Your bill reference is #dedbee and it moves on Monday"}`,
-	)); err != nil {
-		t.Fatalf("prose carrying a hash word was refused as a colour: %v", err)
 	}
 }
 
@@ -332,7 +315,7 @@ func TestADesignSystemWithNoTokensRefusesTheMockupsWrite(t *testing.T) {
 	_, project := newProject(t, s)
 	designedWithTheSystem(t, s, project, "")
 
-	written, err := writeMockups(s, project, aMockup(namedShapes))
+	written, err := writeMockups(s, project, aMockup(theNamedScreen))
 
 	if status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("a mockup written against a design system that names nothing answered %v, "+
@@ -571,19 +554,20 @@ func TestTheRefusalNamesTheSamePartEveryTime(t *testing.T) {
 	}
 }
 
-// A screen written as a shape list keeps the refusal it has today, because both shapes are written
-// while the format changes over.
-func TestAScreenWrittenAsShapesKeepsTheShapeRefusal(t *testing.T) {
+// The form is refused whole. A session that named a component on every shape did the old work
+// well, and it still has one thing to do, so the refusal says that one thing rather than passing
+// the screen and finding the next fault in it.
+func TestAShapeListIsRefusedEvenWhereEveryShapeNamesItsComponent(t *testing.T) {
 	s := newServer(&model.FakeRunner{})
 	_, project := newProject(t, s)
 	designedUpToMockups(t, s, project)
 
-	_, err := writeMockups(s, project, aMockup(`{"t": "btn", "v": "Sign in"}`))
+	_, err := writeMockups(s, project, aShapeListMockup(namedShapes))
 	if status.Code(err) != codes.InvalidArgument {
-		t.Fatalf("a shape with no component answered %v, want InvalidArgument", err)
+		t.Fatalf("a list of shapes that named every component answered %v, want InvalidArgument", err)
 	}
-	if said := status.Convert(err).Message(); !strings.Contains(said, "shape") {
-		t.Errorf("the refusal reads %q, and it has to name the shape it read", said)
+	if said := status.Convert(err).Message(); !strings.Contains(said, "html") {
+		t.Errorf("the refusal reads %q, and it has to name the field to write instead", said)
 	}
 }
 
@@ -811,17 +795,25 @@ func TestTheRefusalNamesTheFirstScreenThatCallsOut(t *testing.T) {
 	}
 }
 
-// A screen written as a shape list is not read for addresses. The shape list is removed with the
-// format it belongs to, and a rule that reached into it would refuse a stored mockup nobody can
-// rewrite.
-func TestAScreenWrittenAsShapesIsNotReadForAddresses(t *testing.T) {
+// A list of shapes is refused before anything inside it is read. A session holding one has one
+// thing to do, and a refusal about an address inside a form that no longer exists sends it to
+// repair the wrong thing.
+func TestAShapeListIsRefusedBeforeAnythingInsideItIsRead(t *testing.T) {
 	s := newServer(&model.FakeRunner{})
 	_, project := newProject(t, s)
 	designedUpToMockups(t, s, project)
 
-	if _, err := writeMockups(s, project, aMockup(
-		`{"t": "image", "component": "Mark", "v": "https://cdn.example.invalid/logo.png"}`)); err != nil {
-		t.Fatalf("a screen written as shapes was refused: %v", err)
+	_, err := writeMockups(s, project, aShapeListMockup(
+		`{"t": "image", "component": "Mark", "v": "https://cdn.example.invalid/logo.png"}`))
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("a list of shapes answered %v, want InvalidArgument", err)
+	}
+	said := status.Convert(err).Message()
+	if !strings.Contains(said, "html") {
+		t.Errorf("the refusal reads %q, and it has to name the field to write instead", said)
+	}
+	if strings.Contains(said, "cdn.example.invalid") {
+		t.Errorf("the refusal reads %q, so it sent the session to an address inside a form that is gone", said)
 	}
 }
 

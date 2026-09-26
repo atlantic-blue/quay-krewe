@@ -1,16 +1,19 @@
-Feature: A mockup is refused unless every shape names its component
+Feature: A mockup is refused unless every part names its component
 
   The mockups stage carries a flows.json, and an operator approves it by playing each story. A
   session then builds the screens on it. That session has to read which library component each
-  shape stands for, so a shape that names none is a picture nobody can build from.
+  part stands for, so a part that names none is a picture nobody can build from.
 
   The fault used to surface at the end, when the building session reached a rectangle labelled
   "Sign in" and had to guess. So the artifact is read when it is written. A mockup a session could
   not build from never reaches the operator to approve.
 
-  A screen can be written as markup instead of a list of shapes. Then the name sits on the markup,
-  as data-component. A part that can be pressed names one on itself. Every visible part sits under
+  A screen is written as the markup of its body. The component name sits on the markup, as
+  data-component. A part that can be pressed names one on itself. Every visible part sits under
   one. So a card names itself once, and the words inside it need no name of their own.
+
+  A screen used to be written as a list of shapes as well. That form is gone, and a session still
+  carrying it is told the field to write instead rather than left to read a schema fault.
 
   A screen is drawn in the colours and the fonts of the design_system stage, which the operator
   approved before the mockups could be written. The stylesheet of a screen, the style of one part and
@@ -34,18 +37,18 @@ Feature: A mockup is refused unless every shape names its component
     And a project named "house-bills"
     And the stages up to the design system are approved, naming the project's colours and fonts
 
-  # The refusal this whole feature exists for. It names the screen and the shape, because a mockup
-  # runs to dozens of screens and an operator told only that a component is missing has to read the
-  # whole file to find out where.
-  Scenario: A mockup with a shape that names no component is refused
-    When the operator writes the mockups stage with a shape that names no component
+  # There is one way to write a screen. A session that writes the old one is told which field to
+  # write instead, in the same sentence, so it has work to do rather than a fault to decode.
+  Scenario: A mockup written as a list of shapes is refused and named the field to write instead
+    When the operator writes the mockups stage with a screen written as a list of shapes
     Then the control plane refuses it as invalid
     And the refusal suggests "sign-in"
-    And the refusal suggests "component"
+    And the refusal suggests "html"
     And the project holds no mockups stage
 
-  # The same contract, read in markup. A part that names no component is a part the building session
-  # has to guess at, whether the screen is written as shapes or as markup.
+  # The refusal this whole feature exists for. It names the screen and the part, because a mockup
+  # runs to dozens of screens and an operator told only that a component is missing has to read the
+  # whole file to find out where.
   Scenario: A screen whose words sit outside every named component is refused
     When the operator writes the mockups stage with words outside every named component
     Then the control plane refuses it as invalid
@@ -66,8 +69,8 @@ Feature: A mockup is refused unless every shape names its component
     And the refusal suggests "design_system"
     And the project holds no mockups stage
 
-  Scenario: A mockup that names a component on every shape goes in
-    When the operator writes the mockups stage with a component on every shape
+  Scenario: A mockup that names a component on every part goes in
+    When the operator writes the mockups stage with a component on every part
     Then the mockups stage carries the artifact it was given
 
   # The backstop. The schema is the file the skill tells a session to write from, so a document that
@@ -109,7 +112,7 @@ Feature: A mockup is refused unless every shape names its component
   # A project whose design system names nothing cannot write a mockup at all.
   Scenario: A mockup is refused while the design system names no tokens
     Given the design system is approved naming nothing
-    When the operator writes the mockups stage with a component on every shape
+    When the operator writes the mockups stage with a component on every part
     Then the control plane refuses it as invalid
     And the refusal suggests "design_system"
     And the refusal suggests "tokens"
