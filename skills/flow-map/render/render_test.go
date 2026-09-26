@@ -34,6 +34,13 @@ import (
 // origin of its own, so the screen posts what was pressed and the page opens the screen that part
 // names, and only when the press came from the frame the page drew.
 //
+// VIEW-1: each node of the map draws its screen in a frame, and the frames are lazy, so a story of
+// ten screens does not build ten documents before the operator has read the first one.
+//
+// VIEW-2: the Gaps view reads the markup of every screen as well as the shape list, and reports a
+// screen with nothing to draw, a part that names no component, and a press that opens a screen the
+// file does not hold, beside every row it read off a shape list.
+//
 // Both are read off the markup the page's own renderer produces, run here outside a browser, so
 // what these tests read is what an operator sees.
 
@@ -901,3 +908,288 @@ func courierFor(t *testing.T, drawn Page, flows Flows, system System, id string)
 	}
 	return courier, document
 }
+
+// VIEW-1. A node of the map draws its screen the way the Prototype view draws it, in a frame of its
+// own, and the frame is lazy: a story runs to ten screens and an operator reads the first one, so a
+// map that built ten documents at once would cost the nine nobody looked at. The rule that keeps a
+// press off the frame is read here too, because a node under a frame that took the press could not
+// be opened.
+func TestOnTheMapEachNodeDrawsItsScreenInALazyFrame(t *testing.T) {
+	drawn := page(t)
+	flows := fixture(t)
+	system := system(t)
+
+	framed := 0
+	for id, screen := range flows.Screens {
+		if screen.HTML == "" {
+			continue
+		}
+		markup, err := drawn.Screen(flows, system, id)
+		if err != nil {
+			t.Fatalf("drawing %s: %v", id, err)
+		}
+		framed++
+		for _, want := range []string{"<iframe", `loading="lazy"`} {
+			if !strings.Contains(markup, want) {
+				t.Errorf("the node for %s carries no %q, so the map builds its document at once:\n%s", id, want, markup)
+			}
+		}
+	}
+	if framed == 0 {
+		t.Fatal("no screen of the fixture is written as markup, so no node draws a frame and this test proves nothing")
+	}
+	if !strings.Contains(strings.Join(strings.Fields(drawn.ScreenStyles), ""), ".nodeiframe.screen{pointer-events:none}") {
+		t.Error("no rule keeps a press off a frame on the map, so the node under one cannot be opened")
+	}
+}
+
+// VIEW-2. The row this step exists for. The gate refuses a part that names no component, so the
+// only artifact carrying one was stored before the gate existed, and that is exactly the artifact an
+// operator opens. Both halves of the rule are read: a press names a component on itself, and the
+// words of a screen sit under one.
+func TestTheGapsViewNamesAPartOfAScreenThatNamesNoComponent(t *testing.T) {
+	drawn := page(t)
+
+	for _, read := range []struct {
+		what   string
+		markup string
+		holds  []string
+	}{
+		{
+			what: "words that sit under no named part",
+			markup: `<section class=\"tides\"><h1 data-component=\"Heading\">Today</h1>` +
+				`<p class=\"note\">Two tides, both after dark.</p></section>`,
+			holds: []string{"<p", "note", "Two tides, both after dark."},
+		},
+		{
+			what:   "a press that names no component",
+			markup: `<div class=\"row\" data-to=\"log\">Log a tide</div>`,
+			holds:  []string{"<div", "row", "Log a tide"},
+		},
+	} {
+		stored := `{"screens":{"places":{"name":"Places","surface":"mobile","status":"designed","html":"` +
+			read.markup + `"}}}`
+		rows, err := drawn.Gaps(Flows{Raw: []byte(stored)})
+		if err != nil {
+			t.Fatalf("reading what is missing from %s: %v", read.what, err)
+		}
+		row, found := theRow(rows, "places", "No component")
+		if !found {
+			t.Errorf("the view says nothing about %s:\n%s", read.what, rowsRead(rows))
+			continue
+		}
+		for _, want := range read.holds {
+			if !strings.Contains(row.Words, want) {
+				t.Errorf("the row for %s does not name %q, so the operator cannot find the part: %q",
+					read.what, want, row.Words)
+			}
+		}
+	}
+}
+
+// VIEW-2. A screen the design says is designed and that draws nothing at all. The shape list is
+// removed at step 10, and then this row covers every screen with no markup, so the rule is written
+// once: no markup and no shape list is nothing to draw.
+func TestTheGapsViewNamesAScreenWithNothingToDraw(t *testing.T) {
+	drawn := page(t)
+	flows := fixture(t)
+
+	rows, err := drawn.Gaps(flows)
+	if err != nil {
+		t.Fatalf("reading what is missing from the fixture: %v", err)
+	}
+	empty := screensWithNothingToDraw(t, flows)
+	if len(empty) == 0 {
+		t.Fatal("no screen of the fixture draws nothing, so this test proves nothing")
+	}
+	for _, id := range empty {
+		if _, found := theRow(rows, id, "No markup"); !found {
+			t.Errorf("%s draws nothing and the view says nothing about it:\n%s", id, rowsRead(rows))
+		}
+	}
+	for id, screen := range flows.Screens {
+		if _, found := theRow(rows, id, "No markup"); !found {
+			continue
+		}
+		if screen.HTML != "" {
+			t.Errorf("%s is written as markup and the view calls it a screen with nothing to draw", id)
+		}
+		if held := drawsAShapeList(t, flows, id); held {
+			t.Errorf("%s draws a shape list and the view calls it a screen with nothing to draw", id)
+		}
+	}
+}
+
+// VIEW-2. A press that opens a screen nobody wrote. It is a gap rather than a refusal, because the
+// screen it names is often the next one somebody is about to design, and the operator is the one who
+// decides that.
+func TestTheGapsViewNamesAPressThatOpensAScreenTheFileDoesNotHold(t *testing.T) {
+	drawn := page(t)
+	flows := fixture(t)
+
+	rows, err := drawn.Gaps(flows)
+	if err != nil {
+		t.Fatalf("reading what is missing from the fixture: %v", err)
+	}
+	dangling, held := 0, 0
+	for id, screen := range flows.Screens {
+		for _, to := range pressesIn(screen.HTML) {
+			if _, there := flows.Screens[to]; there {
+				held++
+				if row, found := theRow(rows, id, "No screen"); found && strings.Contains(row.Words, to) {
+					t.Errorf("%s opens %s, which the file holds, and the view calls it missing: %q", id, to, row.Words)
+				}
+				continue
+			}
+			dangling++
+			row, found := theRow(rows, id, "No screen")
+			if !found {
+				t.Errorf("%s holds a press that opens %s, which the file does not hold, and the view says nothing:\n%s",
+					id, to, rowsRead(rows))
+				continue
+			}
+			if !strings.Contains(row.Words, to) {
+				t.Errorf("the row for %s does not name the screen %s the press opens: %q", id, to, row.Words)
+			}
+		}
+	}
+	if dangling == 0 || held == 0 {
+		t.Fatalf("the fixture holds %d presses that open nothing and %d that open a screen, and it takes one of each",
+			dangling, held)
+	}
+}
+
+// VIEW-2, the half that must not be lost. The view reported five kinds of row when a screen was a
+// list of shapes, and a reading that only understood markup would drop every one of them.
+func TestTheGapsViewKeepsEveryRowItReadOffAShapeList(t *testing.T) {
+	drawn := page(t)
+
+	stored := `{"screens":{` +
+		`"one":{"name":"One","surface":"mobile","status":"designed","el":[{"t":"h","v":"Today"}],` +
+		`"defects":["Nothing says what happens when the tide is already logged."]},` +
+		`"two":{"name":"Two","surface":"mobile","status":"gap","q":"Does a logged tide sync?"},` +
+		`"three":{"name":"Three","surface":"mobile","status":"unwired","el":[{"t":"h","component":"Heading","v":"Three"}]},` +
+		`"four":{"name":"Four","surface":"mobile","status":"named","ref":"step 2.4"},` +
+		`"five":{"name":"Five","status":"designed","el":[{"t":"h","component":"Heading","v":"Five"}]}}}`
+	rows, err := drawn.Gaps(Flows{Raw: []byte(stored)})
+	if err != nil {
+		t.Fatalf("reading what is missing: %v", err)
+	}
+	for _, want := range []struct {
+		screen string
+		kind   string
+		holds  string
+	}{
+		{screen: "one", kind: "Missing", holds: "already logged"},
+		{screen: "one", kind: "No component", holds: "names no component"},
+		{screen: "two", kind: "Question", holds: "Does a logged tide sync?"},
+		{screen: "three", kind: "Not reachable", holds: "No route opens it"},
+		{screen: "four", kind: "Not designed", holds: "step 2.4"},
+		{screen: "five", kind: "No surface", holds: "names no surface"},
+	} {
+		row, found := theRow(rows, want.screen, want.kind)
+		if !found {
+			t.Errorf("the view reports no %q row for %s, and it reported one before this step:\n%s",
+				want.kind, want.screen, rowsRead(rows))
+			continue
+		}
+		if !strings.Contains(row.Words, want.holds) {
+			t.Errorf("the %q row for %s does not say %q: %q", want.kind, want.screen, want.holds, row.Words)
+		}
+	}
+}
+
+// The order is a contract, because an operator reads this list twice: once before a change and once
+// after. The screens are read in name order, as the control plane reads them.
+func TestTheGapsViewReadsTheScreensInNameOrder(t *testing.T) {
+	drawn := page(t)
+	flows := fixture(t)
+
+	first, err := drawn.Gaps(flows)
+	if err != nil {
+		t.Fatalf("reading what is missing from the fixture: %v", err)
+	}
+	if len(first) == 0 {
+		t.Fatal("the view answers no row for the fixture, so this test reads nothing")
+	}
+	again, err := drawn.Gaps(flows)
+	if err != nil {
+		t.Fatalf("reading what is missing a second time: %v", err)
+	}
+	if fmt.Sprint(first) != fmt.Sprint(again) {
+		t.Errorf("two reads of one file answer different lists:\n%s\n%s", rowsRead(first), rowsRead(again))
+	}
+	names := make([]string, 0, len(first))
+	for _, row := range first {
+		names = append(names, row.Screen)
+	}
+	sorted := append([]string(nil), names...)
+	sort.Strings(sorted)
+	if fmt.Sprint(names) != fmt.Sprint(sorted) {
+		t.Errorf("the rows are not in screen name order: %v", names)
+	}
+}
+
+// theRow is the first row of one kind about one screen.
+func theRow(rows []GapRow, screen, kind string) (GapRow, bool) {
+	for _, row := range rows {
+		if row.Screen == screen && row.Kind == kind {
+			return row, true
+		}
+	}
+	return GapRow{}, false
+}
+
+// rowsRead is what the view answered, for a failure to print. A test that only said "no row" would
+// send the reader back to the page to find out what there was instead.
+func rowsRead(rows []GapRow) string {
+	if len(rows) == 0 {
+		return "the view answered no row at all"
+	}
+	said := make([]string, 0, len(rows))
+	for _, row := range rows {
+		said = append(said, fmt.Sprintf("%s: %s: %s", row.Screen, row.Kind, row.Words))
+	}
+	return strings.Join(said, "\n")
+}
+
+// screensWithNothingToDraw are the screens of a file that carry no markup and no shape list, read
+// off the bytes because a shape list is not part of the typed flows.
+func screensWithNothingToDraw(t *testing.T, flows Flows) []string {
+	t.Helper()
+	var out []string
+	for id := range flows.Screens {
+		if flows.Screens[id].HTML == "" && !drawsAShapeList(t, flows, id) {
+			out = append(out, id)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// drawsAShapeList says whether one screen carries shapes. The list goes at step 10, and until then a
+// screen carrying one draws.
+func drawsAShapeList(t *testing.T, flows Flows, id string) bool {
+	t.Helper()
+	var loose struct {
+		Screens map[string]struct {
+			El []any `json:"el"`
+		} `json:"screens"`
+	}
+	if err := json.Unmarshal(flows.Raw, &loose); err != nil {
+		t.Fatalf("reading the file again: %v", err)
+	}
+	return len(loose.Screens[id].El) > 0
+}
+
+// pressesIn is every screen the parts of one markup open.
+func pressesIn(markup string) []string {
+	var out []string
+	for _, found := range aPress.FindAllStringSubmatch(markup, -1) {
+		out = append(out, found[1])
+	}
+	return out
+}
+
+// aPress is a part that opens another screen.
+var aPress = regexp.MustCompile(`data-to="([^"]+)"`)

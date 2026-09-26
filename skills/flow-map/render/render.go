@@ -433,6 +433,26 @@ func (p Page) PressFrom(data string, fromTheFrame bool) (string, bool, error) {
 	return answered.To, answered.Read, nil
 }
 
+// A GapRow is one line of the Gaps view: the screen it is about, the kind of thing that is
+// missing, and the sentence an operator reads.
+type GapRow struct {
+	Screen string `json:"id"`
+	Kind   string `json:"kind"`
+	Words  string `json:"t"`
+}
+
+// Gaps is the page reading everything missing from one file, the way the Gaps view reads it: a
+// screen with nothing to draw, a part that names no component, a press that opens a screen the file
+// does not hold, and every row the view read off a shape list.
+//
+// The markup is parsed outside the render block and handed in. The block touches no document, and
+// this engine carries no DOMParser, so the page passes the parser of the browser and this harness
+// passes a stand in over golang.org/x/net/html, which is the parser the control plane reads the
+// same markup with.
+func (p Page) Gaps(flows Flows) ([]GapRow, error) {
+	return nil, nil
+}
+
 // A Courier is the script the page writes into a screen document, running outside a browser over a
 // stand in for the parts of a page it uses. A press inside a frame is invisible to the page, so
 // what the screen posts back is the whole of the mechanism, and a test reads it here.

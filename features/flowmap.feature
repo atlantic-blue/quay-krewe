@@ -67,3 +67,14 @@ Feature: The flow map plays a project's stories
     And a press that came from anywhere else opens nothing
     And a press on a spot that opens nothing shows the operator what can be pressed
     And on the map a press reaches the node under the screen
+
+  # The step this one exists for. The Gaps view is the one list an operator reads before approving a
+  # mockup. It read the shape list of each screen, so a screen written as markup answered nothing,
+  # and a screen the view says nothing about reads as a screen with nothing wrong with it.
+  Scenario: The Gaps view names a part of a screen that names no component
+    Given a screen a session wrote as markup, holding words outside every named component
+    When the operator reads what is missing from the project
+    Then the view names the part that names no component, by its tag, its class and its first words
+    And it names the screen with nothing to draw
+    And it names the press that opens a screen the project does not hold
+    And it still names every defect the project holds
