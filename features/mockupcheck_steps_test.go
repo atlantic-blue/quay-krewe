@@ -77,24 +77,17 @@ func initializeMockupCheckSteps(sc *godog.ScenarioContext) {
 			return ctx, nil
 		})
 
-	sc.Step(`^the operator writes the mockups stage with a component on every shape$`,
+	sc.Step(`^the operator writes the mockups stage with a component on every part$`,
 		func(ctx context.Context) error {
 			return writeMockupFixture(ctx, func(map[string]any) error { return nil })
 		})
 
-	sc.Step(`^the operator writes the mockups stage with a shape that names no component$`,
+	// The form that went, written by a session that still has it in its fingers. What it is told
+	// back is the whole of this scenario: the screen, and the field to write instead.
+	sc.Step(`^the operator writes the mockups stage with a screen written as a list of shapes$`,
 		func(ctx context.Context) error {
 			return writeMockupFixture(ctx, func(flows map[string]any) error {
-				shape, err := firstShapeOf(flows, theScreen)
-				if err != nil {
-					return err
-				}
-				if _, named := shape["component"]; !named {
-					return fmt.Errorf("the fixture's first %s shape already names no component, "+
-						"so this scenario would prove nothing", theScreen)
-				}
-				delete(shape, "component")
-				return nil
+				return writeAsAShapeList(flows, theScreen)
 			})
 		})
 
@@ -232,19 +225,24 @@ func writeMockupFixture(ctx context.Context, breakIt func(map[string]any) error)
 	return writeStage(ctx, store.StageMockups, "the screens", artifact)
 }
 
-// firstShapeOf is the first shape of one screen, so a scenario can take something off it.
-func firstShapeOf(flows map[string]any, screen string) (map[string]any, error) {
+// writeAsAShapeList turns one screen back into the form that went. Every shape in it names its
+// component, so what the write is refused for is the form itself and nothing else.
+func writeAsAShapeList(flows map[string]any, screen string) error {
 	screens, _ := flows["screens"].(map[string]any)
 	held, _ := screens[screen].(map[string]any)
-	elements, _ := held["el"].([]any)
-	if len(elements) == 0 {
-		return nil, fmt.Errorf("the fixture's %s screen holds no shapes", screen)
+	if held == nil {
+		return fmt.Errorf("the fixture holds no %s screen, so this scenario would prove nothing", screen)
 	}
-	shape, ok := elements[0].(map[string]any)
-	if !ok {
-		return nil, fmt.Errorf("the first shape of %s is not a shape", screen)
+	if _, written := held["html"]; !written {
+		return fmt.Errorf("the fixture's %s screen is not written as markup, "+
+			"so turning it back into shapes would prove nothing", screen)
 	}
-	return shape, nil
+	delete(held, "html")
+	held["el"] = []any{
+		map[string]any{"t": "h", "component": "Heading", "v": "Sign in to Tide"},
+		map[string]any{"t": "btn", "component": "Button", "v": "Sign in", "to": "dashboard"},
+	}
+	return nil
 }
 
 // drawIn puts one value into one token, which is how a mockup comes to be drawn in something the

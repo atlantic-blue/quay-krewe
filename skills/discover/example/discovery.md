@@ -17,8 +17,10 @@ Read at commit 4c1f9a2 on 2026-09-08.
 
 ## Tokens
 
-- Four colours, two fonts, two spaces and one radius. `app/styles/tokens.css`
-- Nothing else in the repository holds a colour. Every shape reads a token.
+- Colour: ink `#141414`, paper `#faf9f7`, accent `#2f6f5e`, quiet `#6b6b6b`. `app/styles/tokens.css`
+- Font: body `Inter, system-ui, sans-serif`, figure `InterTabular, monospace`. `app/styles/tokens.css`
+- Space: row `8px`, block `24px`. Radius: card `12px`. `app/styles/tokens.css`
+- Nothing else in the repository holds a colour. Every part reads a token.
 
 ## Data entities
 

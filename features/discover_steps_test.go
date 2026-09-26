@@ -32,6 +32,8 @@ type screen struct {
 	Surface string `json:"surface"`
 	Status  string `json:"status"`
 	Source  string `json:"source"`
+	HTML    string `json:"html"`
+	El      []any  `json:"el"`
 }
 
 // flows is a flows.json as far as discovery writes one. The stories and the data model belong to the
@@ -248,6 +250,39 @@ func initializeDiscoverSteps(sc *godog.ScenarioContext) {
 			return err
 		}
 		return everyScreenIsBuilt("the example", read)
+	})
+
+	// The form that went. A brief that still shows it is read by every discovery session, and the
+	// mockups stage then refuses what that session wrote.
+	sc.Step(`^the discover skill teaches no list of shapes$`, func(ctx context.Context) error {
+		held := discoverFrom(ctx).held
+		if held == nil {
+			return fmt.Errorf("the discover skill was never read")
+		}
+		for _, gone := range []string{`"el"`, `"tokens"`} {
+			if strings.Contains(held.Brief, gone) {
+				return fmt.Errorf("the brief still writes %s, so a session copies a form the mockups stage refuses", gone)
+			}
+		}
+		return nil
+	})
+
+	sc.Step(`^every screen in the example is written as markup$`, func(ctx context.Context) error {
+		read, err := exampleScreens()
+		if err != nil {
+			return err
+		}
+		for id, one := range read {
+			if strings.TrimSpace(one.HTML) == "" {
+				return fmt.Errorf("the screen %q in the example carries no markup, "+
+					"so a session copying it writes a screen with nothing to draw", id)
+			}
+			if len(one.El) > 0 {
+				return fmt.Errorf("the screen %q in the example is written as a list of shapes, "+
+					"which the mockups stage refuses", id)
+			}
+		}
+		return nil
 	})
 
 	sc.Step(`^the installed command "([^"]*)" says it prints the discovery whole$`,

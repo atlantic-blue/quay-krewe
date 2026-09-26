@@ -13,14 +13,8 @@
       "route": "/sign-in",
       "source": "apps/web/src/routes/SignIn.tsx",
       "ref": "step 1.1",
-      "el": [
-        { "t": "nav", "component": "TopNav", "active": "Sign in", "v": [{ "v": "Tide" }, { "v": "Sign in" }] },
-        { "t": "h", "component": "Heading", "v": "Sign in to Tide" },
-        { "t": "p", "component": "Text", "v": "Your tides, on every machine you use." },
-        { "t": "fields", "component": "TextField", "v": ["Email address", "Password"] },
-        { "t": "btn", "component": "Button", "v": "Sign in", "to": "dashboard" },
-        { "t": "link", "component": "Link", "v": "I forgot my password" }
-      ]
+      "html": "<style>*{box-sizing:border-box}.top{display:flex;align-items:center;gap:28px;padding:0 48px;height:72px;border-bottom:1px solid var(--t-colour-line);font:600 15px/1 var(--t-font-sans);color:var(--t-colour-muted)}.top b{font-size:20px;color:var(--t-colour-ink)}.top .on{color:var(--t-colour-primary)}main{width:420px;margin:96px auto;padding:0 24px}h1{margin:0;font:700 40px/1.1 var(--t-font-sans);letter-spacing:-.02em}.lede{margin:12px 0 32px;font:500 16px/1.5 var(--t-font-sans);color:var(--t-colour-muted)}.fields{display:flex;flex-direction:column;gap:12px}.fields div{border:1px solid var(--t-colour-line);border-radius:var(--t-radius-control);padding:16px;font:500 15px/1 var(--t-font-sans);color:var(--t-colour-muted)}.button{width:100%;margin-top:24px;font:600 16px/1 var(--t-font-sans);padding:16px 22px}.link{display:block;margin-top:20px;text-align:center;font:600 15px/1 var(--t-font-sans);color:var(--t-colour-primary)}</style><nav class=\"top\" data-component=\"TopNav\"><b>Tide</b><span class=\"on\">Sign in</span></nav><main><h1 data-component=\"Heading\">Sign in to Tide</h1><p class=\"lede\" data-component=\"Text\">Your tides, on every machine you use.</p><div class=\"fields\" data-component=\"TextField\"><div>Email address</div><div>Password</div></div><button class=\"button\" data-component=\"Button\" data-to=\"dashboard\">Sign in</button><span class=\"link\" data-component=\"Link\">I forgot my password</span></main>",
+      "viewport": { "width": 1280, "height": 800 }
     },
     "dashboard": {
       "name": "Dashboard",
@@ -50,14 +44,8 @@
       "route": "/log",
       "source": "docs/design/mobile.md",
       "ref": "step 2.4",
-      "el": [
-        { "t": "top", "component": "AppBar", "v": "Log a tide", "right": "Close", "to": "home" },
-        { "t": "h", "component": "Heading", "v": "What did the water do?" },
-        { "t": "chips", "component": "Chip", "v": ["Calm", "Choppy", "Heavy"] },
-        { "t": "opts", "component": "RadioGroup", "on": [0], "v": ["I swam", "I watched", "I fished"] },
-        { "t": "btn", "component": "Button", "v": "Save this tide", "to": "home" },
-        { "t": "dock", "component": "TabBar", "active": "Log", "v": [{ "v": "Today", "to": "home" }, { "v": "Log" }] }
-      ],
+      "html": "<style>*{box-sizing:border-box}.wrap{display:flex;flex-direction:column;gap:var(--t-space-gap);height:100%;padding:28px var(--t-space-pad) 0}.bar{display:flex;justify-content:space-between;align-items:center;font:600 15px/1.2 var(--t-font-sans);color:var(--t-colour-muted)}.bar b{color:var(--t-colour-ink)}.bar i{font-style:normal;color:var(--t-colour-primary)}h1{margin:6px 0 0;font:700 28px/1.2 var(--t-font-sans);letter-spacing:-.02em}.chips{display:flex;flex-wrap:wrap;gap:8px}.chips span{background:var(--t-colour-surface-low);border-radius:18px;padding:8px 14px;font:600 14px/1 var(--t-font-sans)}.opts{display:flex;flex-direction:column;gap:8px}.opts div{display:flex;align-items:center;gap:12px;padding:14px;border-radius:var(--t-radius-control);background:var(--t-colour-surface-low);font:500 15px/1 var(--t-font-sans)}.opts i{flex:none;width:16px;height:16px;border-radius:50%;border:2px solid var(--t-colour-line);background:var(--t-colour-surface)}.opts .on i{border-color:var(--t-colour-primary);background:var(--t-colour-primary)}.button{margin-top:auto;font:600 16px/1 var(--t-font-sans);padding:16px}.tabs{display:flex;margin-top:14px;padding:12px 0 22px;border-top:1px solid var(--t-colour-line);font:600 13px/1 var(--t-font-sans);color:var(--t-colour-muted)}.tabs div{flex:1;text-align:center}.tabs .on{color:var(--t-colour-primary)}</style><div class=\"wrap\"><div class=\"bar\" data-component=\"AppBar\"><b>Log a tide</b><i data-component=\"Link\" data-to=\"home\">Close</i></div><h1 data-component=\"Heading\">What did the water do?</h1><div class=\"chips\" data-component=\"Chip\"><span>Calm</span><span>Choppy</span><span>Heavy</span></div><div class=\"opts\" data-component=\"RadioGroup\"><div class=\"on\"><i></i>I swam</div><div><i></i>I watched</div><div><i></i>I fished</div></div><button class=\"button\" data-component=\"Button\" data-to=\"home\">Save this tide</button><div class=\"tabs\" data-component=\"TabBar\"><div data-component=\"Tab\" data-to=\"home\">Today</div><div class=\"on\">Log</div></div></div>",
+      "viewport": { "width": 390, "height": 844 },
       "defects": ["Nothing says what happens when the tide is already logged."]
     },
     "places": {
@@ -76,7 +64,9 @@
       "status": "designed",
       "route": "/moon",
       "source": "docs/design/mobile.md",
-      "ref": "step 2.7"
+      "ref": "step 2.7",
+      "html": "<style>*{box-sizing:border-box}.wrap{display:flex;flex-direction:column;gap:var(--t-space-gap);height:100%;padding:28px var(--t-space-pad) 0}h1{margin:0;font:700 28px/1.2 var(--t-font-sans);letter-spacing:-.02em}.lede{margin:8px 0 0;font:500 15px/1.4 var(--t-font-sans);color:var(--t-colour-muted)}.disc{width:120px;height:120px;margin:28px auto;border-radius:50%;background:var(--t-colour-surface-low);border:1px solid var(--t-colour-line)}.rows{display:flex;flex-direction:column;gap:var(--t-space-gap)}.rows div{display:flex;justify-content:space-between;font:600 15px/1.3 var(--t-font-sans)}.rows small{font-weight:500;color:var(--t-colour-muted)}</style><div class=\"wrap\"><h1 data-component=\"Heading\">Moon phase</h1><p class=\"lede\" data-component=\"Text\">Waxing gibbous, five days from full.</p><div class=\"disc\" data-component=\"MoonDisc\"></div><div class=\"rows\" data-component=\"List\"><div>Tonight<small>High water at 21:14</small></div></div></div>",
+      "viewport": { "width": 390, "height": 844 }
     }
   },
   "stories": [

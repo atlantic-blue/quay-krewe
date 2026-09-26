@@ -444,8 +444,8 @@ type GapRow struct {
 }
 
 // Gaps is the page reading everything missing from one file, the way the Gaps view reads it: a
-// screen with nothing to draw, a part that names no component, a press that opens a screen the file
-// does not hold, and every row the view read off a shape list.
+// screen with nothing to draw, a part that names no component, and a press that opens a screen the
+// file does not hold.
 //
 // The markup is parsed outside the render block and handed in. The block touches no document, and
 // this engine carries no DOMParser, so the page passes the parser of the browser and this harness

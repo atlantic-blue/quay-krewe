@@ -69,6 +69,8 @@ Feature: Discovery writes down what a repository already holds
       | The status reads `built`                         |
       | The surface reads `web` or `mobile`              |
       | The source names the file you read the screen from |
+      | Write the markup of each screen                  |
+      | Write the token values you read into the discovery |
       | Only the operator approves                       |
 
   # The example is the part a session copies, so a broken one teaches every session the wrong shape.
@@ -77,6 +79,14 @@ Feature: Discovery writes down what a repository already holds
     Then the discover skill ships the example it names
     And the example artifact holds 3 screens
     And every screen in the example was built already
+
+  # There is one way to write a screen. A brief and an example that still carry the list of shapes
+  # teach every discovery session to write a file the mockups stage refuses.
+  Scenario: The brief and the example write a screen one way
+    When the operator reads the discover skill
+    Then the discover skill ships the example it names
+    And the discover skill teaches no list of shapes
+    And every screen in the example is written as markup
 
   # The operator's own terminal. It asks, it dispatches, it reads back, and the session in the
   # sandbox is what writes: a discovery written in the operator's terminal has no sandbox, no record
