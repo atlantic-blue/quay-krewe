@@ -31,6 +31,5 @@
       "html": "<h1 data-component=\"Heading\">Settings</h1><label data-component=\"TextField\">Who else sees these bills</label><a data-component=\"Link\" data-to=\"bills\">Back</a>"
     }
   },
-  "stories": [],
-  "dataModel": []
+  "stories": []
 }

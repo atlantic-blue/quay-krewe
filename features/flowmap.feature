@@ -93,3 +93,16 @@ Feature: The flow map plays a project's stories
     And the write says nothing is wrong
     And the example ships a screen on a phone and a screen in a browser
     And the flow map brief names the example beside it
+
+  # The step this one exists for. A discovery writes down the screens a repository holds and writes no
+  # story over them, because it found none. The page read the first story to decide what to draw, so a
+  # file with none drew nothing at all and the operator read one sentence saying the screens did not
+  # load. Every screen the repository holds is the thing that operator opened the map for.
+  Scenario: A flow map with no stories draws every screen
+    Given the screens of a discovery, written with no story over them
+    When the operator opens that map
+    Then the page walks every screen the file holds, once each, in name order
+    And every screen of that walk is drawn in the frame of its surface
+    And the walk draws a way from each part that opens a screen the file holds
+    And what is missing still names a part of a screen that names no component
+    And a file that holds its own stories is walked by those stories

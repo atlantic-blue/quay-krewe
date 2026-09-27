@@ -476,6 +476,135 @@ func (p Page) Gaps(flows Flows) ([]GapRow, error) {
 	return rows, nil
 }
 
+// A Walk is one story of a map, as the page reads it: the screens it draws, where each one sits, and
+// the ways between them.
+//
+// A file that holds stories is walked by those stories. A file that holds none is walked by one the
+// page composes over every screen it holds, which is what a discovery gets, and Composed says which
+// of the two a reader is looking at.
+type Walk struct {
+	ID       string     `json:"id"`
+	Title    string     `json:"title"`
+	Story    string     `json:"story"`
+	Steps    string     `json:"steps"`
+	Start    string     `json:"start"`
+	Composed bool       `json:"composed"`
+	Nodes    []WalkNode `json:"nodes"`
+	Edges    []WalkEdge `json:"edges"`
+}
+
+// A WalkNode is one screen of a walk, at the column and the row the map draws it at.
+type WalkNode struct {
+	Screen string
+	Column int
+	Row    int
+}
+
+// UnmarshalJSON reads a node the way a walk writes one: the screen, then the column, then the row.
+func (n *WalkNode) UnmarshalJSON(said []byte) error {
+	held, err := theParts(said, 3, "a node of a walk", "a screen, a column and a row")
+	if err != nil {
+		return err
+	}
+	if err := json.Unmarshal(held[0], &n.Screen); err != nil {
+		return fmt.Errorf("flowmap: the screen of a node: %w", err)
+	}
+	if err := json.Unmarshal(held[1], &n.Column); err != nil {
+		return fmt.Errorf("flowmap: the column of a node: %w", err)
+	}
+	if err := json.Unmarshal(held[2], &n.Row); err != nil {
+		return fmt.Errorf("flowmap: the row of a node: %w", err)
+	}
+	return nil
+}
+
+// A WalkEdge is one way out of a screen: where it goes, what it is called, and how far it has got.
+type WalkEdge struct {
+	From  string
+	To    string
+	Label string
+	Kind  string
+}
+
+// UnmarshalJSON reads an edge the way a walk writes one: from, to, the words, then the kind.
+func (e *WalkEdge) UnmarshalJSON(said []byte) error {
+	held, err := theParts(said, 4, "an edge of a walk", "from, to, what it is called and how far it has got")
+	if err != nil {
+		return err
+	}
+	for at, into := range []*string{&e.From, &e.To, &e.Label, &e.Kind} {
+		if err := json.Unmarshal(held[at], into); err != nil {
+			return fmt.Errorf("flowmap: part %d of an edge: %w", at+1, err)
+		}
+	}
+	return nil
+}
+
+// theParts reads one tuple of a walk and says so when it is too short, because a node or an edge the
+// page wrote with a part missing would otherwise arrive here as a zero value and read as a walk that
+// names nothing.
+func theParts(said []byte, want int, what, holds string) ([]json.RawMessage, error) {
+	var held []json.RawMessage
+	if err := json.Unmarshal(said, &held); err != nil {
+		return nil, fmt.Errorf("flowmap: %s is not a list: %w", what, err)
+	}
+	if len(held) < want {
+		return nil, fmt.Errorf("flowmap: %s holds %d parts, and it is %s", what, len(held), holds)
+	}
+	return held, nil
+}
+
+// Walks is the walks the page reads a file as: the stories it holds, or the one walk the page
+// composes over every screen when it holds no story.
+//
+// It is the reading every view of the page is written against, so what a test reads here is what the
+// map draws, what the Prototype view plays and what the Gaps view groups by. The markup is parsed
+// outside the render block for the reason Gaps parses it there: the block touches no document, and
+// the ways out of a screen are read off the parts of it rather than off a pattern.
+func (p Page) Walks(flows Flows) ([]Walk, error) {
+	vm := goja.New()
+	if err := vm.Set("flowsJSON", string(flows.Raw)); err != nil {
+		return nil, err
+	}
+	if err := vm.Set("parseMarkupJSON", theNodesIn); err != nil {
+		return nil, err
+	}
+	if _, err := vm.RunString(p.Render); err != nil {
+		return nil, fmt.Errorf("flowmap: the render block did not run: %w", err)
+	}
+	if _, err := vm.RunString(theParserStandIn); err != nil {
+		return nil, fmt.Errorf("flowmap: the parser stand in did not run: %w", err)
+	}
+	value, err := vm.RunString("JSON.stringify(walksOf(JSON.parse(flowsJSON), aParsedBody))")
+	if err != nil {
+		return nil, fmt.Errorf("flowmap: reading the walks of the map: %w", err)
+	}
+	var walks []Walk
+	if err := json.Unmarshal([]byte(value.String()), &walks); err != nil {
+		return nil, fmt.Errorf("flowmap: reading the walks the page answered: %w", err)
+	}
+	return walks, nil
+}
+
+// Screens is every screen the walk draws, in the order it draws them.
+func (w Walk) Screens() []string {
+	out := make([]string, 0, len(w.Nodes))
+	for _, node := range w.Nodes {
+		out = append(out, node.Screen)
+	}
+	return out
+}
+
+// WayTo is the edge out of one screen that opens another, and false when the walk draws none.
+func (w Walk) WayTo(from, to string) (WalkEdge, bool) {
+	for _, edge := range w.Edges {
+		if edge.From == from && edge.To == to {
+			return edge, true
+		}
+	}
+	return WalkEdge{}, false
+}
+
 // theParserStandIn stands in for the parser of the browser, over the parse above. It answers the
 // body of a screen document as the parts of a document the reading uses: the tag, the attributes, the
 // text, and the nodes under it. A page passes DOMParser here, and a fake that accepted markup a
