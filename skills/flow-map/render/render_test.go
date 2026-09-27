@@ -1178,3 +1178,154 @@ func pressesIn(markup string) []string {
 
 // aPress is a part that opens another screen.
 var aPress = regexp.MustCompile(`data-to="([^"]+)"`)
+
+// noStories is the fixture a discovery writes: the screens of a repository, with no story over them.
+func noStories(t *testing.T) Flows {
+	t.Helper()
+	dir, err := Dir()
+	if err != nil {
+		t.Fatalf("finding the skill: %v", err)
+	}
+	read, err := ReadFlows(filepath.Join(dir, "fixtures", "no-stories.json"))
+	if err != nil {
+		t.Fatalf("reading the fixture: %v", err)
+	}
+	if len(read.Stories) != 0 {
+		t.Fatalf("the fixture holds %d stories, so it is not the file a discovery writes", len(read.Stories))
+	}
+	if len(read.Screens) < 2 {
+		t.Fatalf("the fixture holds %d screens, so a walk over every screen proves nothing", len(read.Screens))
+	}
+	return read
+}
+
+// VIEW-3. A discovery writes down the screens a repository holds and no story over them, and every
+// view of this page is written against a walk. So the page reads a file with no story as one walk over
+// every screen it holds, and each part that opens a screen of the file is a way on it.
+//
+// The field the page reads is the one a discovery writes, an empty list, and the one it is read as
+// here is the same file with the field left out, because a file that names no stories at all reaches
+// the page the same way.
+func TestAFileWithNoStoriesIsReadAsOneWalkOverEveryScreen(t *testing.T) {
+	drawn := page(t)
+	flows := noStories(t)
+
+	for _, held := range []struct {
+		what  string
+		flows Flows
+	}{{"an empty list of stories", flows}, {"no stories field at all", withNoStoriesField(t, flows)}} {
+		walks, err := drawn.Walks(held.flows)
+		if err != nil {
+			t.Fatalf("reading the walks of a file with %s: %v", held.what, err)
+		}
+		if len(walks) != 1 {
+			t.Fatalf("a file with %s is read as %d walks, and an operator plays one of them", held.what, len(walks))
+		}
+		walk := walks[0]
+		if !walk.Composed {
+			t.Errorf("the walk over a file with %s does not say the page composed it", held.what)
+		}
+		if got, want := strings.Join(walk.Screens(), ", "), strings.Join(screenNames(flows), ", "); got != want {
+			t.Errorf("the walk over a file with %s holds %s, and the file holds %s", held.what, got, want)
+		}
+		if strings.TrimSpace(walk.Title) == "" {
+			t.Errorf("the walk over a file with %s carries no title", held.what)
+		}
+	}
+}
+
+// VIEW-3. The ways are what an operator reads a flow off. A discovery writes data-to on the parts it
+// found, so the arrows are in the file one layer down, and a part that opens a screen the file does
+// not hold draws none: the Gaps view is where that one is read.
+func TestTheComposedWalkDrawsAWayForEachPartThatOpensAScreenOfTheFile(t *testing.T) {
+	walks, err := page(t).Walks(noStories(t))
+	if err != nil {
+		t.Fatalf("reading the walks: %v", err)
+	}
+	if len(walks) != 1 {
+		t.Fatalf("a file with no story is read as %d walks", len(walks))
+	}
+	walk, flows := walks[0], noStories(t)
+
+	drawn, dangling := 0, 0
+	for _, id := range screenNames(flows) {
+		for _, to := range pressesIn(flows.Screens[id].HTML) {
+			_, holds := flows.Screens[to]
+			edge, wayOut := walk.WayTo(id, to)
+			switch {
+			case holds && !wayOut:
+				t.Errorf("a part of %s opens %s, and the walk draws no way there", id, to)
+			case holds:
+				drawn++
+				if strings.TrimSpace(edge.Label) == "" {
+					t.Errorf("the way from %s to %s carries no words", id, to)
+				}
+			case wayOut:
+				t.Errorf("the walk draws a way from %s to %s, and the file holds no screen of that name", id, to)
+			default:
+				dangling++
+			}
+		}
+	}
+	if drawn == 0 {
+		t.Fatal("no part of the fixture opens a screen the file holds, so no way was read and this proves nothing")
+	}
+	if dangling == 0 {
+		t.Fatal("no part of the fixture opens a screen the file lacks, so nothing proves a way to one is left undrawn")
+	}
+}
+
+// VIEW-3. The stories a project wrote are what the operator approves by playing, so a page that
+// composed a walk over a file holding its own would replace them.
+func TestAFileThatHoldsStoriesIsWalkedByThoseStories(t *testing.T) {
+	flows := fixture(t)
+	if len(flows.Stories) == 0 {
+		t.Fatal("the fixture holds no story, so this proves nothing")
+	}
+	walks, err := page(t).Walks(flows)
+	if err != nil {
+		t.Fatalf("reading the walks: %v", err)
+	}
+	if len(walks) != len(flows.Stories) {
+		t.Fatalf("the page reads %d walks over a file holding %d stories", len(walks), len(flows.Stories))
+	}
+	for at, story := range flows.Stories {
+		if walks[at].ID != story.ID {
+			t.Errorf("walk %d is %q, and story %d of the file is %q", at+1, walks[at].ID, at+1, story.ID)
+		}
+		if walks[at].Composed {
+			t.Errorf("the %s walk reads as one the page composed", story.ID)
+		}
+		if len(walks[at].Nodes) == 0 {
+			t.Errorf("the %s walk draws no screen at all", story.ID)
+		}
+	}
+}
+
+// withNoStoriesField is the same file with the stories left out, because a file that names none at all
+// reaches the page as often as one that names an empty list.
+func withNoStoriesField(t *testing.T, flows Flows) Flows {
+	t.Helper()
+	var whole map[string]json.RawMessage
+	if err := json.Unmarshal(flows.Raw, &whole); err != nil {
+		t.Fatalf("reading the fixture: %v", err)
+	}
+	delete(whole, "stories")
+	said, err := json.Marshal(whole)
+	if err != nil {
+		t.Fatalf("writing the fixture without its stories: %v", err)
+	}
+	out := flows
+	out.Raw, out.Stories = said, nil
+	return out
+}
+
+// screenNames is every screen of a file, in the order the page reads them.
+func screenNames(flows Flows) []string {
+	names := make([]string, 0, len(flows.Screens))
+	for id := range flows.Screens {
+		names = append(names, id)
+	}
+	sort.Strings(names)
+	return names
+}

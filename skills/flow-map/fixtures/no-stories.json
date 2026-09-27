@@ -1,0 +1,43 @@
+{
+  "project": "House bills",
+  "readAt": {
+    "repository": "acme/house-bills",
+    "commit": "4c1f9a2",
+    "date": "2026-09-27"
+  },
+  "screens": {
+    "bills": {
+      "name": "Every bill",
+      "surface": "web",
+      "status": "built",
+      "route": "/",
+      "source": "app/routes/bills.tsx",
+      "html": "<main data-component=\"Page\"><h1 data-component=\"Heading\">Every bill</h1><ul data-component=\"BillRow\"><li>Water, 42.10, due Friday</li><li>Power, 88.00, paid</li></ul><button data-component=\"Button\" data-to=\"bill\">Add a bill</button></main>"
+    },
+    "bill": {
+      "name": "One bill",
+      "surface": "web",
+      "status": "built",
+      "route": "/bills/:id",
+      "source": "app/routes/bill.tsx",
+      "html": "<main data-component=\"Page\"><h1 data-component=\"Heading\">Water</h1><label data-component=\"MoneyField\">Amount</label><label data-component=\"DateField\">Due</label><button data-component=\"Button\" data-to=\"bills\">Save</button></main>"
+    },
+    "settings": {
+      "name": "Settings",
+      "surface": "web",
+      "status": "built",
+      "route": "/settings",
+      "source": "app/routes/settings.tsx",
+      "html": "<main data-component=\"Page\"><h1 data-component=\"Heading\">Settings</h1><section class=\"who\"><p class=\"note\">Who else sees these bills</p></section><a data-component=\"Link\" data-to=\"invite\">Invite somebody</a><a data-component=\"Link\" data-to=\"bills\">Back</a></main>"
+    },
+    "pocket": {
+      "name": "Bills on the phone",
+      "surface": "mobile",
+      "status": "built",
+      "route": "/",
+      "source": "app/screens/pocket.tsx",
+      "html": "<main data-component=\"Page\"><h1 data-component=\"Heading\">Due this week</h1><button data-component=\"Button\" data-to=\"bills\">Open every bill</button></main>"
+    }
+  },
+  "stories": []
+}

@@ -47,17 +47,19 @@ const (
 )
 
 type flowMapWorld struct {
-	page      flowmap.Page
-	flows     flowmap.Flows
-	system    flowmap.System
-	drawn     string
-	document  string
-	screen    string
-	documents map[string]string
-	courier   *flowmap.Courier
-	opens     string
-	posted    string
-	gaps      []flowmap.GapRow
+	page        flowmap.Page
+	flows       flowmap.Flows
+	system      flowmap.System
+	drawn       string
+	document    string
+	screen      string
+	documents   map[string]string
+	courier     *flowmap.Courier
+	opens       string
+	posted      string
+	gaps        []flowmap.GapRow
+	walks       []flowmap.Walk
+	withStories flowmap.Flows
 }
 
 type flowMapKey struct{}
@@ -702,6 +704,241 @@ func initializeFlowMapSteps(sc *godog.ScenarioContext) {
 		}
 		return nil
 	})
+
+	// A discovery reads a repository and writes down the screens it found. It finds no story, so it
+	// writes none, and the file this fixture carries is the file it stores.
+	sc.Step(`^the screens of a discovery, written with no story over them$`, func(ctx context.Context) error {
+		w := flowMapFrom(ctx)
+		dir, err := flowmap.Dir()
+		if err != nil {
+			return err
+		}
+		flows, err := flowmap.ReadFlows(filepath.Join(dir, "fixtures", "no-stories.json"))
+		if err != nil {
+			return err
+		}
+		if len(flows.Stories) != 0 {
+			return fmt.Errorf("the fixture holds %d stories, so it is not the file a discovery writes",
+				len(flows.Stories))
+		}
+		if len(flows.Screens) < 2 {
+			return fmt.Errorf("the fixture holds %d screens, so a walk over every screen proves nothing",
+				len(flows.Screens))
+		}
+		w.withStories, w.flows = w.flows, flows
+		return nil
+	})
+
+	sc.Step(`^the operator opens that map$`, func(ctx context.Context) error {
+		w := flowMapFrom(ctx)
+		walks, err := w.page.Walks(w.flows)
+		if err != nil {
+			return err
+		}
+		w.walks = walks
+		return nil
+	})
+
+	// One walk, holding every screen, each once. Two screens drawn at one place would hide one of
+	// them, so the place each node sits at is read here as well as the list.
+	sc.Step(`^the page walks every screen the file holds, once each, in name order$`, func(ctx context.Context) error {
+		w := flowMapFrom(ctx)
+		walk, err := theOneWalk(w)
+		if err != nil {
+			return err
+		}
+		want := theScreenNames(w.flows)
+		got := walk.Screens()
+		if strings.Join(got, ", ") != strings.Join(want, ", ") {
+			return fmt.Errorf("the walk holds %v, and the file holds %v", got, want)
+		}
+		if walk.Start != want[0] {
+			return fmt.Errorf("the walk starts at %q, and the first screen of the file is %q", walk.Start, want[0])
+		}
+		if strings.TrimSpace(walk.Title) == "" {
+			return fmt.Errorf("the walk carries no title, so the operator reads an empty heading over the map")
+		}
+		at := map[string]string{}
+		for _, node := range walk.Nodes {
+			place := fmt.Sprintf("%d,%d", node.Column, node.Row)
+			if held, taken := at[place]; taken {
+				return fmt.Errorf("%s and %s are both drawn at column %d row %d, so one hides the other",
+					held, node.Screen, node.Column, node.Row)
+			}
+			at[place] = node.Screen
+		}
+		return nil
+	})
+
+	// The frame is the half an operator reads the product through: a phone screen in a browser frame
+	// is a screen nobody can judge.
+	sc.Step(`^every screen of that walk is drawn in the frame of its surface$`, func(ctx context.Context) error {
+		w := flowMapFrom(ctx)
+		walk, err := theOneWalk(w)
+		if err != nil {
+			return err
+		}
+		frames := map[string]string{"mobile": "frame-mobile", "web": "frame-web"}
+		surfaces := map[string]bool{}
+		for _, node := range walk.Nodes {
+			screen, held := w.flows.Screens[node.Screen]
+			if !held {
+				return fmt.Errorf("the walk draws %s, and the file holds no screen of that name", node.Screen)
+			}
+			drawn, err := w.page.Screen(w.flows, w.system, node.Screen)
+			if err != nil {
+				return err
+			}
+			for _, want := range []string{frames[screen.Surface], `data-surface="` + screen.Surface + `"`} {
+				if !strings.Contains(drawn, want) {
+					return fmt.Errorf("%s is a %s screen and what was drawn carries no %q:\n%s",
+						node.Screen, screen.Surface, want, drawn)
+				}
+			}
+			if !strings.Contains(drawn, "<iframe") {
+				return fmt.Errorf("%s was drawn outside a frame of its own:\n%s", node.Screen, drawn)
+			}
+			surfaces[screen.Surface] = true
+		}
+		for _, surface := range []string{"mobile", "web"} {
+			if !surfaces[surface] {
+				return fmt.Errorf("the fixture holds no %s screen, so the frame of that surface is never read: it holds %v",
+					surface, namesOf(surfaces))
+			}
+		}
+		return nil
+	})
+
+	// The ways are how an operator reads a flow off a map nobody wrote a story for. A discovery writes
+	// data-to on the parts it found, so the arrows are already in the file, one layer down.
+	sc.Step(`^the walk draws a way from each part that opens a screen the file holds$`, func(ctx context.Context) error {
+		w := flowMapFrom(ctx)
+		walk, err := theOneWalk(w)
+		if err != nil {
+			return err
+		}
+		drawn, dangling := 0, 0
+		for _, id := range theScreenNames(w.flows) {
+			for _, found := range aPartThatOpens.FindAllStringSubmatch(w.flows.Screens[id].HTML, -1) {
+				to := found[1]
+				_, holds := w.flows.Screens[to]
+				edge, wayOut := walk.WayTo(id, to)
+				if holds && !wayOut {
+					return fmt.Errorf("a part of %s opens %s, and the walk draws no way there: it draws %v",
+						id, to, whatTheWalkDraws(walk))
+				}
+				if !holds {
+					dangling++
+					if wayOut {
+						return fmt.Errorf("the walk draws a way from %s to %s, and the file holds no screen of that name",
+							id, to)
+					}
+					continue
+				}
+				drawn++
+				if strings.TrimSpace(edge.Label) == "" {
+					return fmt.Errorf("the way from %s to %s carries no words, so the operator reads an unlabelled arrow", id, to)
+				}
+				if strings.TrimSpace(edge.Kind) == "" {
+					return fmt.Errorf("the way from %s to %s says nothing about how far it has got", id, to)
+				}
+			}
+		}
+		if drawn == 0 {
+			return fmt.Errorf("no part of the fixture opens a screen the file holds, so no way is read and this proves nothing")
+		}
+		if dangling == 0 {
+			return fmt.Errorf("no part of the fixture opens a screen the file lacks, so nothing proves a way to one is left undrawn")
+		}
+		return nil
+	})
+
+	// The Gaps view is the list an operator reads before approving anything, and it groups by walk. A
+	// file with no story had no group, so it read as a project with nothing wrong with it.
+	sc.Step(`^what is missing still names a part of a screen that names no component$`, func(ctx context.Context) error {
+		w := flowMapFrom(ctx)
+		rows, err := w.page.Gaps(w.flows)
+		if err != nil {
+			return err
+		}
+		for _, row := range rows {
+			if row.Kind != "No component" {
+				continue
+			}
+			if _, held := w.flows.Screens[row.Screen]; !held {
+				return fmt.Errorf("the view names %q, and the file holds no screen of that name", row.Screen)
+			}
+			if strings.TrimSpace(row.Words) == "" {
+				return fmt.Errorf("the view names a part of %s and says nothing about which part", row.Screen)
+			}
+			return nil
+		}
+		return fmt.Errorf("the view names no part that names no component:\n%s", whatTheViewSaid(rows))
+	})
+
+	// The other half of the rule. The stories a project wrote are the thing the operator approves, so
+	// a page that composed a walk over a file holding its own would replace them.
+	sc.Step(`^a file that holds its own stories is walked by those stories$`, func(ctx context.Context) error {
+		w := flowMapFrom(ctx)
+		if len(w.withStories.Stories) == 0 {
+			return fmt.Errorf("the fixture that holds stories was never read, so this proves nothing")
+		}
+		walks, err := w.page.Walks(w.withStories)
+		if err != nil {
+			return err
+		}
+		if len(walks) != len(w.withStories.Stories) {
+			return fmt.Errorf("the page reads %d walks over a file holding %d stories",
+				len(walks), len(w.withStories.Stories))
+		}
+		for at, story := range w.withStories.Stories {
+			if walks[at].ID != story.ID {
+				return fmt.Errorf("walk %d is %q, and story %d of the file is %q", at+1, walks[at].ID, at+1, story.ID)
+			}
+			if walks[at].Start != story.Start {
+				return fmt.Errorf("the %s walk starts at %q, and the story starts at %q",
+					story.ID, walks[at].Start, story.Start)
+			}
+			if walks[at].Composed {
+				return fmt.Errorf("the %s walk reads as one the page composed, over a file that wrote its own", story.ID)
+			}
+			if len(walks[at].Nodes) == 0 {
+				return fmt.Errorf("the %s walk draws no screen at all", story.ID)
+			}
+		}
+		return nil
+	})
+}
+
+// theOneWalk is the walk the page read over a file that holds no story, and a refusal when it read
+// none or more than one. Every assertion about that walk goes through it, so a scenario whose walk
+// never arrived says that rather than reading an empty one.
+func theOneWalk(w *flowMapWorld) (flowmap.Walk, error) {
+	if len(w.walks) != 1 {
+		return flowmap.Walk{}, fmt.Errorf("the page reads %d walks over a file that holds no story, and an operator plays one of them",
+			len(w.walks))
+	}
+	return w.walks[0], nil
+}
+
+// theScreenNames is every screen of a file, in the order the page reads them, which is the order of
+// the names a story calls them by.
+func theScreenNames(flows flowmap.Flows) []string {
+	names := make([]string, 0, len(flows.Screens))
+	for id := range flows.Screens {
+		names = append(names, id)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// whatTheWalkDraws is every way a walk holds, for a refusal to print.
+func whatTheWalkDraws(walk flowmap.Walk) []string {
+	said := make([]string, 0, len(walk.Edges))
+	for _, edge := range walk.Edges {
+		said = append(said, fmt.Sprintf("%s to %s (%s)", edge.From, edge.To, edge.Label))
+	}
+	return said
 }
 
 // theFlowMapExampleFile reads one file of the worked example as it is written on disk, because the
