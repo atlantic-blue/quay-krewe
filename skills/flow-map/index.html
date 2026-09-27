@@ -197,7 +197,7 @@ main{position:relative;min-width:0;min-height:0;display:flex;flex-direction:colu
         <div class="legend" id="legend"></div>
       </section>
       <section style="display:flex;flex-direction:column;gap:8px">
-        <div class="label">User stories</div>
+        <div class="label" id="storieslabel">User stories</div>
         <div class="stories" id="stories"></div>
       </section>
       <p class="note">Each frame is drawn from the words in flows.json, in the project's own tokens.
@@ -528,14 +528,8 @@ function aPartWithNoComponent(node, named) {
 }
 
 // pressesUnder is every screen the parts of one markup open, in the order they were written.
-function pressesUnder(node, out) {
-  var found = out || [];
-  nodesUnder(node, 1).forEach(function (child) {
-    var to = attributeOf(child, "data-to");
-    if (to !== "" && found.indexOf(to) < 0) { found.push(to); }
-    pressesUnder(child, found);
-  });
-  return found;
+function pressesUnder(node) {
+  return theWaysOutOf(node).map(function (way) { return way.to; });
 }
 
 // gapsOf is every row of the Gaps view, for the whole file, in screen name order, so two reads of
@@ -578,6 +572,87 @@ function gapsOf(flows, parse) {
   });
   return rows;
 }
+
+// THE_COMPOSED_WALK is the walk the page makes for a file that wrote none, and the words an operator
+// reads over it.
+var THE_COMPOSED_WALK = {
+  id: "every-screen",
+  title: "The whole project",
+  story: "This file holds no story, so every screen it holds is on one walk, in name order."
+};
+
+// A composed walk is laid out in rows of this many. Twenty screens on one row is 9400 pixels of map,
+// and the view scales to the width of the screen it is read on.
+var THE_COMPOSED_COLUMNS = 4;
+
+// THE_EDGE_KINDS are how far a way can have got. A screen carries a status of its own, and the two
+// lists are not the same, so a status outside this one is drawn as built.
+var THE_EDGE_KINDS = ["built", "designed", "named", "missing", "later", "proposed"];
+
+// theWaysOutOf is every screen the parts of one markup open, with the words of the part that opens
+// it, in the order they were written. A screen two parts open is held once, under the words of the
+// first of them.
+function theWaysOutOf(node, out) {
+  var found = out || [];
+  nodesUnder(node, 1).forEach(function (child) {
+    var to = attributeOf(child, "data-to");
+    if (to !== "" && !found.some(function (held) { return held.to === to; })) {
+      found.push({ to: to, label: theFirstWordsOf(child) });
+    }
+    theWaysOutOf(child, found);
+  });
+  return found;
+}
+
+// walksOf is the walks a file is read as: the stories it holds, or one walk over every screen it
+// holds when it wrote none.
+//
+// Every view of this page is written against a walk, so a file with no story drew nothing at all and
+// the page said the screens did not load. A discovery writes that file: it records the screens a
+// repository holds and finds no story over them. The composed walk is how those screens reach the
+// map, the Prototype view and the Gaps view, without a session writing a story it never found.
+//
+// The ways of the composed walk are read off the parts of each screen, because a discovery writes
+// data-to on what it found and an operator reads the flow off those arrows. The parse comes from
+// outside for the reason gapsOf takes one: this block touches no document.
+function walksOf(flows, parse) {
+  var written = (flows && flows.stories) || [];
+  if (written.length) { return written; }
+
+  var held = (flows && flows.screens) || {};
+  var ids = Object.keys(held).sort();
+  var edges = [];
+  ids.forEach(function (id) {
+    var markup = typeof held[id].html === "string" ? held[id].html : "";
+    var body = parse && markup.trim() !== "" ? parse(markup) : null;
+    if (!body) { return; }
+    theWaysOutOf(body).forEach(function (way) {
+      var opens = held[way.to];
+      if (!opens) { return; }
+      edges.push([id, way.to, way.label || opens.name || way.to, theEdgeKindOf(opens)]);
+    });
+  });
+  return [{
+    id: THE_COMPOSED_WALK.id,
+    title: THE_COMPOSED_WALK.title,
+    story: THE_COMPOSED_WALK.story,
+    steps: ids.length + (ids.length === 1 ? " screen" : " screens"),
+    start: ids.length ? ids[0] : "",
+    composed: true,
+    nodes: ids.map(function (id, at) {
+      return [id, at % THE_COMPOSED_COLUMNS, Math.floor(at / THE_COMPOSED_COLUMNS)];
+    }),
+    edges: edges
+  }];
+}
+
+// theEdgeKindOf is how far a way has got, read off the screen it opens, because a walk nobody wrote
+// says nothing of its own about a way.
+function theEdgeKindOf(screen) {
+  var status = (screen && screen.status) || "";
+  return THE_EDGE_KINDS.indexOf(status) >= 0 ? status : "built";
+}
+
 </script>
 
 <script>
@@ -585,7 +660,7 @@ function gapsOf(flows, parse) {
 var NODE_W = 360, NODE_H = 452, CAP = 30, COL = 470, ROW = 610, PAD_X = 140, PAD_TOP = 150, PAD_BOTTOM = 120;
 var EDGE = { built: "built", designed: "designed", named: "named", missing: "gap", later: "later", proposed: "proposed" };
 
-var DATA, SYSTEM = null, mode = "map", storyId, zoom = 1, selected = null, playTrail = [];
+var DATA, SYSTEM = null, WALKS = [], mode = "map", storyId, zoom = 1, selected = null, playTrail = [];
 var $ = function (s, r) { return (r || document).querySelector(s); };
 var col = function (s) { return "var(--s-" + s + ")"; };
 var remember = function (k, v) { try { localStorage.setItem("flow-map-" + k, v); } catch (e) { /* storage is optional */ } };
@@ -611,8 +686,9 @@ function renderAside() {
   $("#legend").innerHTML = Object.keys(SCREEN_STATUS).map(function (k) {
     return '<div><i class="dot" style="background:' + col(k) + '"></i>' + esc(SCREEN_STATUS[k]) + "</div><output>" + (all[k] || 0) + "</output>";
   }).join("");
-  $("#stories").innerHTML = DATA.stories.map(function (st, i) {
-    var ids = DATA.stories[i].nodes.map(function (n) { return n[0]; }).filter(function (v, at, list) { return list.indexOf(v) === at; });
+  $("#storieslabel").textContent = WALKS.length === 1 && WALKS[0].composed ? "The whole project" : "User stories";
+  $("#stories").innerHTML = WALKS.map(function (st, i) {
+    var ids = st.nodes.map(function (n) { return n[0]; }).filter(function (v, at, list) { return list.indexOf(v) === at; });
     return '<button class="story" data-story="' + esc(st.id) + '" aria-current="' + (st.id === storyId) + '">' +
       '<span class="num">' + (i + 1) + '</span><span class="t">' + esc(st.title) + "</span>" +
       '<span class="m"><span>' + esc(st.steps || (ids.length + " screens")) + '</span><span class="bars">' + barHtml(counts(ids)) + "</span></span></button>";
@@ -623,8 +699,8 @@ function renderAside() {
 }
 
 function storyNow() {
-  var found = DATA.stories.filter(function (s) { return s.id === storyId; });
-  return found.length ? found[0] : DATA.stories[0];
+  var found = WALKS.filter(function (s) { return s.id === storyId; });
+  return found.length ? found[0] : WALKS[0];
 }
 function nodePos(n) { return { x: PAD_X + n[1] * COL, y: PAD_TOP + n[2] * ROW }; }
 function edgePath(a, b) {
@@ -652,6 +728,11 @@ function edgePath(a, b) {
 }
 function renderMap() {
   var st = storyNow(), main = $("#main");
+  if (!st.nodes.length) {
+    main.innerHTML = '<div class="storyhead"><h1>' + esc(st.title) +
+      "</h1><p>This file holds no screen, so there is nothing to draw.</p></div>";
+    return;
+  }
   var maxC = Math.max.apply(null, st.nodes.map(function (n) { return n[1]; }));
   var maxR = Math.max.apply(null, st.nodes.map(function (n) { return n[2]; }));
   var sw = PAD_X * 2 + maxC * COL + NODE_W, sh = PAD_TOP + maxR * ROW + CAP + NODE_H + PAD_BOTTOM;
@@ -673,6 +754,7 @@ function renderMap() {
   });
   svg += "</svg>";
   var s0 = pos[st.start] || pos[st.nodes[0][0]];
+  var launch = st.composed ? "" : '<div class="launch" style="left:' + (s0.x - 92) + "px;top:" + (s0.y + CAP + NODE_H / 2) + 'px">start &#8594;</div>';
   var lanes = (st.lanes || []).map(function (t, r) {
     return '<div class="lane" style="left:' + PAD_X + "px;top:" + (PAD_TOP + r * ROW - (r ? 62 : 44)) + 'px"><b>' + (r + 1) + "</b>" + esc(t) + "</div>";
   }).join("");
@@ -686,7 +768,7 @@ function renderMap() {
   }).join("");
   main.innerHTML = '<div class="storyhead"><h1>' + esc(st.title) + "</h1><p>" + esc(st.story) + "</p></div>" +
     '<div class="viewport" id="vp"><div class="stagewrap" id="wrap"><div class="stage" id="stage" style="width:' + sw + "px;height:" + sh + 'px">' +
-    svg + labels + '<div class="launch" style="left:' + (s0.x - 92) + "px;top:" + (s0.y + CAP + NODE_H / 2) + 'px">start &#8594;</div>' + lanes + nodes + "</div></div></div>";
+    svg + labels + launch + lanes + nodes + "</div></div></div>";
   main.dataset.sw = sw; main.dataset.sh = sh;
   Array.prototype.forEach.call(main.querySelectorAll(".node"), function (n) {
     n.onclick = function () { openDrawer(n.dataset.id); };
@@ -741,7 +823,7 @@ function sourceLinks(src) {
 }
 function ways(id) {
   var out = [];
-  DATA.stories.forEach(function (st) {
+  WALKS.forEach(function (st) {
     (st.edges || []).forEach(function (e) {
       if (e[0] === id && !out.some(function (o) { return o.t === e[1] && o.label === e[2]; })) {
         out.push({ t: e[1], label: e[2], kind: e[3] });
@@ -844,7 +926,7 @@ function theMarkupOf(markup) {
 function renderGaps() {
   var rows = gapsOf(DATA, theMarkupOf);
   var seen = {};
-  var groups = DATA.stories.map(function (st) {
+  var groups = WALKS.map(function (st) {
     return {
       st: st,
       items: rows.filter(function (r) { return st.nodes.some(function (n) { return n[0] === r.id; }); }).filter(function (r) {
@@ -855,7 +937,10 @@ function renderGaps() {
       })
     };
   }).filter(function (g) { return g.items.length; });
-  $("#main").innerHTML = '<div class="storyhead"><h1>What is missing</h1><p>Every defect, open question, unreachable screen and unnamed component, by user story. A screen in two stories is listed under the first.</p></div>' +
+  var said = WALKS.length === 1 && WALKS[0].composed
+    ? "Every defect, open question, unreachable screen and unnamed component, by screen."
+    : "Every defect, open question, unreachable screen and unnamed component, by user story. A screen in two stories is listed under the first.";
+  $("#main").innerHTML = '<div class="storyhead"><h1>What is missing</h1><p>' + esc(said) + "</p></div>" +
     '<div class="sheet"><div class="inner">' + (groups.length ? groups.map(function (g) {
       return "<section><h2>" + esc(g.st.title) + "</h2>" + g.items.map(function (r) {
         return '<button class="item" data-story="' + esc(g.st.id) + '" data-id="' + esc(r.id) + '"><span class="kind" style="color:' + col(r.c) + '">' + r.kind +
@@ -867,8 +952,18 @@ function renderGaps() {
   });
 }
 
+// theDataModel is the data model of a file, and null where there is none to draw. A discovery writes
+// the field as an empty list, which is truthy, so the button showed and the view drew the word
+// undefined.
+function theDataModel(d) {
+  var held = d && d.dataModel;
+  if (!held || typeof held !== "object" || Array.isArray(held)) { return null; }
+  return Array.isArray(held.zones) ? held : null;
+}
+
 function renderData() {
-  var dm = DATA.dataModel;
+  var dm = theDataModel(DATA);
+  if (!dm) { setMode("map"); return; }
   var table = function (t) {
     return '<article class="ent"><header><b>' + esc(t.name) + '</b><span class="pill" style="color:' + col(t.status === "proposed" ? "proposed" : t.status === "designed" ? "designed" : "built") + '">' + esc(t.status) + "</span></header>" +
       "<p>" + esc(t.role) + "</p><ul>" + (t.fields || []).map(function (f) {
@@ -941,13 +1036,14 @@ readSystem().then(function (system) {
   $("#title").textContent = (d.project ? d.project + " " : "") + "flow map";
   document.title = $("#title").textContent;
   $("#stamp").textContent = d.readAt ? "read from " + d.readAt.commit + " · " + d.readAt.date : "";
-  $("#m-data").hidden = !d.dataModel;
+  WALKS = walksOf(d, theMarkupOf);
+  $("#m-data").hidden = !theDataModel(d);
   var hash = location.hash.slice(1);
-  var known = function (id) { return d.stories.some(function (s) { return s.id === id; }); };
-  storyId = known(hash) ? hash : (known(recall("story")) ? recall("story") : d.stories[0].id);
+  var known = function (id) { return WALKS.some(function (s) { return s.id === id; }); };
+  storyId = known(hash) ? hash : (known(recall("story")) ? recall("story") : WALKS[0].id);
   var m = recall("mode");
   mode = ["map", "play", "gaps", "data"].indexOf(m) >= 0 ? m : "map";
-  if (mode === "data" && !d.dataModel) { mode = "map"; }
+  if (mode === "data" && !theDataModel(d)) { mode = "map"; }
   setMode(mode);
 }).catch(function (err) {
   $("#main").innerHTML = '<p style="padding:24px">The flow data did not load: ' + esc(err.message) + ". Reload the page.</p>";

@@ -28,7 +28,7 @@
       "status": "built",
       "route": "/settings",
       "source": "app/routes/settings.tsx",
-      "html": "<main data-component=\"Page\"><h1 data-component=\"Heading\">Settings</h1><section class=\"who\"><p class=\"note\">Who else sees these bills</p></section><a data-component=\"Link\" data-to=\"invite\">Invite somebody</a><a data-component=\"Link\" data-to=\"bills\">Back</a></main>"
+      "html": "<h1 data-component=\"Heading\">Settings</h1><section class=\"who\"><p class=\"note\">Who else sees these bills</p></section><a data-component=\"Link\" data-to=\"invite\">Invite somebody</a><a data-component=\"Link\" data-to=\"bills\">Back</a>"
     },
     "pocket": {
       "name": "Bills on the phone",

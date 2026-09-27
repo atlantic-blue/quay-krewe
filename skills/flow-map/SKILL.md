@@ -14,7 +14,9 @@ The file has four parts:
 
 - `readAt`, the commit and the date you read the screens at.
 - `screens`, each screen, under the name a story calls it by.
-- `stories`, what a person does, as a walk over the screens.
+- `stories`, what a person does, as a walk over the screens. A mockup carries at least one,
+  because the operator approves this stage by playing each one. A file that carries none, which is
+  what a discovery writes, is drawn as one walk over every screen it holds, in name order.
 - `dataModel`, where the data lives. It is optional, and the Data view is hidden without it.
 
 ## A screen is a document

@@ -43,8 +43,7 @@ Write a second file. It holds the screens that exist today, and nothing else.
           "html": "<the markup of the screen>"
         }
       },
-      "stories": [],
-      "dataModel": []
+      "stories": []
     }
 
 Write the markup of each screen you found. One heading and one list is enough. You are writing down
