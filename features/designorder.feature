@@ -138,7 +138,9 @@ Feature: The design command walks the design stages in order
     Examples:
       | said                                                |
       | krewe stage show                                    |
-      | Read all six                                        |
+      | interview                                           |
+      | Read the interview first                            |
+      | Read all seven                                      |
       | stories                                             |
       | design_system                                       |
       | mockups                                             |

@@ -65,6 +65,8 @@ Feature: Discovery writes down what a repository already holds
 
     Examples:
       | said                                               |
+      | Read the interview first                           |
+      | the second of the seven stages                     |
       | Goal                                               |
       | Direction                                          |
       | Assumptions                                        |

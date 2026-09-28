@@ -19,7 +19,7 @@ import (
 func TestTheShippedDesignSkillLoads(t *testing.T) {
 	design := shippedSkill(t, "design")
 
-	if design.Version != 3 {
+	if design.Version != 4 {
 		t.Errorf("the design skill is version %d, and a session is pinned to the one it started with", design.Version)
 	}
 	if !slices.Contains(design.Binaries, "krewe") {
@@ -106,7 +106,7 @@ func TestTheDesignBriefNeverApprovesTheDesign(t *testing.T) {
 // machinery that is not there, and writes a design around it.
 //
 // Two words left this list, because the product now ships them. A design stage is a row of
-// project_design_stages and `krewe stage show` reads it, so the design skill has to name the six. A
+// project_design_stages and `krewe stage show` reads it, so the design skill has to name the seven. A
 // flow is a story drawn on a page, the flow-map skill draws it, and the mockups stage carries its
 // flows.json as an artifact.
 func TestTheDesignSkillHoldsNoneOfTheRemovedWords(t *testing.T) {
