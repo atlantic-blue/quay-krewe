@@ -1187,7 +1187,7 @@ message FinishFeatureResponse {
   repeated string warnings = 2;
 }
 
-// DesignStage is one of the six stages a project is designed in, before anything under it is built.
+// DesignStage is one of the seven stages a project is designed in, before anything under it is built.
 //
 // A project holds a row for a stage from the first write to it, so a project with no stages at all is
 // a project designed by its design document alone.
@@ -1216,8 +1216,10 @@ message DesignStage {
   // none of them can read the rule differently.
   bool approved = 10;
   google.protobuf.Timestamp approved_at = 11;
-  // skipped says the stage is not being written at all, which only discovery may be. A skipped stage
-  // satisfies the rule that refuses a write to the stages after it.
+  // skipped says the stage is not being written at all. Migration 0081 marks the interview of a
+  // project that was already designed, so the stages under it keep their words and the operator asks
+  // those questions later. A skipped stage satisfies the rule that refuses a write to the stages
+  // after it, and a write to the stage itself takes the skip off.
   bool skipped = 12;
   google.protobuf.Timestamp created_at = 13;
   google.protobuf.Timestamp updated_at = 14;
@@ -1226,7 +1228,7 @@ message DesignStage {
 // SetDesignStageRequest writes one stage's prose and the artifact beside it.
 message SetDesignStageRequest {
   string project = 1;
-  // stage is one of the six names. Anything else is refused, and the refusal names the six.
+  // stage is one of the seven names. Anything else is refused, and the refusal names the seven.
   string stage = 2;
   string body = 3;
   // artifact is json, and empty for a stage that carries none. Writing a stage with an empty
@@ -1250,7 +1252,8 @@ message ApproveDesignStageResponse {
   DesignStage stage = 1;
 }
 
-// ListDesignStagesRequest reads the stages a project has written, in the order the six are written.
+// ListDesignStagesRequest reads the stages a project has written, in the order the seven are
+// written.
 message ListDesignStagesRequest {
   string project = 1;
 }
@@ -1936,8 +1939,8 @@ service ControlPlaneService {
   // it and refuses nothing: the operator decides when a feature is finished.
   rpc FinishFeature(FinishFeatureRequest) returns (FinishFeatureResponse);
 
-  // The six stages a project is designed in, before anything under it is built: discovery, stories,
-  // design_system, mockups, data_model, architecture.
+  // The seven stages a project is designed in, before anything under it is built: interview,
+  // discovery, stories, design_system, mockups, data_model, architecture.
   //
   // A write to a stage is refused while a stage before it carries no approval, so the data model is
   // never written before the stories, and the same write clears the approval of every stage after

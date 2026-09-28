@@ -45,9 +45,9 @@ func initializeDesignSystemSteps(sc *godog.ScenarioContext) {
 	})
 
 	// The state a design system may be written in: the two stages before it carry the operator's
-	// word, which is the only way past the rule that orders the six.
+	// word, which is the only way past the rule that orders the seven.
 	sc.Step(`^the stages before the design system are approved$`, func(ctx context.Context) error {
-		for _, stage := range []string{store.StageDiscovery, store.StageStories} {
+		for _, stage := range []string{store.StageInterview, store.StageDiscovery, store.StageStories} {
 			if err := settleStage(ctx, stage); err != nil {
 				return err
 			}

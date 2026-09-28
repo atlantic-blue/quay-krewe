@@ -67,7 +67,7 @@ func written(stage string, version, approved int) map[string]any {
 // The menu is every stage, whether or not anybody wrote one, in the order the stages are written in.
 // A menu drawn from the rows alone would list two entries for a project on its second stage, and the
 // operator would have no way to see what is still to come.
-func TestTheMenuListsDesignAndThenTheSixStagesInOrder(t *testing.T) {
+func TestTheMenuListsDesignAndThenTheSevenStagesInOrder(t *testing.T) {
 	drawn, err := script(t).Menu(stagesJSON(t, "four bills, and two of them move",
 		written(store.StageDiscovery, 1, 1)))
 	if err != nil {
@@ -87,7 +87,7 @@ func TestTheMenuListsDesignAndThenTheSixStagesInOrder(t *testing.T) {
 // The order lives in the script because a stage nobody wrote has no row and therefore no position.
 // Held against the store's own list, so the page and the table cannot come to disagree about which
 // stage is second.
-func TestTheScriptHoldsTheSixStagesTheStoreWrites(t *testing.T) {
+func TestTheScriptHoldsTheSevenStagesTheStoreWrites(t *testing.T) {
 	held, err := script(t).Stages()
 	if err != nil {
 		t.Fatalf("reading the stage order out of the script: %v", err)

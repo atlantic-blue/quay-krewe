@@ -11,7 +11,7 @@ import (
 	"github.com/cucumber/godog"
 )
 
-// Steps for the order the design command walks the six stages in.
+// Steps for the order the design command walks the seven stages in.
 //
 // Where the design starts is read by running the command the file names, against a real project with
 // real stages on it. A scenario that only read the prose would pass on a file that names the listing
@@ -101,7 +101,7 @@ func initializeDesignOrderSteps(sc *godog.ScenarioContext) {
 		return nil
 	})
 
-	sc.Step(`^the reading names no stage of the six$`, func(ctx context.Context) error {
+	sc.Step(`^the reading names no stage of the seven$`, func(ctx context.Context) error {
 		offered, err := theStageOffered(ctx)
 		if err != nil {
 			return err
@@ -154,6 +154,30 @@ func initializeDesignOrderSteps(sc *godog.ScenarioContext) {
 			if !carried {
 				return fmt.Errorf("no dispatch carries %s, so nothing tells the session which stage it writes",
 					stagePart)
+			}
+			return nil
+		})
+
+	// The order inside the file, which is what an agent reading it walks. A file that named the
+	// discovery first would send the operator to read a repository before anybody asked them
+	// anything, whatever the listing says.
+	sc.Step(`^the design command names the interview before it names the discovery$`,
+		func(ctx context.Context) error {
+			body := designOrderFrom(ctx).command
+			if body == "" {
+				return fmt.Errorf("the design command was never read")
+			}
+			interview := strings.Index(body, store.StageInterview)
+			discovery := strings.Index(body, store.StageDiscovery)
+			if interview < 0 {
+				return fmt.Errorf("design.md never names the interview, so nothing asks the operator anything")
+			}
+			if discovery < 0 {
+				return fmt.Errorf("design.md never names the discovery")
+			}
+			if interview > discovery {
+				return fmt.Errorf("design.md names the discovery at %d and the interview at %d, and the "+
+					"interview is asked first", discovery, interview)
 			}
 			return nil
 		})

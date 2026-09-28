@@ -57,6 +57,7 @@ func initializeMockupCheckSteps(sc *godog.ScenarioContext) {
 				return ctx, err
 			}
 			for _, stage := range []struct{ name, artifact string }{
+				{store.StageInterview, ""},
 				{store.StageDiscovery, ""},
 				{store.StageStories, ""},
 				{store.StageDesignSystem, tokens},

@@ -95,7 +95,7 @@ func TestAProjectMadeBeforeTheStagesExistedHoldsNone(t *testing.T) {
 	// The table the migration added takes the record from here on, so the empty answer above is a
 	// project nobody staged rather than a table nothing can write.
 	written, err := opened.SetDesignStage(ctx, "p1", store.DesignStageWrite{
-		Stage: store.StageDiscovery, Body: "what we asked",
+		Stage: store.StageInterview, Body: "what we asked",
 	})
 	if err != nil {
 		t.Fatalf("SetDesignStage after the migration: %v", err)
@@ -108,7 +108,7 @@ func TestAProjectMadeBeforeTheStagesExistedHoldsNone(t *testing.T) {
 // A stage marked as skipped settles the rule that orders the six, so the stage after it goes in with
 // no approval above it.
 //
-// Nothing writes that column yet: the command line that skips discovery is its own step. The row is
+// Nothing writes that column yet: no command writes it: migration 0081 marks the interview of a project in flight. The row is
 // seeded here in SQL for that reason, because the alternative is a column the schema carries, the
 // rule reads, and no test ever exercises against a database.
 func TestASkippedStageSettlesTheStageAfterIt(t *testing.T) {
@@ -122,7 +122,7 @@ func TestASkippedStageSettlesTheStageAfterIt(t *testing.T) {
 		`insert into workspaces (id, name) values ('w1', 'acme')`,
 		`insert into projects (id, workspace, name) values ('p1', 'w1', 'house-bills')`,
 		`insert into project_design_stages (id, project, stage, position, skipped)
-			values ('ds1', 'p1', 'discovery', 0, true)`,
+			values ('ds1', 'p1', 'interview', 0, true), ('ds2', 'p1', 'discovery', 1, true)`,
 	} {
 		if _, err := pool.Exec(ctx, statement); err != nil {
 			t.Fatalf("seed with %q: %v", statement, err)

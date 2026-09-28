@@ -13,8 +13,8 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// The six stages a project is designed in, before anything under it is built: discovery, stories,
-// design_system, mockups, data_model, architecture.
+// The seven stages a project is designed in, before anything under it is built: interview,
+// discovery, stories, design_system, mockups, data_model, architecture.
 //
 // A project used to start from its design document, one text covering everything at once, so what a
 // person sees and what the data looks like were written in the same breath. These calls put an order
@@ -25,11 +25,11 @@ import (
 // The order and the clearing both live in the store, in one transaction, rather than here. A check
 // here would read the stages, decide, and then write, and an approval that landed between the two
 // would let through exactly the write the rule exists to refuse. What lives here is the vocabulary:
-// which six names a person may type, and what a refusal says.
+// which seven names a person may type, and what a refusal says.
 
-// ListDesignStages returns the stages a project has written, in the order the six are written.
+// ListDesignStages returns the stages a project has written, in the order the seven are written.
 //
-// A project that has written none answers with an empty list rather than with six empty stages.
+// A project that has written none answers with an empty list rather than with seven empty stages.
 // Nothing written is the normal state, and it is the state every project made before the stages
 // existed is in, so a caller can tell a project that is designed in stages from one that is not.
 func (s *Server) ListDesignStages(ctx context.Context, req *quaycrewv1.ListDesignStagesRequest) (
@@ -143,7 +143,7 @@ func (s *Server) ApproveDesignStage(ctx context.Context, req *quaycrewv1.Approve
 	return &quaycrewv1.ApproveDesignStageResponse{Stage: approved}, nil
 }
 
-// checkStageName refuses a name outside the six, and names the six in the refusal.
+// checkStageName refuses a name outside the seven, and names the seven in the refusal.
 //
 // The vocabulary is refused here rather than in the store, the way the two words a step ends with
 // are: one layer owns what a person may type. The store refuses an unknown name too, and that is not
@@ -156,14 +156,14 @@ func checkStageName(stage string) error {
 	}
 	if _, known := store.DesignStagePosition(stage); !known {
 		return status.Errorf(codes.InvalidArgument,
-			"%q is not a design stage: the six are %s, in that order",
+			"%q is not a design stage: the seven are %s, in that order",
 			stage, strings.Join(store.DesignStages(), ", "))
 	}
 	return nil
 }
 
 // stagesThatCarryADiagram are the two stages whose subject is a structure rather than prose about
-// one. Everything else the six hold is written in sentences and is read the same way by everybody.
+// one. Everything else the seven hold is written in sentences and is read the same way by everybody.
 var stagesThatCarryADiagram = map[string]bool{
 	store.StageDataModel:    true,
 	store.StageArchitecture: true,

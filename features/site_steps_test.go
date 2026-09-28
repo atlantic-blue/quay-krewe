@@ -259,7 +259,7 @@ func initializeSiteSteps(sc *godog.ScenarioContext) {
 			return nil
 		})
 
-	sc.Step(`^the menu drawn from that answer lists Design and then the six stages in order$`,
+	sc.Step(`^the menu drawn from that answer lists Design and then the seven stages in order$`,
 		func(ctx context.Context) error {
 			drawn, err := siteMenu(ctx)
 			if err != nil {

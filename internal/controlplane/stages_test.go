@@ -15,7 +15,7 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// The six stages a project is designed in, at the surface a person reaches them through. The store
+// The seven stages a project is designed in, at the surface a person reaches them through. The store
 // holds the order and the clearing; what is proved here is the code a refusal carries and the words
 // it says, because an operator who is told no and not which stage cannot act on it.
 
@@ -34,7 +34,7 @@ func TestAStageIsRefusedWhileTheStageBeforeItIsNotApproved(t *testing.T) {
 		t.Fatalf("writing the data model first answered %v, want FailedPrecondition", err)
 	}
 	said := status.Convert(err).Message()
-	if !strings.Contains(said, store.StageDiscovery) {
+	if !strings.Contains(said, store.StageInterview) {
 		t.Errorf("the refusal reads %q, and it has to name the stage to go and approve", said)
 	}
 	if !strings.Contains(said, "krewe stage approve") {
@@ -52,7 +52,7 @@ func TestAStageIsRefusedWhileTheStageBeforeItIsNotApproved(t *testing.T) {
 
 // The order walked the whole way, which is the shape an operator works in, and the answer a project
 // gives about itself at each point.
-func TestTheSixStagesAreWrittenAndApprovedInOrder(t *testing.T) {
+func TestTheSevenStagesAreWrittenAndApprovedInOrder(t *testing.T) {
 	s := newServer(&model.FakeRunner{})
 	ctx := context.Background()
 	_, projectID := newProject(t, s)
@@ -78,8 +78,8 @@ func TestTheSixStagesAreWrittenAndApprovedInOrder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListDesignStages: %v", err)
 	}
-	if len(listed.GetStages()) != 6 {
-		t.Fatalf("the project holds %d stages, want the six", len(listed.GetStages()))
+	if len(listed.GetStages()) != 7 {
+		t.Fatalf("the project holds %d stages, want the seven", len(listed.GetStages()))
 	}
 	for at, stage := range listed.GetStages() {
 		if stage.GetStage() != store.DesignStages()[at] {
@@ -138,7 +138,7 @@ func TestWritingAStageSaysWhichApprovalsItTookAway(t *testing.T) {
 		if stage.GetStage() == store.StageDiscovery && !stage.GetApproved() {
 			t.Error("discovery lost its word, and it sits above the write")
 		}
-		if stage.GetPosition() >= 1 && stage.GetApproved() {
+		if stage.GetPosition() > 2 && stage.GetApproved() {
 			t.Errorf("%s kept its word over a text that changed under it", stage.GetStage())
 		}
 	}
@@ -152,7 +152,7 @@ func TestAFirstWriteWarnsAboutNoApprovals(t *testing.T) {
 	_, projectID := newProject(t, s)
 
 	written, err := s.SetDesignStage(ctx, &quaycrewv1.SetDesignStageRequest{
-		Project: projectID, Stage: store.StageDiscovery, Body: stageBody(store.StageDiscovery),
+		Project: projectID, Stage: store.StageInterview, Body: stageBody(store.StageInterview),
 	})
 	if err != nil {
 		t.Fatalf("SetDesignStage: %v", err)
@@ -164,9 +164,9 @@ func TestAFirstWriteWarnsAboutNoApprovals(t *testing.T) {
 	}
 }
 
-// The vocabulary is the control plane's, and the refusal names the six rather than only refusing the
+// The vocabulary is the control plane's, and the refusal names the seven rather than only refusing the
 // one that was typed.
-func TestAStageOutsideTheSixIsRefused(t *testing.T) {
+func TestAStageOutsideTheSevenIsRefused(t *testing.T) {
 	s := newServer(&model.FakeRunner{})
 	ctx := context.Background()
 	_, projectID := newProject(t, s)
@@ -188,7 +188,7 @@ func TestAStageOutsideTheSixIsRefused(t *testing.T) {
 			return err
 		}},
 	} {
-		t.Run(call.what+" a stage that is not one of the six", func(t *testing.T) {
+		t.Run(call.what+" a stage that is not one of the seven", func(t *testing.T) {
 			err := call.run()
 			if status.Code(err) != codes.InvalidArgument {
 				t.Fatalf("%s wireframes answered %v, want InvalidArgument", call.what, err)
@@ -204,8 +204,8 @@ func TestAStageOutsideTheSixIsRefused(t *testing.T) {
 }
 
 // A call that names no stage at all is the same class of mistake, and it says which words are the
-// six rather than only that one is missing.
-func TestACallThatNamesNoStageSaysWhichSixThereAre(t *testing.T) {
+// seven rather than only that one is missing.
+func TestACallThatNamesNoStageSaysWhichSevenThereAre(t *testing.T) {
 	s := newServer(&model.FakeRunner{})
 	ctx := context.Background()
 	_, projectID := newProject(t, s)
@@ -215,11 +215,11 @@ func TestACallThatNamesNoStageSaysWhichSixThereAre(t *testing.T) {
 		t.Fatalf("a write naming no stage answered %v, want InvalidArgument", err)
 	}
 	if said := status.Convert(err).Message(); !strings.Contains(said, store.StageMockups) {
-		t.Errorf("the refusal reads %q, and it has to say what the six are", said)
+		t.Errorf("the refusal reads %q, and it has to say what the seven are", said)
 	}
 }
 
-// A project that has written no stage answers with an empty list rather than with six empty stages,
+// A project that has written no stage answers with an empty list rather than with seven empty stages,
 // which is how a reader tells a project designed in stages from one designed the way every project
 // was until today.
 func TestAProjectThatStagedNothingAnswersWithNothing(t *testing.T) {
@@ -259,6 +259,7 @@ func TestAnArtifactThatIsNotJSONIsRefused(t *testing.T) {
 	s := newServer(&model.FakeRunner{})
 	ctx := context.Background()
 	_, projectID := newProject(t, s)
+	designedUpTo(t, s, projectID, store.StageDiscovery)
 
 	_, err := s.SetDesignStage(ctx, &quaycrewv1.SetDesignStageRequest{
 		Project: projectID, Stage: store.StageDiscovery,
@@ -480,14 +481,15 @@ func TestWhatCountsAsADiagramInAStage(t *testing.T) {
 }
 
 // The rule is about the two stages that describe a structure. A discovery is what somebody was
-// asked and told, and a rule over all six would refuse the four stages nobody can draw.
-func TestTheOtherFourStagesAreWrittenWithoutADiagram(t *testing.T) {
+// asked and told, and a rule over all seven would refuse the five stages nobody can draw.
+func TestTheOtherFiveStagesAreWrittenWithoutADiagram(t *testing.T) {
 	s := newServer(&model.FakeRunner{})
 	ctx := context.Background()
 	_, projectID := newProject(t, s)
 
 	for _, stage := range []string{
-		store.StageDiscovery, store.StageStories, store.StageDesignSystem, store.StageMockups,
+		store.StageInterview, store.StageDiscovery, store.StageStories, store.StageDesignSystem,
+		store.StageMockups,
 	} {
 		if _, err := s.SetDesignStage(ctx, &quaycrewv1.SetDesignStageRequest{
 			Project: projectID, Stage: stage, Body: stageBody(stage),
@@ -506,7 +508,7 @@ func TestTheOtherFourStagesAreWrittenWithoutADiagram(t *testing.T) {
 // the only shape the control plane takes.
 //
 // The data model and the architecture carry a diagram as well, or they are refused, so a setup that
-// writes all six writes a picture into those two.
+// writes all seven writes a picture into those two.
 func stageBody(stage string) string {
 	if stage == store.StageDataModel || stage == store.StageArchitecture {
 		return stageBrief(stage) + "\n```mermaid\nflowchart TD\n  one --> two\n```\n"
@@ -681,6 +683,7 @@ func TestTheShippedDiscoveryExampleIsAStageTheControlPlaneTakes(t *testing.T) {
 	s := newServer(&model.FakeRunner{})
 	ctx := context.Background()
 	_, projectID := newProject(t, s)
+	designedUpTo(t, s, projectID, store.StageDiscovery)
 	if _, err := s.SetDesignStage(ctx, &quaycrewv1.SetDesignStageRequest{
 		Project: projectID, Stage: store.StageDiscovery, Body: string(body),
 	}); err != nil {

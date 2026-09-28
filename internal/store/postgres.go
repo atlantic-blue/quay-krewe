@@ -2219,6 +2219,9 @@ func (p *Postgres) SetDesignStage(ctx context.Context, project string, write Des
 			-- The version rises, so approved_version no longer matches it and the word stops standing.
 			-- The number itself stays, for the reason the memory store keeps it.
 			version = s.version + 1,
+			-- A stage somebody wrote is not a stage nobody is writing. A skipped row that kept the
+			-- word would hold a page the rule reads as settled, so nobody would ever read it.
+			skipped = false,
 			updated_at = now()
 		returning `+designStageColumns,
 		NewID(), project, write.Stage, position, write.Body, write.Artifact, write.ArtifactURL))

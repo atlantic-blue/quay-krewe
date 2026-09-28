@@ -1,7 +1,7 @@
 Feature: The design command walks the design stages in order
 
-  The six stages sat on the project, and nothing walked them. The operator read the listing, picked a
-  stage, and remembered which one came next. The design command asked its five questions and
+  The seven stages sat on the project, and nothing walked them. The operator read the listing,
+  picked a stage, and remembered which one came next. The design command asked its five questions and
   dispatched one session to write the whole design, so the data of a project and its screens were
   designed in one breath again.
 
@@ -9,11 +9,12 @@ Feature: The design command walks the design stages in order
   and it dispatches one session for that stage alone. The order stays in the control plane, because a
   command file with an order of its own is a second copy of the rule.
 
-  So the data model comes after the screens. A project that carries only its discovery starts at the
-  stories. A project with four approved stages starts at the data model. A project with nothing on it
-  starts at the discovery, and `/krewe:discover` is the command that writes that one.
+  So the data model comes after the screens. A project that carries only its interview starts at the
+  discovery. A project with five approved stages starts at the data model. A project with nothing on
+  it starts at the interview, which the design command asks itself, and `/krewe:discover` writes the
+  one after it.
 
-  The design skill is the other half of the step. A session reads all six approved stages before it
+  The design skill is the other half of the step. A session reads every approved stage before it
   writes the design, the features, the contracts and the paths. Each contract says which stage it
   came from, so a reader goes back to the words the operator approved.
 
@@ -43,7 +44,7 @@ Feature: The design command walks the design stages in order
     And the operator writes the "stories" design stage with the goal "I want to see what is due"
     And the "stories" design stage states the goal "I want to see what is due"
 
-  # The data comes last of the five the design command carries. Four stages hold the word here, and
+  # The data comes last of the stages the design command carries. Five stages hold the word here, and
   # the screens are among them, so the data model opens only now.
   Scenario: The design command reaches the data model after the operator approves the mockups
     Given the "discovery" design stage is written and approved
@@ -55,7 +56,7 @@ Feature: The design command walks the design stages in order
     And the design starts at "data_model"
     And the design starts at no other stage
 
-  # The screens themselves, in the middle of the six. The stories and the design system hold the
+  # The screens themselves, in the middle of the seven. The stories and the design system hold the
   # word, and the data model is still shut.
   Scenario: The design command starts at the mockups while the screens hold no word
     Given the "discovery" design stage is written and approved
@@ -69,31 +70,50 @@ Feature: The design command walks the design stages in order
   # A written stage is not an agreed stage. The design stays on it, because the control plane refuses
   # the stage after a stage that nobody read.
   Scenario: The design command stays on a stage that nobody approved
-    Given the operator writes the "discovery" design stage with the goal "four bills, and two of them move"
+    Given the "interview" design stage is written and approved
+    And the operator writes the "discovery" design stage with the goal "four bills, and two of them move"
     When the operator reads where the design starts, the way the design command reads it
     Then the command succeeds
     And the design starts at "discovery"
     And the reading offers that stage for approval
 
-  # Nothing on the project at all. Discovery is the first of the six, the discover command writes it,
-  # and the design command names that command rather than asking for it here.
-  Scenario: The design command starts at discovery on a project with no stages
+  # Nothing on the project at all. The interview is the first of the seven, and it is the one stage
+  # the operator answers themselves, so the design command asks it here.
+  Scenario: The design command starts at the interview on a project with no stages
+    When the operator reads where the design starts, the way the design command reads it
+    Then the command succeeds
+    And the design starts at "interview"
+    And the design starts at no other stage
+
+  # The order the whole change is about. A discovery read before the interview is a reading of a
+  # repository with nothing to read it against, so the interview is asked first and the discovery
+  # comes after it.
+  Scenario: The design command walks the interview before the discovery
+    When the operator reads where the design starts, the way the design command reads it
+    Then the design starts at "interview"
+    And the design command names the interview before it names the discovery
+    And the installed command "design" names "/krewe:discover"
+
+  # One stage on, and the repository is read against the answers. The discover command writes that
+  # one, and the design command names it rather than asking for it here.
+  Scenario: The design command reaches the discovery once the interview carries the word
+    Given the "interview" design stage is written and approved
     When the operator reads where the design starts, the way the design command reads it
     Then the command succeeds
     And the design starts at "discovery"
     And the installed command "design" names "/krewe:discover"
 
-  # Six words on six stages. The stages are done, so the design of the whole project is the move that
-  # is left.
+  # Seven words on seven stages. The stages are done, so the design of the whole project is the move
+  # that is left.
   Scenario: The design command designs the project once every stage holds the word
     Given every design stage is written and approved
     When the operator reads where the design starts, the way the design command reads it
     Then the command succeeds
-    And the reading names no stage of the six
+    And the reading names no stage of the seven
     And the reading says the project is ready to build
 
   # The file holds no order. It reads the listing, and the listing names the stage this run is about,
-  # so a file that dispatched the six in a row of its own would design the data before the screens.
+  # so a file that dispatched the seven in a row of its own would design the data before the screens.
   Scenario: The design command reads the listing and dispatches for one stage
     When the operator reads the design command
     Then the installed command "design" names "krewe stage show <workspace>/<project>"

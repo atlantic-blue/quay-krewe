@@ -13,10 +13,10 @@ import (
 	"github.com/atlantic-blue/quay-krewe/internal/store"
 )
 
-// The six stages a project is designed in: reading them, writing one, and approving one.
+// The seven stages a project is designed in: reading them, writing one, and approving one.
 //
 // The tool holds no rule about the order. It sends one stage and prints what came back, so the
-// refusal an operator reads is the control plane's own words. The six names come from the store,
+// refusal an operator reads is the control plane's own words. The seven names come from the store,
 // which is where both stores read them, because a second list here would let the tool offer a name
 // the system does not have.
 
@@ -47,10 +47,10 @@ func runStage(ctx context.Context, client quaycrewv1.ControlPlaneServiceClient, 
 	return fmt.Errorf("%s", stageUsage)
 }
 
-// runStageShow prints the six stages and the state of each one.
+// runStageShow prints the seven stages and the state of each one.
 //
-// All six, including the ones nobody wrote. The listing answers "where is this project up to", and a
-// listing of the two written stages says nothing about the four that come next.
+// All seven, including the ones nobody wrote. The listing answers "where is this project up to", and a
+// listing of the two written stages says nothing about the five that come next.
 func runStageShow(ctx context.Context, client quaycrewv1.ControlPlaneServiceClient, args []string, out io.Writer) error {
 	if len(args) > 1 {
 		return fmt.Errorf("%s", stageUsage)
@@ -68,7 +68,7 @@ func runStageShow(ctx context.Context, client quaycrewv1.ControlPlaneServiceClie
 		return err
 	}
 	held := resp.GetStages()
-	fmt.Fprintf(out, "the six design stages of %s\n\n", located.Path.Project)
+	fmt.Fprintf(out, "the seven design stages of %s\n\n", located.Path.Project)
 	drawStages(out, held)
 	next := stageToWriteNext(held)
 	if next != "" {
@@ -76,13 +76,13 @@ func runStageShow(ctx context.Context, client quaycrewv1.ControlPlaneServiceClie
 	} else {
 		fmt.Fprintf(out, "\nevery stage carries your word, so the project is ready to build\n")
 	}
-	// Last, under the advice. The listing says where the project is up to in six words, and the
+	// Last, under the advice. The listing says where the project is up to in seven words, and the
 	// prose behind those words is read on the page, so the address is the next thing a person wants.
 	fmt.Fprintln(out, siteAddressOf(located.Path))
 	return nil
 }
 
-// drawStages writes one row for each of the six, in the order they are written.
+// drawStages writes one row for each of the seven, in the order they are written.
 func drawStages(out io.Writer, held []*quaycrewv1.DesignStage) {
 	rows := make([][]string, 0, len(store.DesignStages()))
 	widths := make([]int, stageCells)
@@ -137,8 +137,8 @@ func stageSize(held *quaycrewv1.DesignStage) string {
 	return contextsize.Characters(utf8.RuneCountInString(held.GetBody()))
 }
 
-// stageToWriteNext is the first of the six that does not carry the operator's word, which is the one
-// move the project has. Nothing comes back when all six are settled.
+// stageToWriteNext is the first of the seven that does not carry the operator's word, which is the one
+// move the project has. Nothing comes back when all seven are settled.
 func stageToWriteNext(held []*quaycrewv1.DesignStage) string {
 	for _, name := range store.DesignStages() {
 		stage := stageNamed(held, name)
@@ -272,7 +272,7 @@ func runStageApprove(ctx context.Context, client quaycrewv1.ControlPlaneServiceC
 //
 // With one argument the argument is the stage, and with two the first is the address. This is the
 // shape krewe step take already has, so an operator standing in a project types the stage alone. The
-// name is sent as it was typed: the six are the control plane's vocabulary, and a second copy of the
+// name is sent as it was typed: the seven are the control plane's vocabulary, and a second copy of the
 // refusal here would be a second place it can go stale.
 func stageAndAddress(args []string) (typed, stage string, err error) {
 	if len(args) == 0 || len(args) > 2 {

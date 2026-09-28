@@ -69,10 +69,10 @@ func TestTheSiteAnswersTheStagesAProjectHasWritten(t *testing.T) {
 	if answer.Design.Brief != "four bills, and two of them move" {
 		t.Errorf("the answer carries the brief %q", answer.Design.Brief)
 	}
-	if len(answer.Stages) != 2 {
-		t.Fatalf("the answer carries %d stages, want the two the project wrote: %q", len(answer.Stages), body)
+	if len(answer.Stages) != 3 {
+		t.Fatalf("the answer carries %d stages, want the three the project wrote: %q", len(answer.Stages), body)
 	}
-	for at, want := range []string{store.StageDiscovery, store.StageStories} {
+	for at, want := range []string{store.StageInterview, store.StageDiscovery, store.StageStories} {
 		held := answer.Stages[at]
 		if held.Stage != want {
 			t.Fatalf("stage %d is %q, want %q, so the order is not the order they are written in",
@@ -109,8 +109,8 @@ func TestTheSiteAnswersToTheIdentifierAsWellAsTheName(t *testing.T) {
 	if err := json.Unmarshal([]byte(body), &answer); err != nil {
 		t.Fatalf("the site answered %q: %v", body, err)
 	}
-	if len(answer.Stages) != 1 {
-		t.Fatalf("the answer carries %d stages, want the one the project wrote", len(answer.Stages))
+	if len(answer.Stages) != 2 {
+		t.Fatalf("the answer carries %d stages, want the interview and the discovery", len(answer.Stages))
 	}
 }
 
@@ -129,7 +129,7 @@ func TestAnAddressThatNamesNothingSaysWhichPartNamedNothing(t *testing.T) {
 		{"the workspace", "/p/no-such-workspace/house-bills/stages.json", "no-such-workspace"},
 		{"the project", "/p/acme/no-such-project/stages.json", "no-such-project"},
 		{"a stage nobody wrote", "/p/acme/house-bills/stories/flows.json", store.StageStories},
-		{"a stage that is not one of the six", "/p/acme/house-bills/kitchen/flows.json", "kitchen"},
+		{"a stage that is not one of the seven", "/p/acme/house-bills/kitchen/flows.json", "kitchen"},
 		{"a stage carrying no artifact", "/p/acme/house-bills/discovery/flows.json", store.StageDiscovery},
 	} {
 		status, body, _ := readSite(t, s, one.path)
@@ -240,19 +240,43 @@ func readSite(t *testing.T, s *controlplane.Server, path string) (int, string, h
 	return recorder.Code, recorder.Body.String(), recorder.Result().Header
 }
 
-// settle writes a stage and approves it, which is the only way past the rule that orders the six.
+// settleSiteStage writes a stage and approves it, along with every stage above it, which is the only
+// way past the rule that orders the seven.
 func settleSiteStage(t *testing.T, s *controlplane.Server, project, stage string) {
 	t.Helper()
-	if _, err := s.SetDesignStage(context.Background(), &quaycrewv1.SetDesignStageRequest{
-		Project: project, Stage: stage, Body: stageBody(stage),
-	}); err != nil {
-		t.Fatalf("SetDesignStage %s: %v", stage, err)
+	for _, named := range append(store.DesignStagesBefore(stage), stage) {
+		if held := siteStageHeld(t, s, project, named); held.GetApproved() {
+			continue
+		}
+		if _, err := s.SetDesignStage(context.Background(), &quaycrewv1.SetDesignStageRequest{
+			Project: project, Stage: named, Body: stageBody(named),
+		}); err != nil {
+			t.Fatalf("SetDesignStage %s: %v", named, err)
+		}
+		if _, err := s.ApproveDesignStage(context.Background(), &quaycrewv1.ApproveDesignStageRequest{
+			Project: project, Stage: named,
+		}); err != nil {
+			t.Fatalf("ApproveDesignStage %s: %v", named, err)
+		}
 	}
-	if _, err := s.ApproveDesignStage(context.Background(), &quaycrewv1.ApproveDesignStageRequest{
-		Project: project, Stage: stage,
-	}); err != nil {
-		t.Fatalf("ApproveDesignStage %s: %v", stage, err)
+}
+
+// siteStageHeld is one stage of a project, and nil for a stage nobody wrote. A stage already settled
+// is left alone, so settling the stories after the discovery does not write the discovery again and
+// take its own word off it.
+func siteStageHeld(t *testing.T, s *controlplane.Server, project, stage string) *quaycrewv1.DesignStage {
+	t.Helper()
+	listed, err := s.ListDesignStages(context.Background(),
+		&quaycrewv1.ListDesignStagesRequest{Project: project})
+	if err != nil {
+		t.Fatalf("ListDesignStages: %v", err)
 	}
+	for _, one := range listed.GetStages() {
+		if one.GetStage() == stage {
+			return one
+		}
+	}
+	return nil
 }
 
 // A name two workspaces share names neither of them. The tree of names has the same problem and
@@ -299,10 +323,10 @@ func TestTheSiteAnswersAStageWrittenAgainWithoutTheWordItHad(t *testing.T) {
 	if err := json.Unmarshal([]byte(body), &answer); err != nil {
 		t.Fatalf("the site answered %q: %v", body, err)
 	}
-	if len(answer.Stages) != 1 {
-		t.Fatalf("the answer carries %d stages, want the one the project wrote", len(answer.Stages))
+	if len(answer.Stages) != 2 {
+		t.Fatalf("the answer carries %d stages, want the interview and the discovery", len(answer.Stages))
 	}
-	held := answer.Stages[0]
+	held := answer.Stages[1]
 	if held.Version != 2 {
 		t.Errorf("the discovery stage is at version %d, want 2", held.Version)
 	}

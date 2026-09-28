@@ -126,13 +126,14 @@ Feature: A project's stages are read over http
     Then the menu drawn from that answer reads "approved" for the "discovery" stage
     And the menu drawn from that answer reads "changed since approval" for the "stories" stage
     And the menu drawn from that answer reads "not written" for the "architecture" stage
-    And the menu drawn from that answer lists Design and then the six stages in order
+    And the menu drawn from that answer lists Design and then the seven stages in order
 
   # A stage body is markdown, and an operator reads a document rather than the marks that make one.
   # The same reading is what makes a body safe to open. A session writes the text, the operator reads
   # the text, and nothing written into a body runs in the operator's browser.
   Scenario: A script written into a stage body is shown and never run
-    Given the operator writes the "discovery" design stage as:
+    Given the "interview" design stage is written and approved
+    And the operator writes the "discovery" design stage as:
       """
       # Four bills
 

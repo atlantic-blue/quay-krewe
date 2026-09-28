@@ -70,7 +70,7 @@ func aDesignSystem(parts ...string) string {
 func designedUpToTheDesignSystem(t *testing.T, s *controlplane.Server, project string) {
 	t.Helper()
 	ctx := context.Background()
-	for _, stage := range []string{store.StageDiscovery, store.StageStories} {
+	for _, stage := range []string{store.StageInterview, store.StageDiscovery, store.StageStories} {
 		if _, err := s.SetDesignStage(ctx, &quaycrewv1.SetDesignStageRequest{
 			Project: project, Stage: stage, Body: stageBody(stage),
 		}); err != nil {
@@ -360,6 +360,7 @@ func TestTheRefusalNamesTheSameAssetEveryTime(t *testing.T) {
 func TestAStageThatIsNotTheDesignSystemCarriesAnyJSONItLikes(t *testing.T) {
 	s := newServer(&model.FakeRunner{})
 	_, project := newProject(t, s)
+	designedUpTo(t, s, project, store.StageDiscovery)
 
 	if _, err := s.SetDesignStage(context.Background(), &quaycrewv1.SetDesignStageRequest{
 		Project: project, Stage: store.StageDiscovery, Body: stageBody(store.StageDiscovery),

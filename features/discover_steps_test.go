@@ -10,6 +10,7 @@ import (
 
 	quaycrewv1 "github.com/atlantic-blue/quay-krewe/gen/quaycrew/v1"
 	"github.com/atlantic-blue/quay-krewe/internal/skill"
+	"github.com/atlantic-blue/quay-krewe/internal/store"
 	"github.com/cucumber/godog"
 )
 
@@ -98,6 +99,11 @@ func initializeDiscoverSteps(sc *godog.ScenarioContext) {
 	// The driver's token, because writing a stage is the session's half of this and approving is the
 	// operator's. A scenario that wrote it as the operator would leave the session's half unproved.
 	sc.Step(`^a session writes the discovery that the discover skill shows$`, func(ctx context.Context) error {
+		// The interview comes before the discovery, and the operator answers it, so the setup settles
+		// it as the operator before the session writes its half.
+		if err := settleStage(ctx, store.StageInterview); err != nil {
+			return err
+		}
 		body, err := exampleFile("discovery.md")
 		if err != nil {
 			return err

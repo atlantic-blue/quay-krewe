@@ -14,10 +14,17 @@ Ask the operator for the address. An address reads `<workspace>/<project>`.
 
     krewe stage show <workspace>/<project>
 
-Show the six stages to the operator. Do not shorten the listing.
+Show the seven stages to the operator. Do not shorten the listing.
 
 The discovery stage carries the operator's word already when the listing says approved.
 Ask the operator whether to read the repository again. Stop here when the answer is no.
+
+The interview comes before the discovery. Stop here when the listing says the interview is empty or
+written. Name `/krewe:design` to the operator. That command asks the questions and writes the
+interview page. A discovery read before it has nothing to be read against.
+
+The listing can say the interview is skipped. That is a project that was designed before the
+interview stage existed, and the discovery goes ahead.
 
 ## 2. Read which repository the project names
 
@@ -69,7 +76,7 @@ Wait for the session to stop. Then read what it came back with.
 
     krewe answer <session>
 
-Then read the six stages again.
+Then read the seven stages again.
 
     krewe stage show <workspace>/<project>
 

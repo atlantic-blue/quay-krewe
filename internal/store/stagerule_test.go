@@ -71,46 +71,66 @@ func TestTheBlockingStageIsTheFirstOneWithoutAWord(t *testing.T) {
 		blocking string
 	}{
 		{
-			what:    "discovery waits for nothing, so it is written into an empty project",
-			writing: StageDiscovery,
+			what:    "the interview waits for nothing, so it is written into an empty project",
+			writing: StageInterview,
+		},
+		{
+			what:     "the discovery waits for the interview",
+			writing:  StageDiscovery,
+			blocking: StageInterview,
 		},
 		{
 			what:     "stories waits for discovery",
 			writing:  StageStories,
+			held:     []*quaycrewv1.DesignStage{approved(StageInterview)},
 			blocking: StageDiscovery,
 		},
 		{
-			what:    "stories goes once discovery is approved",
+			what:    "stories goes once the interview and the discovery are approved",
 			writing: StageStories,
-			held:    []*quaycrewv1.DesignStage{approved(StageDiscovery)},
+			held:    []*quaycrewv1.DesignStage{approved(StageInterview), approved(StageDiscovery)},
 		},
 		{
-			what:     "the data model names the stories, and not the mockups just below it",
-			writing:  StageDataModel,
-			held:     []*quaycrewv1.DesignStage{approved(StageDiscovery), written(StageStories)},
+			// The project in flight. Its interview was never asked, the migration marked the stage
+			// skipped, and the stage after its approved discovery still goes in.
+			what:    "a skipped interview is settled, so a project in flight writes its next stage",
+			writing: StageStories,
+			held: []*quaycrewv1.DesignStage{
+				{Stage: StageInterview, Skipped: true}, approved(StageDiscovery),
+			},
+		},
+		{
+			what:    "the data model names the stories, and not the mockups just below it",
+			writing: StageDataModel,
+			held: []*quaycrewv1.DesignStage{
+				approved(StageInterview), approved(StageDiscovery), written(StageStories),
+			},
 			blocking: StageStories,
 		},
 		{
-			what:     "a stage skipped at the top still lets the refusal name the next gap",
-			writing:  StageMockups,
-			held:     []*quaycrewv1.DesignStage{{Stage: StageDiscovery, Skipped: true}, approved(StageStories)},
+			what:    "a stage skipped at the top still lets the refusal name the next gap",
+			writing: StageMockups,
+			held: []*quaycrewv1.DesignStage{
+				{Stage: StageInterview, Skipped: true}, {Stage: StageDiscovery, Skipped: true},
+				approved(StageStories),
+			},
 			blocking: StageDesignSystem,
 		},
 		{
-			what:    "the architecture goes once the five before it are approved",
+			what:    "the architecture goes once the six before it are approved",
 			writing: StageArchitecture,
 			held: []*quaycrewv1.DesignStage{
-				approved(StageDiscovery), approved(StageStories), approved(StageDesignSystem),
-				approved(StageMockups), approved(StageDataModel),
+				approved(StageInterview), approved(StageDiscovery), approved(StageStories),
+				approved(StageDesignSystem), approved(StageMockups), approved(StageDataModel),
 			},
 		},
 		{
 			what:    "a stage after this one carries no weight, approved or not",
-			writing: StageDiscovery,
+			writing: StageInterview,
 			held:    []*quaycrewv1.DesignStage{written(StageArchitecture)},
 		},
 		{
-			what:    "a name outside the six waits for nothing, because the store refuses it first",
+			what:    "a name outside the seven waits for nothing, because the store refuses it first",
 			writing: "wireframes",
 			held:    nil,
 		},
@@ -123,10 +143,15 @@ func TestTheBlockingStageIsTheFirstOneWithoutAWord(t *testing.T) {
 	}
 }
 
-// The six are a list with an order, and every caller reads the position out of it rather than
+// The seven are a list with an order, and every caller reads the position out of it rather than
 // counting for itself.
-func TestTheSixStagesAreInOrder(t *testing.T) {
-	want := []string{"discovery", "stories", "design_system", "mockups", "data_model", "architecture"}
+//
+// The interview is first. It is the one stage the operator answers rather than a repository, so a
+// discovery written before it is a reading of the code with nothing to read it against.
+func TestTheSevenStagesAreInOrder(t *testing.T) {
+	want := []string{
+		"interview", "discovery", "stories", "design_system", "mockups", "data_model", "architecture",
+	}
 	got := DesignStages()
 	if len(got) != len(want) {
 		t.Fatalf("the system holds %d stages: %v", len(got), got)
@@ -141,13 +166,16 @@ func TestTheSixStagesAreInOrder(t *testing.T) {
 		}
 	}
 	if _, known := DesignStagePosition("wireframes"); known {
-		t.Error("a name outside the six was given a position, so it could be written as a stage")
+		t.Error("a name outside the seven was given a position, so it could be written as a stage")
 	}
-	if before := DesignStagesBefore(StageMockups); len(before) != 3 {
-		t.Errorf("the mockups wait for %v, want the three above them", before)
+	if before := DesignStagesBefore(StageMockups); len(before) != 4 {
+		t.Errorf("the mockups wait for %v, want the four above them", before)
 	}
-	if before := DesignStagesBefore(StageDiscovery); len(before) != 0 {
-		t.Errorf("discovery waits for %v, and nothing comes before it", before)
+	if before := DesignStagesBefore(StageDiscovery); len(before) != 1 {
+		t.Errorf("the discovery waits for %v, want the interview alone", before)
+	}
+	if before := DesignStagesBefore(StageInterview); len(before) != 0 {
+		t.Errorf("the interview waits for %v, and nothing comes before it", before)
 	}
 }
 

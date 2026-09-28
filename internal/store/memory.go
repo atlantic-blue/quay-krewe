@@ -1539,6 +1539,10 @@ func (m *Memory) SetDesignStage(_ context.Context, project string, write DesignS
 	// on the row: without it a stage nobody ever agreed to and a stage that changed after the
 	// operator agreed to it read the same, and they are two different things to do next.
 	written.Approved = false
+	// A stage somebody wrote is not a stage nobody is writing, which is what the real store says on
+	// the same write. A skipped row that kept the flag would hold a page the rule reads as settled,
+	// so nobody would ever read it.
+	written.Skipped = false
 	written.UpdatedAt = timestamppb.New(now)
 
 	// Every stage after this one loses its approval, because it was agreed under a text that has just

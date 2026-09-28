@@ -682,15 +682,20 @@ const StepTaken = "taken"
 // the column.
 const FeatureOpen = "open"
 
-// The six stages a project is designed in, in the order they are written. A project starts from what
-// a person sees and reaches the data and the architecture last, which is the whole rule this list
-// holds: the position of a name is its position in the table, and the rule that refuses a write reads
-// the stages below it.
+// The seven stages a project is designed in, in the order they are written. A project starts from
+// what the operator wants, then what a person sees, and reaches the data and the architecture last,
+// which is the whole rule this list holds: the position of a name is its position in the table, and
+// the rule that refuses a write reads the stages below it.
+//
+// The interview is first because it is the one stage whose answers come from the operator. Every
+// other stage is written from a repository, so a discovery written before the interview is a reading
+// of the code with nothing to read it against.
 //
 // They are here rather than in the control plane for the reason StepReady is: both stores write the
 // position directly from this list, and a list one of them kept for itself would put the same stage
 // at two positions.
 const (
+	StageInterview    = "interview"
 	StageDiscovery    = "discovery"
 	StageStories      = "stories"
 	StageDesignSystem = "design_system"
@@ -699,17 +704,17 @@ const (
 	StageArchitecture = "architecture"
 )
 
-// DesignStages returns the six names in order. The caller gets its own slice, so a caller that sorts
-// or truncates what it is given does not reorder the stages for everybody else.
+// DesignStages returns the seven names in order. The caller gets its own slice, so a caller that
+// sorts or truncates what it is given does not reorder the stages for everybody else.
 func DesignStages() []string {
 	return []string{
-		StageDiscovery, StageStories, StageDesignSystem,
+		StageInterview, StageDiscovery, StageStories, StageDesignSystem,
 		StageMockups, StageDataModel, StageArchitecture,
 	}
 }
 
 // DesignStagePosition is where a stage sits in that order, counting from zero, and false for a name
-// outside the six.
+// outside the seven.
 func DesignStagePosition(stage string) (int32, bool) {
 	for at, named := range DesignStages() {
 		if named == stage {
@@ -729,13 +734,13 @@ func DesignStagesBefore(stage string) []string {
 	return DesignStages()[:position]
 }
 
-// ErrUnknownDesignStage is returned when a write names something that is not one of the six.
+// ErrUnknownDesignStage is returned when a write names something that is not one of the seven.
 //
-// It is not the vocabulary check: the control plane refuses a name a person typed and names the six
+// It is not the vocabulary check: the control plane refuses a name a person typed and names the seven
 // in the refusal. This is the store saying it cannot work out which position the row sits at, which
 // is a column it has to compute rather than a word it is handed, so a row it wrote anyway would be a
 // stage in no order at all.
-var ErrUnknownDesignStage = errors.New("store: that is not one of the six design stages")
+var ErrUnknownDesignStage = errors.New("store: that is not one of the seven design stages")
 
 // ErrStageNotApproved is returned when a stage is written while a stage before it carries no
 // approval. StageNotApprovedError names which one, and this is what errors.Is answers.
@@ -757,7 +762,7 @@ var ErrArtifactNotJSON = errors.New("store: the stage's artifact is not json")
 // has one move and it is at the top of the list. A refusal naming the mockups would send them to a
 // stage they cannot write either.
 type StageNotApprovedError struct {
-	// Stage is the first stage, in the order the six are written, that is neither approved nor
+	// Stage is the first stage, in the order the seven are written, that is neither approved nor
 	// skipped.
 	Stage string
 	// Writing is the stage the caller was trying to write.
@@ -782,7 +787,7 @@ func DesignStageApproved(version, approvedVersion int32) bool {
 	return approvedVersion > 0 && approvedVersion == version
 }
 
-// DesignStageSatisfied reports whether a stage counts as settled for the rule that orders the six:
+// DesignStageSatisfied reports whether a stage counts as settled for the rule that orders the seven:
 // the operator's word stands on the text it holds now, or the stage was skipped.
 //
 // A stage nobody wrote is not settled, which is what stops a project writing the architecture and
@@ -797,9 +802,9 @@ func DesignStageSatisfied(stage *quaycrewv1.DesignStage) bool {
 //
 // The first rather than the nearest, because an operator writing the data model with nothing approved
 // has one move and it is at the top of the list. held may carry any stages at all, in any order: this
-// walks the six in their own order and reads what it finds.
+// walks the seven in their own order and reads what it finds.
 //
-// Both stores call it, so the rule that orders the six is written down once. A rule one of them held
+// Both stores call it, so the rule that orders the seven is written down once. A rule one of them held
 // for itself would refuse a write in Postgres and take it in memory, and the suite that holds them to
 // one behaviour would be green for both.
 func BlockingDesignStage(writing string, held []*quaycrewv1.DesignStage) string {
@@ -824,7 +829,7 @@ func BlockingDesignStage(writing string, held []*quaycrewv1.DesignStage) string 
 // One struct rather than four arguments, because three of them are strings and a call that put the
 // artifact where the body goes would compile. It is the shape ProofResult is, for the same reason.
 type DesignStageWrite struct {
-	// Stage is one of the six names.
+	// Stage is one of the seven names.
 	Stage string
 	// Body is the prose of the stage, kept whole however long it is.
 	Body string
@@ -1345,9 +1350,9 @@ type Store interface {
 	// closed while steps under it are ready or taken: the operator decides when a feature is finished.
 	FinishFeature(ctx context.Context, feature string, state string) (*quaycrewv1.Feature, error)
 
-	// The six stages a project is designed in, before anything under it is built.
+	// The seven stages a project is designed in, before anything under it is built.
 	//
-	// ListDesignStages returns the stages a project has written, in the order the six are written. A
+	// ListDesignStages returns the stages a project has written, in the order the seven are written. A
 	// project that has written none is an empty slice and not an error, and it is the answer that
 	// says this project is designed by its design document alone. The rows are made on the first
 	// write to a stage rather than when the project is made, so an empty answer and a project that
@@ -1355,7 +1360,7 @@ type Store interface {
 	// working exactly as it did.
 	ListDesignStages(ctx context.Context, project string) ([]*quaycrewv1.DesignStage, error)
 	// SetDesignStage writes one stage's body and artifact, and returns the stage after the write. A
-	// project that does not exist is ErrNotFound, and a stage outside the six is
+	// project that does not exist is ErrNotFound, and a stage outside the seven is
 	// ErrUnknownDesignStage.
 	//
 	// The order is the rule this call holds. A write to a stage is refused with a
@@ -1387,7 +1392,7 @@ type Store interface {
 	SetDesignStage(ctx context.Context, project string, stage DesignStageWrite) (
 		*quaycrewv1.DesignStage, error)
 	// ApproveDesignStage records the operator's word on one stage as it stands, and returns the stage
-	// after the write. A project that does not exist is ErrNotFound, a stage outside the six is
+	// after the write. A project that does not exist is ErrNotFound, a stage outside the seven is
 	// ErrUnknownDesignStage, and a stage nobody wrote is ErrNoStageToApprove.
 	//
 	// The version is read in the statement that writes the approval, so a stage rewritten between a

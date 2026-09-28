@@ -30,7 +30,7 @@ func aFileSaying(t *testing.T, name, body string) string {
 	return at
 }
 
-// settle writes a stage and approves it, which is the only way past the rule that orders the six.
+// settle writes a stage and approves it, which is the only way past the rule that orders the seven.
 //
 // The data model and the architecture are refused without a diagram, so the file written for those
 // two holds one.
@@ -57,10 +57,10 @@ func stageFileFor(stage string) string {
 	return text
 }
 
-// The listing says where the project is up to, so it names all six. A listing of the stages that
+// The listing says where the project is up to, so it names all seven. A listing of the stages that
 // exist would show one row on a project with five stages still to write, and the four after the one
 // being written are the part a person is deciding about.
-func TestTheListingNamesAllSixStagesEvenWhenNothingIsWritten(t *testing.T) {
+func TestTheListingNamesAllSevenStagesEvenWhenNothingIsWritten(t *testing.T) {
 	client := aStagedProject(t)
 
 	printed := mustRun(t, client, "stage", "show")
@@ -70,19 +70,19 @@ func TestTheListingNamesAllSixStagesEvenWhenNothingIsWritten(t *testing.T) {
 			t.Errorf("the listing leaves out %s:\n%s", stage, printed)
 		}
 	}
-	if got := strings.Count(printed, "empty"); got != 6 {
-		t.Errorf("the listing says empty %d times, want 6:\n%s", got, printed)
+	if got := strings.Count(printed, "empty"); got != 7 {
+		t.Errorf("the listing says empty %d times, want 7:\n%s", got, printed)
 	}
 }
 
-// The one move the project has. An operator reading six rows of empty has to know the order to work
+// The one move the project has. An operator reading seven rows of empty has to know the order to work
 // out which of them they may write, and the order is the thing this feature exists to hold.
 func TestTheListingNamesTheStageToWriteNext(t *testing.T) {
 	client := aStagedProject(t)
 
 	printed := mustRun(t, client, "stage", "show")
 
-	if !strings.Contains(printed, "krewe stage set discovery "+flagFile) {
+	if !strings.Contains(printed, "krewe stage set interview "+flagFile) {
 		t.Errorf("the listing does not say how to write the first stage:\n%s", printed)
 	}
 }
@@ -90,7 +90,7 @@ func TestTheListingNamesTheStageToWriteNext(t *testing.T) {
 // Written and approved are two states, and the move differs. A stage that is written needs reading,
 // not writing again, so the line under the listing changes with it.
 func TestAWrittenStageIsOfferedForApprovalRatherThanForWritingAgain(t *testing.T) {
-	client := aStagedProject(t)
+	client := aProjectPastItsInterview(t)
 	mustRun(t, client, "stage", "set", "discovery", flagFile, aFileSaying(t, "d.md", stageFileFor(store.StageDiscovery)))
 
 	printed := mustRun(t, client, "stage", "show")
@@ -105,7 +105,7 @@ func TestAWrittenStageIsOfferedForApprovalRatherThanForWritingAgain(t *testing.T
 
 // The whole point of the write: a document on a machine reaches the project, whole.
 func TestWritingAStageSendsTheWholeDocument(t *testing.T) {
-	client := aStagedProject(t)
+	client := aProjectPastItsInterview(t)
 	body := stageFileFor(store.StageDiscovery)
 
 	printed := mustRun(t, client, "stage", "set", "discovery", flagFile, aFileSaying(t, "d.md", body))
@@ -122,7 +122,7 @@ func TestWritingAStageSendsTheWholeDocument(t *testing.T) {
 // A person who reads this twice learns the rule, which is that approval is a statement about one
 // text. Learning it by being refused a take three days later is learning it too late.
 func TestAWriteSaysTheApprovalIsCleared(t *testing.T) {
-	client := aStagedProject(t)
+	client := aProjectPastItsInterview(t)
 
 	printed := mustRun(t, client, "stage", "set", "discovery", flagFile, aFileSaying(t, "d.md", stageFileFor(store.StageDiscovery)))
 
@@ -133,7 +133,7 @@ func TestAWriteSaysTheApprovalIsCleared(t *testing.T) {
 
 // The operator's word, recorded against the text that is there now.
 func TestApprovingAStageRecordsTheWord(t *testing.T) {
-	client := aStagedProject(t)
+	client := aProjectPastItsInterview(t)
 	mustRun(t, client, "stage", "set", "discovery", flagFile, aFileSaying(t, "d.md", stageFileFor(store.StageDiscovery)))
 
 	printed := mustRun(t, client, "stage", "approve", "discovery")
@@ -161,7 +161,7 @@ func TestWritingAStageOutOfOrderIsRefusedAndNamesTheStageToApprove(t *testing.T)
 	err := refused(t, client, "stage", "set", "data_model", flagFile,
 		aFileSaying(t, "m.md", stageFileFor(store.StageDataModel)))
 
-	for _, want := range []string{"discovery", "krewe stage approve", "nothing was written"} {
+	for _, want := range []string{"interview", "krewe stage approve", "nothing was written"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not say %q: %v", want, err)
 		}
@@ -174,7 +174,7 @@ func TestWritingAStageOutOfOrderIsRefusedAndNamesTheStageToApprove(t *testing.T)
 // An address in front of the stage reaches a project the operator is not standing in, which is how
 // every other command takes one.
 func TestAStageIsWrittenAndApprovedSomewhereElse(t *testing.T) {
-	client := aStagedProject(t)
+	client := aProjectPastItsInterview(t)
 	mustRun(t, client, "workspace", "create", "other")
 
 	mustRun(t, client, "stage", "set", "acme/house-bills", "discovery",
@@ -192,7 +192,7 @@ func TestAStageIsWrittenAndApprovedSomewhereElse(t *testing.T) {
 // The artifact is the structured document a stage carries beside its prose, such as the flows the
 // mockups are played from. It is a second file for the reason the body is a file at all.
 func TestAStageCarriesAnArtifactFromASecondFile(t *testing.T) {
-	client := aStagedProject(t)
+	client := aProjectPastItsInterview(t)
 	artifact := `{"asked":["when does it move"]}`
 
 	printed := mustRun(t, client, "stage", "set", "discovery",
@@ -211,7 +211,7 @@ func TestAStageCarriesAnArtifactFromASecondFile(t *testing.T) {
 // with a flow map drawn from it, so the stage carries the address of the page as well as the data,
 // and the write prints it back.
 func TestAStageRecordsWhereTheArtifactWasPublished(t *testing.T) {
-	client := aStagedProject(t)
+	client := aProjectPastItsInterview(t)
 	published := "https://example.invalid/tide/flow-map/"
 
 	printed := mustRun(t, client, "stage", "set", "discovery",
@@ -230,7 +230,7 @@ func TestAStageRecordsWhereTheArtifactWasPublished(t *testing.T) {
 // The address may be given on its own. A discovery stage whose page is already up carries no
 // second file, and a flag that needed one would send somebody to write an empty artifact.
 func TestAnAddressIsKeptWithoutAnArtifact(t *testing.T) {
-	client := aStagedProject(t)
+	client := aProjectPastItsInterview(t)
 
 	mustRun(t, client, "stage", "set", "discovery",
 		flagFile, aFileSaying(t, "d.md", stageFileFor(store.StageDiscovery)),
@@ -350,11 +350,12 @@ func TestTheWordForEachStateAStageCanBeIn(t *testing.T) {
 	}
 }
 
-// A skipped stage settles the rule that orders the six, so the listing must not offer it back as the
-// next thing to write. Nothing writes the column yet, which is why this is read here rather than
+// A skipped stage settles the rule that orders the seven, so the listing must not offer it back as the
+// next thing to write. Only a migration writes the column, which is why this is read here rather
 // through the command.
 func TestASkippedStageIsNotOfferedAsTheNextMove(t *testing.T) {
 	held := []*quaycrewv1.DesignStage{
+		{Stage: store.StageInterview, Skipped: true},
 		{Stage: store.StageDiscovery, Skipped: true},
 		{Stage: store.StageStories, Version: 1, Approved: true},
 	}
@@ -364,9 +365,9 @@ func TestASkippedStageIsNotOfferedAsTheNextMove(t *testing.T) {
 	}
 }
 
-// Six approved stages leave nothing to write, and the listing says so rather than offering a
+// Seven approved stages leave nothing to write, and the listing says so rather than offering a
 // seventh.
-func TestAProjectWithEverySixStagesApprovedIsOfferedNothingToWrite(t *testing.T) {
+func TestAProjectWithEverySevenStagesApprovedIsOfferedNothingToWrite(t *testing.T) {
 	client := aStagedProject(t)
 	for _, stage := range store.DesignStages() {
 		settle(t, client, stage)
@@ -380,8 +381,8 @@ func TestAProjectWithEverySixStagesApprovedIsOfferedNothingToWrite(t *testing.T)
 	if !strings.Contains(printed, "every stage carries your word") {
 		t.Errorf("the listing does not say the project is designed:\n%s", printed)
 	}
-	if got := strings.Count(printed, "approved"); got != 6 {
-		t.Errorf("the listing says approved %d times, want 6:\n%s", got, printed)
+	if got := strings.Count(printed, "approved"); got != 7 {
+		t.Errorf("the listing says approved %d times, want 7:\n%s", got, printed)
 	}
 }
 
@@ -401,7 +402,7 @@ func stageHeld(t *testing.T, client quaycrewv1.ControlPlaneServiceClient, stage 
 }
 
 // TestTheStageListingEndsWithTheAddressOfTheDesign. The listing is where an operator looks first,
-// and the six states are a summary of prose that is read on the page. The address goes last, under
+// and the seven states are a summary of prose that is read on the page. The address goes last, under
 // the one move the project has, because a person reads down.
 func TestTheStageListingEndsWithTheAddressOfTheDesign(t *testing.T) {
 	client := aStagedProject(t)
@@ -420,7 +421,7 @@ func TestTheStageListingKeepsItsAdviceAboveTheAddress(t *testing.T) {
 	client := aStagedProject(t)
 
 	printed := mustRun(t, client, "stage", "show", "acme/house-bills")
-	advice := strings.Index(printed, "krewe stage set acme/house-bills discovery")
+	advice := strings.Index(printed, "krewe stage set acme/house-bills interview")
 	address := strings.Index(printed, "http://127.0.0.1:50052/p/acme/house-bills/")
 	if advice < 0 {
 		t.Fatalf("the listing lost the advice:\n%s", printed)
@@ -428,4 +429,36 @@ func TestTheStageListingKeepsItsAdviceAboveTheAddress(t *testing.T) {
 	if address < advice {
 		t.Fatalf("the address is above the advice:\n%s", printed)
 	}
+}
+
+// The order a person reads on the listing, and the first move it offers. The interview comes before
+// the discovery: the operator answers it, and every stage under it is written against those answers.
+//
+// The rows are read by their position in the printed listing, not by their presence, because a
+// listing that names both in the wrong order names both.
+func TestTheListingWalksTheInterviewBeforeTheDiscovery(t *testing.T) {
+	client := aStagedProject(t)
+
+	printed := mustRun(t, client, "stage", "show")
+
+	interview := strings.Index(printed, store.StageInterview)
+	discovery := strings.Index(printed, store.StageDiscovery)
+	if interview < 0 || discovery < 0 {
+		t.Fatalf("the listing names interview at %d and discovery at %d:\n%s", interview, discovery, printed)
+	}
+	if interview > discovery {
+		t.Errorf("the listing puts the discovery above the interview:\n%s", printed)
+	}
+	if !strings.Contains(printed, "krewe stage set interview "+flagFile) {
+		t.Errorf("the first move the listing offers is not the interview:\n%s", printed)
+	}
+}
+
+// aProjectPastItsInterview is a project whose interview carries the operator's word, which is the
+// state every stage under it is written in.
+func aProjectPastItsInterview(t *testing.T) quaycrewv1.ControlPlaneServiceClient {
+	t.Helper()
+	client := aStagedProject(t)
+	settle(t, client, store.StageInterview)
+	return client
 }
