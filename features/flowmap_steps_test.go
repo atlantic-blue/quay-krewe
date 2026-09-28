@@ -641,7 +641,7 @@ func initializeFlowMapSteps(sc *godog.ScenarioContext) {
 		if err != nil {
 			return err
 		}
-		if err := writeStage(ctx, store.StageDesignSystem, "the design system of the example", artifact); err != nil {
+		if err := writeStage(ctx, store.StageDesignSystem, settledBody(store.StageDesignSystem), artifact); err != nil {
 			return err
 		}
 		if w := worldFrom(ctx); w.lastErr != nil {
@@ -661,7 +661,7 @@ func initializeFlowMapSteps(sc *godog.ScenarioContext) {
 		if err != nil {
 			return err
 		}
-		return writeStage(ctx, store.StageMockups, "the screens of the example", artifact)
+		return writeStage(ctx, store.StageMockups, settledBody(store.StageMockups), artifact)
 	})
 
 	// Both surfaces, because a session copies the one nearest what it is writing, and a project

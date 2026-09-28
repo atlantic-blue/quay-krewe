@@ -32,6 +32,14 @@ func initializeStageCommandSteps(sc *godog.ScenarioContext) {
 		return context.WithValue(ctx, stageCommandKey{}, &stageCommandWorld{}), nil
 	})
 
+	// A whole brief carrying the goal a scenario named, written into the file the tool reads. The six
+	// headings around the goal are the shape every stage holds to, and a scenario writing them into a
+	// docstring each time would be six lines of setup around one line of meaning.
+	sc.Step(`^a stage file with the goal "([^"]*)" for the "([^"]*)" stage$`,
+		func(ctx context.Context, goal, stage string) error {
+			return aStageFileSaying(ctx, briefWithTheGoal(stage, unescape(goal)))
+		})
+
 	sc.Step(`^a stage file saying "([^"]*)"$`, func(ctx context.Context, body string) error {
 		return aStageFileSaying(ctx, unescape(body))
 	})

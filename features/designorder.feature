@@ -40,8 +40,8 @@ Feature: The design command walks the design stages in order
     Given the "discovery" design stage is written and approved
     When the operator reads where the design starts, the way the design command reads it
     Then the design starts at "stories"
-    And the operator writes the "stories" design stage as "I want to see what is due"
-    And the "stories" design stage reads "I want to see what is due"
+    And the operator writes the "stories" design stage with the goal "I want to see what is due"
+    And the "stories" design stage states the goal "I want to see what is due"
 
   # The data comes last of the five the design command carries. Four stages hold the word here, and
   # the screens are among them, so the data model opens only now.
@@ -69,7 +69,7 @@ Feature: The design command walks the design stages in order
   # A written stage is not an agreed stage. The design stays on it, because the control plane refuses
   # the stage after a stage that nobody read.
   Scenario: The design command stays on a stage that nobody approved
-    Given the operator writes the "discovery" design stage as "four bills, and two of them move"
+    Given the operator writes the "discovery" design stage with the goal "four bills, and two of them move"
     When the operator reads where the design starts, the way the design command reads it
     Then the command succeeds
     And the design starts at "discovery"
@@ -118,10 +118,43 @@ Feature: The design command walks the design stages in order
     Examples:
       | said                                                |
       | krewe stage show                                    |
-      | Read all six stages before you write anything       |
+      | Read all six                                        |
       | stories                                             |
       | design_system                                       |
       | mockups                                             |
       | data_model                                          |
       | architecture                                        |
-      | Name the stage each contract came from              |
+      | names the stage it came from                        |
+
+  # The shape of one stage, which is the whole of what the operator reads about a part of the design.
+  # A brief naming six of the seven headings teaches every session to write a stage the control plane
+  # refuses, and the session reads that refusal as its own mistake.
+  Scenario Outline: The design skill says what one stage holds
+    When the operator reads the design skill
+    Then the design skill says "<said>"
+
+    Examples:
+      | said                       |
+      | Goal                       |
+      | Direction                  |
+      | Assumptions                |
+      | Decisions for the operator |
+      | Done when                  |
+      | Not doing                  |
+      | Open questions             |
+      | One page of prose          |
+      | 6,000 characters           |
+      | correct me or I proceed    |
+
+  # The way off the old shape. A stage used to carry the session's reading, and a brief that still
+  # asks for it gets it: file lists, a section for what was read, and a section for what was not.
+  Scenario Outline: The design skill asks for no reading list
+    When the operator reads the design skill
+    Then the design skill says "<said>"
+
+    Examples:
+      | said                                     |
+      | Write no file path                       |
+      | Write no list of what you read           |
+      | Write no list of what you did not read   |
+      | no confidence percentage                 |

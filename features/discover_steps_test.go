@@ -120,14 +120,17 @@ func initializeDiscoverSteps(sc *godog.ScenarioContext) {
 		return nil
 	})
 
-	sc.Step(`^the discovery stage names every file of that repository$`, func(ctx context.Context) error {
+	// The artifact names the files, one for each screen, and the prose names none of them. A file path
+	// in the prose is research: it goes stale on the next commit, and none of the five stages after
+	// this one reads it. A later stage reads the artifact.
+	sc.Step(`^the discovery artifact names every file of that repository$`, func(ctx context.Context) error {
 		held, err := stageRead(ctx, "discovery")
 		if err != nil {
 			return err
 		}
 		for _, path := range discoverFrom(ctx).files {
-			if !strings.Contains(held.GetBody(), path) {
-				return fmt.Errorf("the discovery never names %s, so nobody reading it knows where that screen is", path)
+			if !strings.Contains(held.GetArtifact(), path) {
+				return fmt.Errorf("the discovery artifact never names %s, so nobody reading it knows where that screen is", path)
 			}
 		}
 		return nil

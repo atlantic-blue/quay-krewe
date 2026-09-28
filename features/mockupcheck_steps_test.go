@@ -61,7 +61,7 @@ func initializeMockupCheckSteps(sc *godog.ScenarioContext) {
 				{store.StageStories, ""},
 				{store.StageDesignSystem, tokens},
 			} {
-				if err := writeStage(ctx, stage.name, "the "+stage.name+" body", stage.artifact); err != nil {
+				if err := writeStage(ctx, stage.name, settledBody(stage.name), stage.artifact); err != nil {
 					return ctx, err
 				}
 				if w := worldFrom(ctx); w.lastErr != nil {
@@ -122,7 +122,7 @@ func initializeMockupCheckSteps(sc *godog.ScenarioContext) {
 	// A design system written as prose names nothing, and nothing is what the screens are then held
 	// to. Writing the stage again takes the word off it, so it is approved again here.
 	sc.Step(`^the design system is approved naming nothing$`, func(ctx context.Context) error {
-		if err := writeStage(ctx, store.StageDesignSystem, "one accent colour, and plenty of space", ""); err != nil {
+		if err := writeStage(ctx, store.StageDesignSystem, settledBody(store.StageDesignSystem), ""); err != nil {
 			return err
 		}
 		if w := worldFrom(ctx); w.lastErr != nil {
@@ -153,7 +153,7 @@ func initializeMockupCheckSteps(sc *godog.ScenarioContext) {
 
 	sc.Step(`^the operator writes the mockups stage with the artifact:$`,
 		func(ctx context.Context, artifact *godog.DocString) error {
-			return writeStage(ctx, store.StageMockups, "the screens", artifact.Content)
+			return writeStage(ctx, store.StageMockups, settledBody(store.StageMockups), artifact.Content)
 		})
 
 	sc.Step(`^the mockups stage carries the artifact it was given$`, func(ctx context.Context) error {
@@ -222,7 +222,7 @@ func writeMockupFixture(ctx context.Context, breakIt func(map[string]any) error)
 	if err != nil {
 		return err
 	}
-	return writeStage(ctx, store.StageMockups, "the screens", artifact)
+	return writeStage(ctx, store.StageMockups, settledBody(store.StageMockups), artifact)
 }
 
 // writeAsAShapeList turns one screen back into the form that went. Every shape in it names its

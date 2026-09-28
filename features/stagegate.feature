@@ -29,7 +29,7 @@ Feature: A staged project refuses a step until every stage is approved
   # written and unread. Nothing is built until they read it.
   Scenario: A staged project with five approved stages refuses a step
     Given the first 5 design stages are written and approved
-    And the operator writes the "architecture" design stage as "one table for each bill"
+    And the operator writes the "architecture" design stage with the goal "one table for each bill"
     When the operator takes step 1
     Then the control plane refuses it as the wrong state
     And the refusal suggests "architecture"
@@ -40,7 +40,7 @@ Feature: A staged project refuses a step until every stage is approved
   # to a stage they cannot write either.
   Scenario: The take names the first stage without approval
     Given the "discovery" design stage is written and approved
-    And the operator writes the "stories" design stage as "I want to see what is due"
+    And the operator writes the "stories" design stage with the goal "I want to see what is due"
     When the operator takes step 1
     Then the control plane refuses it as the wrong state
     And the refusal suggests "stories"

@@ -72,7 +72,7 @@ func designedUpToTheDesignSystem(t *testing.T, s *controlplane.Server, project s
 	ctx := context.Background()
 	for _, stage := range []string{store.StageDiscovery, store.StageStories} {
 		if _, err := s.SetDesignStage(ctx, &quaycrewv1.SetDesignStageRequest{
-			Project: project, Stage: stage, Body: "the " + stage + " body",
+			Project: project, Stage: stage, Body: stageBody(stage),
 		}); err != nil {
 			t.Fatalf("SetDesignStage %s: %v", stage, err)
 		}
@@ -88,7 +88,7 @@ func designedUpToTheDesignSystem(t *testing.T, s *controlplane.Server, project s
 func writeDesignSystemStage(s *controlplane.Server, project, artifact string) (
 	*quaycrewv1.SetDesignStageResponse, error) {
 	return s.SetDesignStage(context.Background(), &quaycrewv1.SetDesignStageRequest{
-		Project: project, Stage: store.StageDesignSystem, Body: "the design system", Artifact: artifact,
+		Project: project, Stage: store.StageDesignSystem, Body: stageBody(store.StageDesignSystem), Artifact: artifact,
 	})
 }
 
@@ -362,7 +362,7 @@ func TestAStageThatIsNotTheDesignSystemCarriesAnyJSONItLikes(t *testing.T) {
 	_, project := newProject(t, s)
 
 	if _, err := s.SetDesignStage(context.Background(), &quaycrewv1.SetDesignStageRequest{
-		Project: project, Stage: store.StageDiscovery, Body: "what it has today",
+		Project: project, Stage: store.StageDiscovery, Body: stageBody(store.StageDiscovery),
 		Artifact: `{"asked": ["what does it look like"]}`,
 	}); err != nil {
 		t.Fatalf("a discovery artifact that is not a design system was refused: %v", err)

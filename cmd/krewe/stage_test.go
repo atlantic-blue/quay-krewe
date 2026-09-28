@@ -40,9 +40,17 @@ func settle(t *testing.T, client quaycrewv1.ControlPlaneServiceClient, stage str
 	mustRun(t, client, "stage", "approve", stage)
 }
 
-// stageFileFor is what the settle helper writes into the file for one stage.
+// stageFileFor is what the settle helper writes into the file for one stage: a whole brief of the
+// seven headings, which is the only shape the control plane takes.
 func stageFileFor(stage string) string {
-	text := "the " + stage + "\n"
+	text := "# The " + stage + "\n\n" +
+		"## Goal\n\nwhat this stage is for\n\n" +
+		"## Direction\n\nwhat we recommend, and the reason we recommend it.\n\n" +
+		"## Assumptions\n\n- four bills, and two of them move. Correct me or I proceed.\n\n" +
+		"## Decisions for the operator\n\n- keep the green accent: I recommend keeping it.\n\n" +
+		"## Done when\n\n- the stage after this one can be written.\n\n" +
+		"## Not doing\n\n- the deploy pipeline, because it draws no screen.\n\n" +
+		"## Open questions\n\n- what happens to a bill after somebody pays it?\n"
 	if stage == store.StageDataModel || stage == store.StageArchitecture {
 		return text + "\n```mermaid\nflowchart TD\n  one --> two\n```\n"
 	}
@@ -83,7 +91,7 @@ func TestTheListingNamesTheStageToWriteNext(t *testing.T) {
 // not writing again, so the line under the listing changes with it.
 func TestAWrittenStageIsOfferedForApprovalRatherThanForWritingAgain(t *testing.T) {
 	client := aStagedProject(t)
-	mustRun(t, client, "stage", "set", "discovery", flagFile, aFileSaying(t, "d.md", "they pay four bills\n"))
+	mustRun(t, client, "stage", "set", "discovery", flagFile, aFileSaying(t, "d.md", stageFileFor(store.StageDiscovery)))
 
 	printed := mustRun(t, client, "stage", "show")
 
@@ -98,7 +106,7 @@ func TestAWrittenStageIsOfferedForApprovalRatherThanForWritingAgain(t *testing.T
 // The whole point of the write: a document on a machine reaches the project, whole.
 func TestWritingAStageSendsTheWholeDocument(t *testing.T) {
 	client := aStagedProject(t)
-	body := "# Discovery\n\nThey pay four bills, and two move.\n"
+	body := stageFileFor(store.StageDiscovery)
 
 	printed := mustRun(t, client, "stage", "set", "discovery", flagFile, aFileSaying(t, "d.md", body))
 
@@ -106,7 +114,7 @@ func TestWritingAStageSendsTheWholeDocument(t *testing.T) {
 	if held.GetBody() != body {
 		t.Errorf("the project holds %q, want %q", held.GetBody(), body)
 	}
-	if !strings.Contains(printed, "48 characters") {
+	if !strings.Contains(printed, "467 characters") {
 		t.Errorf("the write does not say how much it wrote:\n%s", printed)
 	}
 }
@@ -116,7 +124,7 @@ func TestWritingAStageSendsTheWholeDocument(t *testing.T) {
 func TestAWriteSaysTheApprovalIsCleared(t *testing.T) {
 	client := aStagedProject(t)
 
-	printed := mustRun(t, client, "stage", "set", "discovery", flagFile, aFileSaying(t, "d.md", "what we asked\n"))
+	printed := mustRun(t, client, "stage", "set", "discovery", flagFile, aFileSaying(t, "d.md", stageFileFor(store.StageDiscovery)))
 
 	if !strings.Contains(printed, "the approval is cleared") {
 		t.Errorf("the write says nothing about the approval:\n%s", printed)
@@ -126,7 +134,7 @@ func TestAWriteSaysTheApprovalIsCleared(t *testing.T) {
 // The operator's word, recorded against the text that is there now.
 func TestApprovingAStageRecordsTheWord(t *testing.T) {
 	client := aStagedProject(t)
-	mustRun(t, client, "stage", "set", "discovery", flagFile, aFileSaying(t, "d.md", "what we asked\n"))
+	mustRun(t, client, "stage", "set", "discovery", flagFile, aFileSaying(t, "d.md", stageFileFor(store.StageDiscovery)))
 
 	printed := mustRun(t, client, "stage", "approve", "discovery")
 
@@ -170,7 +178,7 @@ func TestAStageIsWrittenAndApprovedSomewhereElse(t *testing.T) {
 	mustRun(t, client, "workspace", "create", "other")
 
 	mustRun(t, client, "stage", "set", "acme/house-bills", "discovery",
-		flagFile, aFileSaying(t, "d.md", "what we asked\n"))
+		flagFile, aFileSaying(t, "d.md", stageFileFor(store.StageDiscovery)))
 	mustRun(t, client, "stage", "approve", "acme/house-bills", "discovery")
 
 	if held := stageHeld(t, client, "discovery"); !held.GetApproved() {
@@ -188,7 +196,7 @@ func TestAStageCarriesAnArtifactFromASecondFile(t *testing.T) {
 	artifact := `{"asked":["when does it move"]}`
 
 	printed := mustRun(t, client, "stage", "set", "discovery",
-		flagFile, aFileSaying(t, "d.md", "what we asked\n"),
+		flagFile, aFileSaying(t, "d.md", stageFileFor(store.StageDiscovery)),
 		flagArtifact, aFileSaying(t, "asked.json", artifact))
 
 	if held := stageHeld(t, client, "discovery"); held.GetArtifact() != artifact {
@@ -207,7 +215,7 @@ func TestAStageRecordsWhereTheArtifactWasPublished(t *testing.T) {
 	published := "https://example.invalid/tide/flow-map/"
 
 	printed := mustRun(t, client, "stage", "set", "discovery",
-		flagFile, aFileSaying(t, "d.md", "what we asked\n"),
+		flagFile, aFileSaying(t, "d.md", stageFileFor(store.StageDiscovery)),
 		flagArtifact, aFileSaying(t, "flows.json", `{"screens":{}}`),
 		flagURL, published)
 
@@ -225,7 +233,7 @@ func TestAnAddressIsKeptWithoutAnArtifact(t *testing.T) {
 	client := aStagedProject(t)
 
 	mustRun(t, client, "stage", "set", "discovery",
-		flagFile, aFileSaying(t, "d.md", "what we asked\n"),
+		flagFile, aFileSaying(t, "d.md", stageFileFor(store.StageDiscovery)),
 		flagURL, "https://example.invalid/tide/")
 
 	held := stageHeld(t, client, "discovery")
@@ -243,7 +251,7 @@ func TestAnArtifactThatIsNotJsonIsRefused(t *testing.T) {
 	client := aStagedProject(t)
 
 	err := refused(t, client, "stage", "set", "discovery",
-		flagFile, aFileSaying(t, "d.md", "what we asked\n"),
+		flagFile, aFileSaying(t, "d.md", stageFileFor(store.StageDiscovery)),
 		flagArtifact, aFileSaying(t, "asked.json", "the flows are over there"))
 
 	if !strings.Contains(err.Error(), "json") {
@@ -285,7 +293,7 @@ func TestAStageFileThatIsNotThereNamesThePath(t *testing.T) {
 // what they meant to type.
 func TestTheShapesTheStageCommandRefuses(t *testing.T) {
 	client := aStagedProject(t)
-	file := aFileSaying(t, "d.md", "what we asked\n")
+	file := aFileSaying(t, "d.md", stageFileFor(store.StageDiscovery))
 
 	for _, typed := range [][]string{
 		{"stage"},

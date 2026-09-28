@@ -115,7 +115,7 @@ func designedWithTheSystem(t *testing.T, s *controlplane.Server, project, system
 		{store.StageDesignSystem, system},
 	} {
 		if _, err := s.SetDesignStage(ctx, &quaycrewv1.SetDesignStageRequest{
-			Project: project, Stage: stage.name, Body: "the " + stage.name + " body", Artifact: stage.artifact,
+			Project: project, Stage: stage.name, Body: stageBody(stage.name), Artifact: stage.artifact,
 		}); err != nil {
 			t.Fatalf("SetDesignStage %s: %v", stage.name, err)
 		}
@@ -130,7 +130,7 @@ func designedWithTheSystem(t *testing.T, s *controlplane.Server, project, system
 // writeMockups is the call under test, with the artifact the caller wants to try.
 func writeMockups(s *controlplane.Server, project, artifact string) (*quaycrewv1.SetDesignStageResponse, error) {
 	return s.SetDesignStage(context.Background(), &quaycrewv1.SetDesignStageRequest{
-		Project: project, Stage: store.StageMockups, Body: "the screens", Artifact: artifact,
+		Project: project, Stage: store.StageMockups, Body: stageBody(store.StageMockups), Artifact: artifact,
 	})
 }
 
@@ -345,7 +345,7 @@ func TestAMockupsStageWithProseAloneIsKeptWhileTheDesignSystemNamesNothing(t *te
 	designedWithTheSystem(t, s, project, "")
 
 	if _, err := s.SetDesignStage(context.Background(), &quaycrewv1.SetDesignStageRequest{
-		Project: project, Stage: store.StageMockups, Body: "the screens, in words",
+		Project: project, Stage: store.StageMockups, Body: stageBody(store.StageMockups),
 	}); err != nil {
 		t.Fatalf("a mockups stage carrying prose alone was refused: %v", err)
 	}
@@ -361,7 +361,7 @@ func TestAStageThatIsNotTheMockupsCarriesAnyJSON(t *testing.T) {
 	_, project := newProject(t, s)
 
 	written, err := s.SetDesignStage(context.Background(), &quaycrewv1.SetDesignStageRequest{
-		Project: project, Stage: store.StageDiscovery, Body: "what we asked",
+		Project: project, Stage: store.StageDiscovery, Body: stageBody(store.StageDiscovery),
 		Artifact: `{"asked": ["when does it move"]}`,
 	})
 	if err != nil {
