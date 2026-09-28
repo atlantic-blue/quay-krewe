@@ -6997,7 +6997,7 @@ func (x *FinishFeatureResponse) GetWarnings() []string {
 	return nil
 }
 
-// DesignStage is one of the six stages a project is designed in, before anything under it is built.
+// DesignStage is one of the seven stages a project is designed in, before anything under it is built.
 //
 // A project holds a row for a stage from the first write to it, so a project with no stages at all is
 // a project designed by its design document alone.
@@ -7027,8 +7027,10 @@ type DesignStage struct {
 	// none of them can read the rule differently.
 	Approved   bool                   `protobuf:"varint,10,opt,name=approved,proto3" json:"approved,omitempty"`
 	ApprovedAt *timestamppb.Timestamp `protobuf:"bytes,11,opt,name=approved_at,json=approvedAt,proto3" json:"approved_at,omitempty"`
-	// skipped says the stage is not being written at all, which only discovery may be. A skipped stage
-	// satisfies the rule that refuses a write to the stages after it.
+	// skipped says the stage is not being written at all. Migration 0081 marks the interview of a
+	// project that was already designed, so the stages under it keep their words and the operator asks
+	// those questions later. A skipped stage satisfies the rule that refuses a write to the stages
+	// after it, and a write to the stage itself takes the skip off.
 	Skipped       bool                   `protobuf:"varint,12,opt,name=skipped,proto3" json:"skipped,omitempty"`
 	CreatedAt     *timestamppb.Timestamp `protobuf:"bytes,13,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
 	UpdatedAt     *timestamppb.Timestamp `protobuf:"bytes,14,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
@@ -7168,7 +7170,7 @@ func (x *DesignStage) GetUpdatedAt() *timestamppb.Timestamp {
 type SetDesignStageRequest struct {
 	state   protoimpl.MessageState `protogen:"open.v1"`
 	Project string                 `protobuf:"bytes,1,opt,name=project,proto3" json:"project,omitempty"`
-	// stage is one of the six names. Anything else is refused, and the refusal names the six.
+	// stage is one of the seven names. Anything else is refused, and the refusal names the seven.
 	Stage string `protobuf:"bytes,2,opt,name=stage,proto3" json:"stage,omitempty"`
 	Body  string `protobuf:"bytes,3,opt,name=body,proto3" json:"body,omitempty"`
 	// artifact is json, and empty for a stage that carries none. Writing a stage with an empty
@@ -7395,7 +7397,8 @@ func (x *ApproveDesignStageResponse) GetStage() *DesignStage {
 	return nil
 }
 
-// ListDesignStagesRequest reads the stages a project has written, in the order the six are written.
+// ListDesignStagesRequest reads the stages a project has written, in the order the seven are
+// written.
 type ListDesignStagesRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Project       string                 `protobuf:"bytes,1,opt,name=project,proto3" json:"project,omitempty"`

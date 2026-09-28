@@ -1,0 +1,4 @@
+name: interview
+version: 1
+summary: Ask the operator what they want, one question at a time, before any stage is written from a repository.
+binaries: [krewe]

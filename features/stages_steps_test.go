@@ -322,7 +322,21 @@ func approveStage(ctx context.Context, stage string) error {
 
 // settleStage is the setup step: a stage is written and then agreed, and a refusal of either is the
 // setup failing rather than the scenario's own refusal to read later.
+//
+// Every stage above it is settled first, because a write is refused while one of them carries no
+// word. A setup that wrote one stage would refuse itself on every project that holds none.
 func settleStage(ctx context.Context, stage string) error {
+	for _, above := range store.DesignStagesBefore(stage) {
+		if err := readStages(ctx); err != nil {
+			return err
+		}
+		if held := stageNamed(stagesFrom(ctx).stages, above); held.GetApproved() || held.GetSkipped() {
+			continue
+		}
+		if err := settleStage(ctx, above); err != nil {
+			return err
+		}
+	}
 	if err := writeStage(ctx, stage, settledBody(stage), ""); err != nil {
 		return err
 	}
@@ -335,6 +349,10 @@ func settleStage(ctx context.Context, stage string) error {
 	if w := worldFrom(ctx); w.lastErr != nil {
 		return fmt.Errorf("approving the %s stage was refused: %w", stage, w.lastErr)
 	}
+	// The listing this setup read to find out what was settled is now older than the project, and a
+	// later step reads the held listing rather than asking again. Dropping it here means a scenario
+	// reads what the project holds after the setup, not what it held part way through.
+	stagesFrom(ctx).stages = nil
 	return nil
 }
 

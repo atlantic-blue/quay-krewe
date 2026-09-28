@@ -32,7 +32,7 @@ import (
 // how a stage of 51,176 characters reached an operator who then stopped reading the stages at all.
 //
 // The number is measured rather than picked. The discovery the discover skill ships is about 2,600
-// characters, and the fullest stage of the six is the design system, which carries a line for each
+// characters, and the fullest stage of the seven is the design system, which carries a line for each
 // decision: twenty one of those, with a direction and the other five headings around them, comes to
 // about 4,700. Six thousand leaves that room and refuses everything that is a repository pasted in.
 const StageCeiling = 6_000
@@ -65,7 +65,7 @@ var aHeading = regexp.MustCompile(`(?m)^[ \t]*#{1,6}[ \t]+([^\n#][^\n]*?)[ \t]*:
 // checkStageShape refuses a body that is not a brief: one that leaves a heading out, one that puts
 // them in another order, and one that runs past a page.
 //
-// It runs on all six stages. The diagram rule binds two of them because only two describe a
+// It runs on all seven stages. The diagram rule binds two of them because only two describe a
 // structure; this one binds every stage, because every stage is a thing the operator has to decide
 // on, and a decision buried in a research dump is a decision nobody makes.
 //

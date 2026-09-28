@@ -4,16 +4,16 @@ Feature: A project is designed in stages before it is built
   and what the data looks like were written in the same breath. The data model usually won first,
   because it is the easiest part to write, and the screens were then fitted to it.
 
-  A project now carries six stages in an order: discovery, stories, design_system, mockups,
-  data_model, architecture. A stage cannot be written while a stage before it carries no approval, so
-  the data model can never be written before the stories are agreed.
+  A project now carries seven stages in an order: interview, discovery, stories, design_system,
+  mockups, data_model, architecture. A stage cannot be written while a stage before it carries no
+  approval, so the data model can never be written before the stories are agreed.
 
   Approval is a statement about one text. A write to a stage takes the word off that stage, and off
   every stage after it, because those were agreed under the text that just changed. The words stay:
   only the word on them is gone. The stage that was written keeps the version the word was given to,
   so a reader can tell it from a stage nobody ever agreed to.
 
-  Two of the six describe a structure. The data model and the architecture are refused until the
+  Two of the seven describe a structure. The data model and the architecture are refused until the
   body holds a diagram, written as a fenced block marked mermaid, so the operator approves a picture
   rather than a paragraph.
 
@@ -34,7 +34,8 @@ Feature: A project is designed in stages before it is built
     When the operator reads the project's design stages
     Then the project holds no design stages
 
-  Scenario: The first stage is written into an empty project
+  Scenario: A stage is written once the interview carries the word
+    Given the "interview" design stage is written and approved
     When the operator writes the "discovery" design stage with the goal "They pay four bills, and two move."
     And the operator reads the project's design stages
     Then the "discovery" design stage states the goal "They pay four bills, and two move."
@@ -48,7 +49,7 @@ Feature: A project is designed in stages before it is built
   Scenario: A stage is refused while the stage before it is not approved
     When the operator writes the "data_model" design stage with the goal "one table for each bill"
     Then the control plane refuses it as the wrong state
-    And the refusal suggests "discovery"
+    And the refusal suggests "interview"
     And the project holds no design stages
 
   Scenario: A stage goes in once the stage before it is approved
@@ -60,7 +61,8 @@ Feature: A project is designed in stages before it is built
   # Written is not agreed. A stage sitting there unread is no better than a stage nobody wrote, which
   # is the half of the rule a check for the row alone would miss.
   Scenario: A stage written and never approved still refuses the stage after it
-    Given the operator writes the "discovery" design stage with the goal "what we asked"
+    Given the "interview" design stage is written and approved
+    And the operator writes the "discovery" design stage with the goal "what we asked"
     When the operator writes the "stories" design stage with the goal "I want to see what is due"
     Then the control plane refuses it as the wrong state
     And the refusal suggests "discovery"
@@ -74,15 +76,15 @@ Feature: A project is designed in stages before it is built
     Then the control plane refuses it as the wrong state
     And the refusal suggests "stories"
 
-  Scenario: The six stages are written and approved in order
+  Scenario: The seven stages are written and approved in order
     Given every design stage is written and approved
     When the operator reads the project's design stages
-    Then the project holds 6 design stages, in order
+    Then the project holds 7 design stages, in order
     And every design stage is approved
 
   # The text moved under the word, so the word stops standing. The version it was given to stays on
   # the stage, because a stage that changed after it was agreed is a different thing from a stage
-  # nobody ever agreed to, and the page that lists the six says which of the two this is.
+  # nobody ever agreed to, and the page that lists the seven says which of the two this is.
   Scenario: Rewriting a stage takes its own approval away
     Given the "discovery" design stage is written and approved
     When the operator writes the "discovery" design stage with the goal "what we asked, the second time"
@@ -107,7 +109,7 @@ Feature: A project is designed in stages before it is built
     Then the control plane refuses it as the wrong state
     And the refusal suggests "krewe stage set"
 
-  Scenario: A name outside the six is not a design stage
+  Scenario: A name outside the seven is not a design stage
     When the operator writes the "wireframes" design stage as "the wireframes"
     Then the control plane refuses it as invalid
     And the refusal suggests "design_system"
@@ -181,6 +183,7 @@ Feature: A project is designed in stages before it is built
   # The artifact is the structured document a stage carries beside its prose, such as the flows the
   # mockups are played from. It is kept as json, because a reader opens it as json.
   Scenario: A stage carries a json artifact beside its prose
+    Given the "interview" design stage is written and approved
     When the operator writes the "discovery" design stage with the artifact:
       """
       {"asked": ["when does it move"]}
@@ -204,28 +207,28 @@ Feature: A project is designed in stages before it is built
   # until the body holds a fenced block marked mermaid, and the operator then approves a diagram
   # rather than a paragraph.
   Scenario: An architecture stage with no diagram is refused
-    Given the first 5 design stages are written and approved
+    Given the first 6 design stages are written and approved
     When the operator writes the "architecture" design stage as "the control plane holds the store, and a session talks to the control plane"
     Then the control plane refuses it as invalid
     And the refusal suggests "mermaid"
     And the project holds no "architecture" design stage
 
   Scenario: An architecture stage with a diagram goes in
-    Given the first 5 design stages are written and approved
+    Given the first 6 design stages are written and approved
     When the operator writes the "architecture" design stage with the goal "the control plane holds the store"
     And the operator reads the project's design stages
     Then the "architecture" design stage carries a diagram
     And the "architecture" design stage is not approved
 
   Scenario: A data model with no diagram is refused
-    Given the first 4 design stages are written and approved
+    Given the first 5 design stages are written and approved
     When the operator writes the "data_model" design stage as "one table for each bill, and one row for each payment"
     Then the control plane refuses it as invalid
     And the refusal suggests "data_model"
     And the project holds no "data_model" design stage
 
-  # The rule is about the two stages that carry a structure. The other four are written as prose, and
-  # a rule over all six would refuse a discovery nobody can draw.
+  # The rule is about the two stages that carry a structure. The other five are written as prose, and
+  # a rule over all seven would refuse a discovery nobody can draw.
   Scenario: A stage that is not the data model or the architecture needs no diagram
     Given the "discovery" design stage is written and approved
     When the operator writes the "stories" design stage with the goal "I want to see what is due"

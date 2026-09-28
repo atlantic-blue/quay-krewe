@@ -8,16 +8,19 @@
 
 // site:render:start
 
-// STAGE_ORDER is the six stages in the order they are written, which is the order of their positions.
-// It is here rather than read off the rows because a stage nobody wrote has no row and therefore no
-// position, and the operator still has to see that it is to come. A test holds this list against the
-// one the store writes.
-var STAGE_ORDER = ["discovery", "stories", "design_system", "mockups", "data_model", "architecture"];
+// STAGE_ORDER is the seven stages in the order they are written, which is the order of their
+// positions. It is here rather than read off the rows because a stage nobody wrote has no row and
+// therefore no position, and the operator still has to see that it is to come. A test holds this
+// list against the one the store writes.
+var STAGE_ORDER = [
+  "interview", "discovery", "stories", "design_system", "mockups", "data_model", "architecture"
+];
 
 // The words in the menu. The design is an entry too, and it comes first, because everything under it
 // is written to answer it.
 var ENTRY_NAMES = {
   design: "Design",
+  interview: "Interview",
   discovery: "Discovery",
   stories: "Stories",
   design_system: "Design system",

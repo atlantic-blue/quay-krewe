@@ -58,6 +58,8 @@ func TestTheRefusalNamesTheFirstStageWithoutApproval(t *testing.T) {
 	s := newServer(&model.FakeRunner{})
 	ctx := context.Background()
 	projectID, featureID := newPathToTake(t, s)
+	writeStage(t, s, projectID, store.StageInterview)
+	approveStage(t, s, projectID, store.StageInterview)
 
 	writeStage(t, s, projectID, store.StageDiscovery)
 	approveStage(t, s, projectID, store.StageDiscovery)
@@ -80,6 +82,8 @@ func TestAStageNobodyWroteIsRefusedAsUnwritten(t *testing.T) {
 	ctx := context.Background()
 	projectID, featureID := newPathToTake(t, s)
 
+	writeStage(t, s, projectID, store.StageInterview)
+	approveStage(t, s, projectID, store.StageInterview)
 	writeStage(t, s, projectID, store.StageDiscovery)
 	approveStage(t, s, projectID, store.StageDiscovery)
 

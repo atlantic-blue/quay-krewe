@@ -1,10 +1,10 @@
 Feature: A staged project refuses a step until every stage is approved
 
-  The six design stages say what a person will see before anything says what the data looks like.
+  The seven design stages say what a person will see before anything says what the data looks like.
   They mean nothing while a step can be taken over a mockup nobody read, so the take reads them.
 
   A project that holds at least one stage is designed in stages, and no step of it is taken until
-  every one of the six carries the operator's word. The refusal names the first stage without it,
+  every one of the seven carries the operator's word. The refusal names the first stage without it,
   because that is the operator's next move, and it says whether that stage is written yet.
 
   A project that holds no stage is refused nothing. That is every project made before the stages
@@ -25,10 +25,10 @@ Feature: A staged project refuses a step until every stage is approved
       ## 1. The store holds a project's brief
       """
 
-  # The state an operator is in the moment before they finish: five stages agreed and the last one
+  # The state an operator is in the moment before they finish: six stages agreed and the last one
   # written and unread. Nothing is built until they read it.
-  Scenario: A staged project with five approved stages refuses a step
-    Given the first 5 design stages are written and approved
+  Scenario: A staged project with six approved stages refuses a step
+    Given the first 6 design stages are written and approved
     And the operator writes the "architecture" design stage with the goal "one table for each bill"
     When the operator takes step 1
     Then the control plane refuses it as the wrong state

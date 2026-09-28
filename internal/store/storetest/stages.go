@@ -12,7 +12,7 @@ import (
 	"github.com/atlantic-blue/quay-krewe/internal/store"
 )
 
-// The six stages a project is designed in, held against both implementations.
+// The seven stages a project is designed in, held against both implementations.
 //
 // The two rules this contract exists for are the order and the clearing. A memory store that took a
 // write the real one refuses would let a project write its data model first, pass every scenario, and
@@ -50,10 +50,10 @@ func runDesignStageConformance(t *testing.T, newDataset func(t *testing.T) Opene
 		project := newProject(t, s, "acme", "house-bills")
 
 		written, err := s.SetDesignStage(ctx, project.GetId(), store.DesignStageWrite{
-			Stage:       store.StageDiscovery,
+			Stage:       store.StageInterview,
 			Body:        "# What we asked\n\nThey pay four bills, and two of them move.\n",
 			Artifact:    `{"asked":["when does it move"]}`,
-			ArtifactURL: "https://example.invalid/discovery",
+			ArtifactURL: "https://example.invalid/interview",
 		})
 		if err != nil {
 			t.Fatalf("SetDesignStage: %v", err)
@@ -64,13 +64,13 @@ func runDesignStageConformance(t *testing.T, newDataset func(t *testing.T) Opene
 		if written.GetProject() != project.GetId() {
 			t.Errorf("the stage names project %q, want %q", written.GetProject(), project.GetId())
 		}
-		if written.GetStage() != store.StageDiscovery || written.GetPosition() != 0 {
-			t.Errorf("discovery came back as %q at position %d", written.GetStage(), written.GetPosition())
+		if written.GetStage() != store.StageInterview || written.GetPosition() != 0 {
+			t.Errorf("the interview came back as %q at position %d", written.GetStage(), written.GetPosition())
 		}
 		if !strings.Contains(written.GetBody(), "two of them move") {
 			t.Errorf("the body did not survive the round trip: %q", written.GetBody())
 		}
-		if written.GetArtifactUrl() != "https://example.invalid/discovery" {
+		if written.GetArtifactUrl() != "https://example.invalid/interview" {
 			t.Errorf("the artifact address did not survive: %q", written.GetArtifactUrl())
 		}
 		// What it means, never how it is spelled. Postgres holds a jsonb document in its own form, so
@@ -91,8 +91,8 @@ func runDesignStageConformance(t *testing.T, newDataset func(t *testing.T) Opene
 		if err != nil {
 			t.Fatalf("ListDesignStages: %v", err)
 		}
-		if len(read) != 1 || read[0].GetStage() != store.StageDiscovery {
-			t.Fatalf("the listing holds %v, want discovery alone", named(read))
+		if len(read) != 1 || read[0].GetStage() != store.StageInterview {
+			t.Fatalf("the listing holds %v, want the interview alone", named(read))
 		}
 		if read[0].GetBody() != written.GetBody() {
 			t.Errorf("the listing reads body %q, and the write answered %q", read[0].GetBody(), written.GetBody())
@@ -106,6 +106,7 @@ func runDesignStageConformance(t *testing.T, newDataset func(t *testing.T) Opene
 		ctx := context.Background()
 		project := newProject(t, s, "acme", "house-bills")
 
+		approveThrough(t, s, project.GetId(), store.StageInterview)
 		_, err := s.SetDesignStage(ctx, project.GetId(), store.DesignStageWrite{
 			Stage: store.StageStories, Body: "as a person paying bills, I want to see what is due",
 		})
@@ -130,8 +131,8 @@ func runDesignStageConformance(t *testing.T, newDataset func(t *testing.T) Opene
 		if err != nil {
 			t.Fatalf("ListDesignStages: %v", err)
 		}
-		if len(stages) != 0 {
-			t.Fatalf("a refused write left %v behind", named(stages))
+		if len(stages) != 1 {
+			t.Fatalf("a refused write left %v behind, and only the interview was settled", named(stages))
 		}
 	})
 
@@ -142,6 +143,7 @@ func runDesignStageConformance(t *testing.T, newDataset func(t *testing.T) Opene
 		ctx := context.Background()
 		project := newProject(t, s, "acme", "house-bills")
 
+		approveThrough(t, s, project.GetId(), store.StageInterview)
 		if _, err := s.SetDesignStage(ctx, project.GetId(), store.DesignStageWrite{
 			Stage: store.StageDiscovery, Body: "what we asked",
 		}); err != nil {
@@ -179,7 +181,7 @@ func runDesignStageConformance(t *testing.T, newDataset func(t *testing.T) Opene
 	})
 
 	// The whole order walked once, which is the shape an operator actually works in.
-	t.Run("the six go in one after another, each once the one above is approved", func(t *testing.T) {
+	t.Run("the seven go in one after another, each once the one above is approved", func(t *testing.T) {
 		s := newDataset(t)(t)
 		ctx := context.Background()
 		project := newProject(t, s, "acme", "house-bills")
@@ -192,7 +194,7 @@ func runDesignStageConformance(t *testing.T, newDataset func(t *testing.T) Opene
 			t.Fatalf("ListDesignStages: %v", err)
 		}
 		if got := named(stages); strings.Join(got, ",") != strings.Join(store.DesignStages(), ",") {
-			t.Fatalf("the listing reads %v, want the six in order", got)
+			t.Fatalf("the listing reads %v, want the seven in order", got)
 		}
 		for at, stage := range stages {
 			if stage.GetPosition() != int32(at) {
@@ -269,7 +271,7 @@ func runDesignStageConformance(t *testing.T, newDataset func(t *testing.T) Opene
 		}
 		for _, stage := range stages {
 			switch {
-			case stage.GetPosition() < 2:
+			case stage.GetPosition() < 3:
 				if !stage.GetApproved() {
 					t.Errorf("%s sits above the write and lost its word", stage.GetStage())
 				}
@@ -279,7 +281,7 @@ func runDesignStageConformance(t *testing.T, newDataset func(t *testing.T) Opene
 				}
 				// A stage after the write never moved its own text, so nothing is left to say a word was
 				// ever given to it. Only the stage being written keeps the version it was approved at.
-				if stage.GetPosition() > 2 && stage.GetApprovedVersion() != 0 {
+				if stage.GetPosition() > 3 && stage.GetApprovedVersion() != 0 {
 					t.Errorf("%s sits after the write and reads approved at version %d",
 						stage.GetStage(), stage.GetApprovedVersion())
 				}
@@ -339,6 +341,7 @@ func runDesignStageConformance(t *testing.T, newDataset func(t *testing.T) Opene
 		ctx := context.Background()
 		project := newProject(t, s, "acme", "house-bills")
 
+		approveThrough(t, s, project.GetId(), store.StageInterview)
 		if _, err := s.SetDesignStage(ctx, project.GetId(), store.DesignStageWrite{
 			Stage: store.StageDiscovery, Body: "what we asked", Artifact: `{"asked":[]}`,
 		}); err != nil {
@@ -380,7 +383,7 @@ func runDesignStageConformance(t *testing.T, newDataset func(t *testing.T) Opene
 		}
 	})
 
-	t.Run("a stage outside the six is refused by both stores", func(t *testing.T) {
+	t.Run("a stage outside the seven is refused by both stores", func(t *testing.T) {
 		s := newDataset(t)(t)
 		ctx := context.Background()
 		project := newProject(t, s, "acme", "house-bills")
@@ -388,10 +391,10 @@ func runDesignStageConformance(t *testing.T, newDataset func(t *testing.T) Opene
 		if _, err := s.SetDesignStage(ctx, project.GetId(), store.DesignStageWrite{
 			Stage: "wireframes", Body: "the wireframes",
 		}); !errors.Is(err, store.ErrUnknownDesignStage) {
-			t.Fatalf("writing a stage outside the six: %v", err)
+			t.Fatalf("writing a stage outside the seven: %v", err)
 		}
 		if _, err := s.ApproveDesignStage(ctx, project.GetId(), "wireframes"); !errors.Is(err, store.ErrUnknownDesignStage) {
-			t.Fatalf("approving a stage outside the six: %v", err)
+			t.Fatalf("approving a stage outside the seven: %v", err)
 		}
 	})
 
@@ -400,6 +403,7 @@ func runDesignStageConformance(t *testing.T, newDataset func(t *testing.T) Opene
 		ctx := context.Background()
 		project := newProject(t, s, "acme", "house-bills")
 
+		approveThrough(t, s, project.GetId(), store.StageInterview)
 		if _, err := s.ApproveDesignStage(ctx, project.GetId(), store.StageDiscovery); !errors.Is(err, store.ErrNoStageToApprove) {
 			t.Fatalf("approving a stage nobody wrote: %v", err)
 		}
@@ -471,7 +475,7 @@ func runDesignStageConformance(t *testing.T, newDataset func(t *testing.T) Opene
 			Stage: store.StageStories, Body: "the stories",
 		})
 		var blocked *store.StageNotApprovedError
-		if !errors.As(err, &blocked) || blocked.Stage != store.StageDiscovery {
+		if !errors.As(err, &blocked) || blocked.Stage != store.StageInterview {
 			t.Fatalf("the project beside it wrote its stories off another project's approval: %v", err)
 		}
 	})
@@ -496,14 +500,20 @@ func runDesignStageConformance(t *testing.T, newDataset func(t *testing.T) Opene
 func approveThrough(t *testing.T, s store.Store, project, stage string) *quaycrewv1.DesignStage {
 	t.Helper()
 	ctx := context.Background()
-	if _, err := s.SetDesignStage(ctx, project, store.DesignStageWrite{
-		Stage: stage, Body: "the " + stage + " body",
-	}); err != nil {
-		t.Fatalf("SetDesignStage %s: %v", stage, err)
-	}
-	approved, err := s.ApproveDesignStage(ctx, project, stage)
-	if err != nil {
-		t.Fatalf("ApproveDesignStage %s: %v", stage, err)
+	var approved *quaycrewv1.DesignStage
+	// Every stage above this one first, because a write is refused while one of them carries no
+	// word. A helper that wrote one stage would settle nothing on a project that holds none.
+	for _, named := range append(store.DesignStagesBefore(stage), stage) {
+		if _, err := s.SetDesignStage(ctx, project, store.DesignStageWrite{
+			Stage: named, Body: "the " + named + " body",
+		}); err != nil {
+			t.Fatalf("SetDesignStage %s: %v", named, err)
+		}
+		one, err := s.ApproveDesignStage(ctx, project, named)
+		if err != nil {
+			t.Fatalf("ApproveDesignStage %s: %v", named, err)
+		}
+		approved = one
 	}
 	return approved
 }

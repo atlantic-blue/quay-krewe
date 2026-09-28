@@ -222,8 +222,8 @@ type ControlPlaneServiceClient interface {
 	// Saying a feature finished, stopped, or is open again. It warns about the steps still open under
 	// it and refuses nothing: the operator decides when a feature is finished.
 	FinishFeature(ctx context.Context, in *FinishFeatureRequest, opts ...grpc.CallOption) (*FinishFeatureResponse, error)
-	// The six stages a project is designed in, before anything under it is built: discovery, stories,
-	// design_system, mockups, data_model, architecture.
+	// The seven stages a project is designed in, before anything under it is built: interview,
+	// discovery, stories, design_system, mockups, data_model, architecture.
 	//
 	// A write to a stage is refused while a stage before it carries no approval, so the data model is
 	// never written before the stories, and the same write clears the approval of every stage after
@@ -1152,8 +1152,8 @@ type ControlPlaneServiceServer interface {
 	// Saying a feature finished, stopped, or is open again. It warns about the steps still open under
 	// it and refuses nothing: the operator decides when a feature is finished.
 	FinishFeature(context.Context, *FinishFeatureRequest) (*FinishFeatureResponse, error)
-	// The six stages a project is designed in, before anything under it is built: discovery, stories,
-	// design_system, mockups, data_model, architecture.
+	// The seven stages a project is designed in, before anything under it is built: interview,
+	// discovery, stories, design_system, mockups, data_model, architecture.
 	//
 	// A write to a stage is refused while a stage before it carries no approval, so the data model is
 	// never written before the stories, and the same write clears the approval of every stage after

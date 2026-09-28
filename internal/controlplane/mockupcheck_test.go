@@ -110,6 +110,7 @@ func designedWithTheSystem(t *testing.T, s *controlplane.Server, project, system
 	t.Helper()
 	ctx := context.Background()
 	for _, stage := range []struct{ name, artifact string }{
+		{store.StageInterview, ""},
 		{store.StageDiscovery, ""},
 		{store.StageStories, ""},
 		{store.StageDesignSystem, system},
@@ -359,6 +360,7 @@ func TestAMockupsStageWithProseAloneIsKeptWhileTheDesignSystemNamesNothing(t *te
 func TestAStageThatIsNotTheMockupsCarriesAnyJSON(t *testing.T) {
 	s := newServer(&model.FakeRunner{})
 	_, project := newProject(t, s)
+	designedUpTo(t, s, project, store.StageDiscovery)
 
 	written, err := s.SetDesignStage(context.Background(), &quaycrewv1.SetDesignStageRequest{
 		Project: project, Stage: store.StageDiscovery, Body: stageBody(store.StageDiscovery),

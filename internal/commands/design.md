@@ -1,13 +1,13 @@
 <!-- written by krewe <version> -->
 ---
-description: walk the six design stages in order, then design the project from the six the operator approved
+description: walk the seven design stages in order, then design the project from the seven the operator approved
 ---
 
 Design one project in Quay Krewe.
 
-A project is designed in six stages, in this order: discovery, stories, design_system, mockups,
-data_model, architecture. This command designs one of them in one run. The order lives in the
-control plane, and this file reads it rather than repeating it.
+A project is designed in seven stages, in this order: interview, discovery, stories, design_system,
+mockups, data_model, architecture. This command designs one of them in one run. The order lives in
+the control plane, and this file reads it rather than repeating it.
 
 A session in a sandbox writes each stage. It writes the design too. Do not write a stage here. Do
 not write the design here.
@@ -18,7 +18,7 @@ Ask the operator for the address. An address reads `<workspace>/<project>`.
 
     krewe stage show <workspace>/<project>
 
-Show the six stages to the operator. Do not shorten the listing.
+Show the seven stages to the operator. Do not shorten the listing.
 
 The first stage without the operator's word is the stage this run is about. The line under the
 listing names it. Take that name from the listing every time. A stage is refused while the stage
@@ -36,6 +36,26 @@ Go to step 7 when the listing says every stage carries the operator's word.
 
 Ask one question at a time. Wait for the answer to each one. Keep the words of the operator. Do not
 answer a question for the operator. Ask a question again when the answer is not clear.
+
+Put your best guess beside every question. Write it as one line under the question. The operator
+then answers yes, or corrects one word. That is faster than writing an answer from nothing.
+
+Ask these for the interview stage. This is the first stage, and its answers are the only thing the
+stages under it are written against.
+
+1. Who is this product for? Name one person by what they do.
+2. What can that person not do today?
+3. What says this worked? Name something you can see or count.
+4. What are the limits? Say the time, the money and the platform.
+5. What does this not do?
+6. Which decisions are yours alone to take?
+
+Ask ten questions or fewer for this stage. Stop when you can predict the answers to the next three
+questions you would ask. Say to the operator that you can predict them.
+
+Then say the answers back in the operator's own words. Ask one question: is this right? Wait for a
+yes. These are not a yes: "whatever you think", "sounds good", and silence. Ask what to change, fold
+the change in, and say the answers back again.
 
 Ask these for the stories stage.
 
@@ -63,18 +83,20 @@ Ask these for the architecture stage.
 1. Where does this project run?
 2. What may it cost while nobody uses it?
 
-## 3. Make sure the session holds the design skill
+## 3. Make sure the session holds the skill of that stage
 
 A session holds the skills of its workspace. The skill named `design` says how to write a stage and
-how to write a design. Read what the workspace holds now.
+how to write a design. The skill named `interview` says how the interview page is written. Read what
+the workspace holds now.
 
     krewe skill list <workspace>
 
-Go to step 4 when the answer names `design`.
+Go to step 4 when the answer names `design`, and names `interview` where this run is the interview.
 
-Show the operator this command when the answer does not name `design`. Ask for a yes. Then run it.
+Show the operator this command when the answer does not name the skill. Ask for a yes. Then run it.
 
     krewe skill attach <workspace> design
+    krewe skill attach <workspace> interview
 
 A skill attaches to a workspace and not to one session. Every later session of that workspace holds
 it. Say that to the operator before you ask for the yes.
@@ -107,7 +129,7 @@ Wait for the session to stop. Then read what it came back with.
 
     krewe answer <session>
 
-Then read the six stages again.
+Then read the seven stages again.
 
     krewe stage show <workspace>/<project>
 
@@ -139,14 +161,14 @@ operator what to change. Then go back to step 4 with that change.
 Say this to the operator after the approval. One stage carries your word now. Run `/krewe:design`
 again for the stage after it.
 
-## 7. Design the project from the six stages
+## 7. Design the project from the seven stages
 
 Every stage carries the operator's word here. So the design of the whole project is the move that is
 left.
 
 Show the operator the command. Ask for a yes. Then run it.
 
-    krewe exec --dispatch <workspace>/<project> "write the design from the six approved stages"
+    krewe exec --dispatch <workspace>/<project> "write the design from the approved stages"
 
 The session reads every stage. It writes the design, the parts of the project, the contracts and the
 path of each part. The skill says how. Do not repeat the skill here.
@@ -177,4 +199,4 @@ the operator what to change. Then go back to step 7 with that change.
 It writes no stage. It writes no design body. It writes no path.
 
 A session in a sandbox writes all three. The design skill of that session says how. The order of the
-six stages belongs to the control plane, and this command reads it from the listing.
+seven stages belongs to the control plane, and this command reads it from the listing.
