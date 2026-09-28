@@ -6,7 +6,10 @@ somebody designs a second time.
 
 Every command here takes an address, written as `<workspace>/<project>`.
 
-## 1. Read the repository, not your memory of it
+## 1. Read the interview first, then the repository
+
+The discovery is the second of the seven stages. Read the interview above it before anything else. It
+says what the operator wants. The repository says only what exists today.
 
 Read the files: the routes, the components, the tokens, the entities, the patterns the code follows
 today, and the test tiers with what each covers. A discovery written from a belief about a repository
@@ -16,8 +19,7 @@ The reading is yours. The document is the operator's. So it carries what you fou
 route you took. Write no file path, no line number, no name of a function and no count, unless one
 decision rests on that exact fact. Then write that fact in one sentence, beside that decision.
 
-Write no list of what you read. Write no list of what you did not read. The files are in the
-artifact, one for each screen, where a later stage can use them.
+Write no list of what you read. Write no list of what you did not read.
 
 ## 2. Write the stage as a brief
 
@@ -58,9 +60,8 @@ Write a second file. It holds the screens that exist today, and nothing else.
       "stories": []
     }
 
-Write the markup of each screen you found. One heading and one list is enough. You are writing down
-what is there, not designing it. Name the component each part stands for with `data-component`, and
-name the screen a part opens with `data-to`.
+Write the markup of each screen you found. One heading and one list is enough. Name the component
+each part stands for with `data-component`, and name the screen a part opens with `data-to`.
 
 Four rules hold for every screen.
 

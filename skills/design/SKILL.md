@@ -9,14 +9,16 @@ Every command here takes an address, written as `<workspace>/<project>`.
 
     krewe stage show <workspace>/<project>
 
-Six stages hold the design, in order: discovery, stories, design_system, mockups, data_model,
-architecture. Your ask names one. Write that one, and no other. A stage is refused while the stage
-before it carries no approval.
+Seven stages hold the design, in order: interview, discovery, stories, design_system, mockups,
+data_model, architecture. Your ask names one. Write that one, and no other. A stage is refused
+while the stage before it carries no approval.
 
-## 2. Read the code, and keep the findings
+## 2. Read the interview first, then the code
 
-Read every stage that carries the operator's word already. Read the project's context in your memory
-file. Read the code itself, not your memory of it.
+Read the interview before anything else. It says what the operator wants. Every stage under it is
+written from a repository, and a repository says what the code does today rather than what they want
+next. Then read every other stage that carries the operator's word already. Read the project's
+context in your memory file. Read the code itself, not your memory of it.
 
 The reading is yours. The document is the operator's. So it carries what you found, and never the
 route you took. Write no file path, no line number, no name of a function and no count, unless one
@@ -48,9 +50,9 @@ The data model and the architecture each carry a mermaid diagram beside the pros
 and the mockups each carry a json artifact, written with `--artifact <path>`, with the page's address
 given by `--url <address>`. Read `skills/flow-map/SKILL.md` before the mockups.
 
-## 4. Write the design, once all six stages carry the word
+## 4. Write the design, once all seven stages carry the word
 
-Read all six. They are what the operator agreed to, and the design says nothing more. Write it with
+Read all seven. They are what the operator agreed to, and the design says nothing more. Write it with
 `krewe design set --file <path>`.
 
 Then narrow the project into parts. Add one with `krewe feature add "<title>"`, and say what it
