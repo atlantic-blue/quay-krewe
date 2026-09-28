@@ -2,6 +2,8 @@ package controlplane_test
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -110,7 +112,7 @@ func TestWritingAStageSaysWhichApprovalsItTookAway(t *testing.T) {
 	}
 
 	again, err := s.SetDesignStage(ctx, &quaycrewv1.SetDesignStageRequest{
-		Project: projectID, Stage: store.StageStories, Body: "the stories, rethought",
+		Project: projectID, Stage: store.StageStories, Body: stageBody(store.StageStories),
 	})
 	if err != nil {
 		t.Fatalf("SetDesignStage over an approved stage: %v", err)
@@ -150,7 +152,7 @@ func TestAFirstWriteWarnsAboutNoApprovals(t *testing.T) {
 	_, projectID := newProject(t, s)
 
 	written, err := s.SetDesignStage(ctx, &quaycrewv1.SetDesignStageRequest{
-		Project: projectID, Stage: store.StageDiscovery, Body: "what we asked",
+		Project: projectID, Stage: store.StageDiscovery, Body: stageBody(store.StageDiscovery),
 	})
 	if err != nil {
 		t.Fatalf("SetDesignStage: %v", err)
@@ -260,7 +262,7 @@ func TestAnArtifactThatIsNotJSONIsRefused(t *testing.T) {
 
 	_, err := s.SetDesignStage(ctx, &quaycrewv1.SetDesignStageRequest{
 		Project: projectID, Stage: store.StageDiscovery,
-		Body: "what we asked", Artifact: "the flows are over there",
+		Body: stageBody(store.StageDiscovery), Artifact: "the flows are over there",
 	})
 	if status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("an artifact that is not json answered %v, want InvalidArgument", err)
@@ -268,7 +270,7 @@ func TestAnArtifactThatIsNotJSONIsRefused(t *testing.T) {
 
 	written, err := s.SetDesignStage(ctx, &quaycrewv1.SetDesignStageRequest{
 		Project: projectID, Stage: store.StageDiscovery,
-		Body: "what we asked", Artifact: `{"asked":["when does it move"]}`,
+		Body: stageBody(store.StageDiscovery), Artifact: `{"asked":["when does it move"]}`,
 		ArtifactUrl: "https://example.invalid/discovery",
 	})
 	if err != nil {
@@ -313,32 +315,10 @@ func TestStagesOfAProjectThatDoesNotExist(t *testing.T) {
 	ctx := context.Background()
 
 	_, err := s.SetDesignStage(ctx, &quaycrewv1.SetDesignStageRequest{
-		Project: "nothing", Stage: store.StageDiscovery, Body: "what we asked",
+		Project: "nothing", Stage: store.StageDiscovery, Body: stageBody(store.StageDiscovery),
 	})
 	if status.Code(err) != codes.NotFound {
 		t.Fatalf("writing a stage of a project that does not exist answered %v, want NotFound", err)
-	}
-}
-
-// A body long enough to be a whole document pasted into one stage is said out loud, and the write
-// still keeps it whole. The number is the one the design body is measured against.
-func TestALongStageBodyIsKeptAndSaidOutLoud(t *testing.T) {
-	s := newServer(&model.FakeRunner{})
-	ctx := context.Background()
-	_, projectID := newProject(t, s)
-
-	long := strings.Repeat("a", 100_001)
-	written, err := s.SetDesignStage(ctx, &quaycrewv1.SetDesignStageRequest{
-		Project: projectID, Stage: store.StageDiscovery, Body: long,
-	})
-	if err != nil {
-		t.Fatalf("SetDesignStage with a long body: %v", err)
-	}
-	if len(written.GetStage().GetBody()) != len(long) {
-		t.Fatalf("the body came back %d characters long, want %d", len(written.GetStage().GetBody()), len(long))
-	}
-	if len(written.GetWarnings()) == 0 {
-		t.Error("a body of 100,001 characters was written with nothing said about it")
 	}
 }
 
@@ -425,7 +405,7 @@ func TestAnArchitectureStageWithADiagramGoesIn(t *testing.T) {
 	ctx := context.Background()
 	_, projectID := newProject(t, s)
 	designedUpTo(t, s, projectID, store.StageArchitecture)
-	body := "the control plane holds the store\n\n```mermaid\nflowchart LR\n  session --> store\n```\n"
+	body := stageBrief(store.StageArchitecture) + "\n```mermaid\nflowchart LR\n  session --> store\n```\n"
 
 	written, err := s.SetDesignStage(ctx, &quaycrewv1.SetDesignStageRequest{
 		Project: projectID, Stage: store.StageArchitecture, Body: body,
@@ -486,7 +466,7 @@ func TestWhatCountsAsADiagramInAStage(t *testing.T) {
 			designedUpTo(t, s, projectID, store.StageArchitecture)
 
 			_, err := s.SetDesignStage(context.Background(), &quaycrewv1.SetDesignStageRequest{
-				Project: projectID, Stage: store.StageArchitecture, Body: body.text,
+				Project: projectID, Stage: store.StageArchitecture, Body: stageBrief(store.StageArchitecture) + "\n" + body.text,
 			})
 
 			if body.counts && err != nil {
@@ -510,7 +490,7 @@ func TestTheOtherFourStagesAreWrittenWithoutADiagram(t *testing.T) {
 		store.StageDiscovery, store.StageStories, store.StageDesignSystem, store.StageMockups,
 	} {
 		if _, err := s.SetDesignStage(ctx, &quaycrewv1.SetDesignStageRequest{
-			Project: projectID, Stage: stage, Body: "the " + stage + " body",
+			Project: projectID, Stage: stage, Body: stageBody(stage),
 		}); err != nil {
 			t.Fatalf("writing %s as prose was refused: %v", stage, err)
 		}
@@ -522,16 +502,29 @@ func TestTheOtherFourStagesAreWrittenWithoutADiagram(t *testing.T) {
 	}
 }
 
-// stageBody is the body a test writes for one stage.
+// stageBody is the body a test writes for one stage: a whole brief of the seven headings, which is
+// the only shape the control plane takes.
 //
-// The data model and the architecture carry a diagram or they are refused, so a setup that writes
-// all six writes a picture into those two. Every other stage is prose.
+// The data model and the architecture carry a diagram as well, or they are refused, so a setup that
+// writes all six writes a picture into those two.
 func stageBody(stage string) string {
-	body := "the " + stage + " body"
 	if stage == store.StageDataModel || stage == store.StageArchitecture {
-		return body + "\n\n```mermaid\nflowchart TD\n  one --> two\n```\n"
+		return stageBrief(stage) + "\n```mermaid\nflowchart TD\n  one --> two\n```\n"
 	}
-	return body
+	return stageBrief(stage)
+}
+
+// stageBrief is the seven headings with no picture under them, so a test about what counts as a
+// diagram can write its own underneath and change only that.
+func stageBrief(stage string) string {
+	return "# The " + stage + "\n\n" +
+		"## Goal\n\nwhat this stage is for\n\n" +
+		"## Direction\n\nwhat we recommend for the " + stage + ", and the reason we recommend it.\n\n" +
+		"## Assumptions\n\n- four bills, and two of them move. Correct me or I proceed.\n\n" +
+		"## Decisions for the operator\n\n- keep the green accent or pick another: I recommend keeping it.\n\n" +
+		"## Done when\n\n- the " + stage + " answers what the stage after it asks of it.\n\n" +
+		"## Not doing\n\n- the deploy pipeline, because it draws no screen.\n\n" +
+		"## Open questions\n\n- what happens to a bill after somebody pays it?\n"
 }
 
 // designedUpTo writes and approves every stage before the one named, which is the only state a
@@ -563,4 +556,170 @@ func stageInList(stages []*quaycrewv1.DesignStage, stage string) *quaycrewv1.Des
 		}
 	}
 	return nil
+}
+
+// A stage is a brief the operator reads alone and decides on alone. It carries seven headings, in
+// one order, and it is one page long. Before this, a stage was whatever a session wrote: the stages
+// of one project ran to 46,053, 27,253 and 51,176 characters, holding file lists, line numbers, a
+// section for what the session read and a section for what it did not. None of that is a decision,
+// and the operator stopped reading them.
+//
+// The refusal is InvalidArgument, because the body itself is what is wrong. No later approval makes
+// the same call go through.
+
+// The heading a stage is missing, named one at a time, because an operator told only "the shape is
+// wrong" has to work out which of seven they left out.
+func TestAStageMissingAHeadingIsRefused(t *testing.T) {
+	for _, missing := range controlplane.StageHeadings() {
+		t.Run(missing, func(t *testing.T) {
+			s := newServer(&model.FakeRunner{})
+			ctx := context.Background()
+			_, projectID := newProject(t, s)
+
+			_, err := s.SetDesignStage(ctx, &quaycrewv1.SetDesignStageRequest{
+				Project: projectID, Stage: store.StageDiscovery, Body: briefWithout(missing),
+			})
+			if status.Code(err) != codes.InvalidArgument {
+				t.Fatalf("a discovery with no %q heading answered %v, want InvalidArgument", missing, err)
+			}
+			said := status.Convert(err).Message()
+			if !strings.Contains(said, missing) {
+				t.Errorf("the refusal reads %q, and it has to name the heading that is missing", said)
+			}
+			if held := stagesHeld(t, s, projectID); len(held) != 0 {
+				t.Errorf("the project holds %d stages, and a refused write leaves nothing behind", len(held))
+			}
+		})
+	}
+}
+
+// The order is part of the shape. A reader who meets the decisions before the direction reads the
+// recommendation after the thing it recommends.
+func TestAStageWhoseHeadingsAreOutOfOrderIsRefused(t *testing.T) {
+	s := newServer(&model.FakeRunner{})
+	ctx := context.Background()
+	_, projectID := newProject(t, s)
+
+	swapped := strings.Replace(stageBody(store.StageDiscovery),
+		"## Goal\n\nwhat this stage is for\n\n## Direction",
+		"## Direction\n\nwhat this stage is for\n\n## Goal", 1)
+	if swapped == stageBody(store.StageDiscovery) {
+		t.Fatal("the swap changed nothing, so this test proves nothing about the order")
+	}
+
+	_, err := s.SetDesignStage(ctx, &quaycrewv1.SetDesignStageRequest{
+		Project: projectID, Stage: store.StageDiscovery, Body: swapped,
+	})
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("a discovery with Direction above Goal answered %v, want InvalidArgument", err)
+	}
+	if said := status.Convert(err).Message(); !strings.Contains(said, "order") {
+		t.Errorf("the refusal reads %q, and it has to say the headings are out of order", said)
+	}
+}
+
+// One page, and the check is the only thing that holds it to one. The mark warned and kept the text,
+// which is what let a stage of fifty thousand characters reach an operator who then did not read it.
+func TestAStageOverTheLengthIsRefused(t *testing.T) {
+	s := newServer(&model.FakeRunner{})
+	ctx := context.Background()
+	_, projectID := newProject(t, s)
+
+	long := stageBody(store.StageDiscovery) +
+		strings.Repeat("the reading, pasted in. ", 1+controlplane.StageCeiling/24)
+	if len([]rune(long)) <= controlplane.StageCeiling {
+		t.Fatalf("the body is %d characters, which is inside the ceiling of %d",
+			len([]rune(long)), controlplane.StageCeiling)
+	}
+
+	_, err := s.SetDesignStage(ctx, &quaycrewv1.SetDesignStageRequest{
+		Project: projectID, Stage: store.StageDiscovery, Body: long,
+	})
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("a discovery of %d characters answered %v, want InvalidArgument", len([]rune(long)), err)
+	}
+	said := status.Convert(err).Message()
+	for _, wanted := range []string{"6,000", "one page"} {
+		if !strings.Contains(said, wanted) {
+			t.Errorf("the refusal reads %q, and it never says %q", said, wanted)
+		}
+	}
+	if held := stagesHeld(t, s, projectID); len(held) != 0 {
+		t.Errorf("the project holds %d stages, and a refused write leaves nothing behind", len(held))
+	}
+}
+
+// The other side of the two refusals above. A brief of the right shape, at the length a real one
+// runs to, goes in and comes back whole.
+func TestAStageOfTheRightShapeGoesIn(t *testing.T) {
+	s := newServer(&model.FakeRunner{})
+	ctx := context.Background()
+	_, projectID := newProject(t, s)
+
+	for _, stage := range store.DesignStages() {
+		written, err := s.SetDesignStage(ctx, &quaycrewv1.SetDesignStageRequest{
+			Project: projectID, Stage: stage, Body: stageBody(stage),
+		})
+		if err != nil {
+			t.Fatalf("writing %s as a brief was refused: %v", stage, err)
+		}
+		if written.GetStage().GetBody() != stageBody(stage) {
+			t.Errorf("the %s stage came back changed, and the record keeps what was written", stage)
+		}
+		approveStage(t, s, projectID, stage)
+	}
+}
+
+// The shipped discovery example is what every discovering session copies, so an example the control
+// plane would refuse teaches every one of them a shape the product does not take.
+func TestTheShippedDiscoveryExampleIsAStageTheControlPlaneTakes(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", "skills", "discover", "example", "discovery.md"))
+	if err != nil {
+		t.Fatalf("reading the discovery the discover skill ships: %v", err)
+	}
+
+	s := newServer(&model.FakeRunner{})
+	ctx := context.Background()
+	_, projectID := newProject(t, s)
+	if _, err := s.SetDesignStage(ctx, &quaycrewv1.SetDesignStageRequest{
+		Project: projectID, Stage: store.StageDiscovery, Body: string(body),
+	}); err != nil {
+		t.Fatalf("the example beside the discover brief was refused: %v", err)
+	}
+	t.Logf("the shipped example is %d characters, against a ceiling of %d",
+		len([]rune(string(body))), controlplane.StageCeiling)
+}
+
+// briefWithout is a whole stage brief with one heading cut out of it, and the prose under that
+// heading left where it was. A test that cut the prose too would pass on a check that only counted
+// the paragraphs.
+func briefWithout(heading string) string {
+	return strings.Replace(stageBody(store.StageDiscovery), "## "+heading+"\n", "", 1)
+}
+
+// The two briefs a session reads before it writes a stage, held against the check that refuses one.
+//
+// A brief naming six of the seven headings, or naming another length, teaches every session to write
+// a stage this call refuses, and the session reads that refusal as its own mistake. The skills are
+// read off disk here rather than listed, so a heading renamed in one place and not the other fails.
+func TestTheShippedBriefsTeachTheShapeTheControlPlaneTakes(t *testing.T) {
+	for _, skill := range []string{"design", "discover"} {
+		t.Run(skill, func(t *testing.T) {
+			brief, err := os.ReadFile(filepath.Join("..", "..", "skills", skill, "SKILL.md"))
+			if err != nil {
+				t.Fatalf("reading the %s brief: %v", skill, err)
+			}
+			said := string(brief)
+			for _, heading := range controlplane.StageHeadings() {
+				if !strings.Contains(said, heading) {
+					t.Errorf("the %s brief never names the %q heading, and a stage without it is refused",
+						skill, heading)
+				}
+			}
+			if !strings.Contains(said, "6,000 characters") {
+				t.Errorf("the %s brief never says the length a stage is refused past, so a session finds it out from a refusal",
+					skill)
+			}
+		})
+	}
 }

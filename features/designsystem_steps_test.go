@@ -161,7 +161,7 @@ func writeDesignSystem(ctx context.Context, breakIt func(map[string]any) error) 
 	}
 	held := designSystemFrom(ctx)
 	held.fixture, held.written = system, system
-	return writeStage(ctx, store.StageDesignSystem, "the design system", artifact)
+	return writeStage(ctx, store.StageDesignSystem, settledBody(store.StageDesignSystem), artifact)
 }
 
 // theDesignSystemFixture reads the design system the skill ships, which is the file a session is

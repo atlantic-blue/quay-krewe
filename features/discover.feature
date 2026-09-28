@@ -6,13 +6,19 @@ Feature: Discovery writes down what a repository already holds
   page, and the stage after it designed a screen the repository already draws.
 
   Discovery is that first stage, and `/krewe:discover` is how the operator asks for it. The operator
-  types one word. A session in a sandbox reads the repository, writes down six lists, and gives each
-  item the file it came from. Beside the lists it writes a draft `flows.json` of the screens that
-  exist today, each one marked built, each one naming its surface and the file it was read from.
+  types one word. A session in a sandbox reads the repository and writes a brief of one page: what
+  the stage is for, what it recommends, what it assumed, what the operator must decide, what done
+  looks like, what it is leaving out, and what it could not safely guess. Beside the brief it writes
+  a draft `flows.json` of the screens that exist today, each one marked built, each one naming its
+  surface and the file it was read from.
+
+  The findings go in the brief and the file paths go in the artifact. A discovery used to be six
+  lists of items, each naming its file, ending with a line for what the session did not read. None of
+  that is a decision, none of it survives the next commit, and the operator stopped reading it.
 
   The operator reads both documents and approves the stage. Approving stays the operator's word: a
   session that could agree with its own reading of a repository would hand the next five stages a
-  list nobody checked.
+  reading nobody checked.
 
   Background:
     Given a running control plane
@@ -30,7 +36,7 @@ Feature: Discovery writes down what a repository already holds
       app/routes/settings.tsx
       """
     When a session writes the discovery that the discover skill shows
-    Then the discovery stage names every file of that repository
+    Then the discovery artifact names every file of that repository
     And the discovery artifact holds 3 screens
     And every screen in the discovery artifact was built already
     And every screen in the discovery artifact names its surface
@@ -47,9 +53,9 @@ Feature: Discovery writes down what a repository already holds
       """
     And a session writes the discovery that the discover skill shows
     When the operator approves the "discovery" design stage
-    And the operator writes the "stories" design stage as "one story for each screen that exists"
+    And the operator writes the "stories" design stage with the goal "one story for each screen that exists"
     Then the operator reads the project's design stages
-    And the "stories" design stage reads "one story for each screen that exists"
+    And the "stories" design stage states the goal "one story for each screen that exists"
 
   # What the session reads before it reads a repository. The brief is prose and nothing else: no gate
   # reads it, so what it fails to say is a thing the discovery will not carry.
@@ -58,20 +64,36 @@ Feature: Discovery writes down what a repository already holds
     Then the discover skill says "<said>"
 
     Examples:
-      | said                                             |
-      | the file each thing came from                    |
-      | Routes and screens                               |
-      | Components                                       |
-      | Tokens                                           |
-      | Data entities                                    |
-      | Patterns                                         |
-      | Test tiers                                       |
-      | The status reads `built`                         |
-      | The surface reads `web` or `mobile`              |
+      | said                                               |
+      | Goal                                               |
+      | Direction                                          |
+      | Assumptions                                        |
+      | Decisions for the operator                         |
+      | Done when                                          |
+      | Not doing                                          |
+      | Open questions                                     |
+      | One page of prose                                  |
+      | 6,000 characters                                   |
+      | correct me or I proceed                            |
+      | The status reads `built`                           |
+      | The surface reads `web` or `mobile`                |
       | The source names the file you read the screen from |
-      | Write the markup of each screen                  |
-      | Write the token values you read into the discovery |
-      | Only the operator approves                       |
+      | Write the markup of each screen                    |
+      | Only the operator approves                         |
+
+  # The way off the old shape. A discovery used to be six lists of items, each naming the file it came
+  # from, and it ended with a line for what the session did not read. None of that is a decision, and
+  # a brief that still asks for it gets it.
+  Scenario Outline: The discover skill asks for no reading list
+    When the operator reads the discover skill
+    Then the discover skill says "<said>"
+
+    Examples:
+      | said                                   |
+      | Write no file path                     |
+      | Write no list of what you read         |
+      | Write no list of what you did not read |
+      | no confidence percentage               |
 
   # The example is the part a session copies, so a broken one teaches every session the wrong shape.
   Scenario: The example beside the brief is a whole discovery of three screens

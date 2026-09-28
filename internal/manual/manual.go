@@ -223,7 +223,11 @@ commands:
                                           that order, and a stage is refused while the stage before
                                           it carries no approval. The write clears the approval of
                                           this stage and of every stage after it, because each was
-                                          agreed under a text that just changed
+                                          agreed under a text that just changed. A stage is a brief
+                                          of one page, and it is refused unless it carries these
+                                          seven headings in this order: Goal, Direction,
+                                          Assumptions, Decisions for the operator, Done when, Not
+                                          doing, Open questions
   stage approve [<address>] <stage>       say one stage as it stands is the one to build on. It is
                                           the operator's word: a session is refused this call
   feature [<address>]                     the narrowed parts of a project, in number order, with the

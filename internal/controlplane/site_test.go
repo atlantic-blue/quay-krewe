@@ -81,7 +81,7 @@ func TestTheSiteAnswersTheStagesAProjectHasWritten(t *testing.T) {
 		if held.Position != at {
 			t.Errorf("the %s stage sits at position %d, want %d", want, held.Position, at)
 		}
-		if held.Body != "the "+want+" body" {
+		if held.Body != stageBody(want) {
 			t.Errorf("the %s stage reads %q", want, held.Body)
 		}
 		if held.Version != 1 || held.ApprovedVersion != 1 {
@@ -207,7 +207,7 @@ func TestTheSiteAnswersAStagesArtifact(t *testing.T) {
 	settleSiteStage(t, s, projectID, store.StageDiscovery)
 	artifact := `{"screens":[{"id":"bills","kind":"web"}]}`
 	if _, err := s.SetDesignStage(context.Background(), &quaycrewv1.SetDesignStageRequest{
-		Project: projectID, Stage: store.StageStories, Body: "the stories body", Artifact: artifact,
+		Project: projectID, Stage: store.StageStories, Body: stageBody(store.StageStories), Artifact: artifact,
 	}); err != nil {
 		t.Fatalf("SetDesignStage: %v", err)
 	}
@@ -244,7 +244,7 @@ func readSite(t *testing.T, s *controlplane.Server, path string) (int, string, h
 func settleSiteStage(t *testing.T, s *controlplane.Server, project, stage string) {
 	t.Helper()
 	if _, err := s.SetDesignStage(context.Background(), &quaycrewv1.SetDesignStageRequest{
-		Project: project, Stage: stage, Body: "the " + stage + " body",
+		Project: project, Stage: stage, Body: stageBody(stage),
 	}); err != nil {
 		t.Fatalf("SetDesignStage %s: %v", stage, err)
 	}
@@ -284,8 +284,9 @@ func TestTheSiteAnswersAStageWrittenAgainWithoutTheWordItHad(t *testing.T) {
 	s := newServer(&model.FakeRunner{})
 	_, projectID := newProject(t, s)
 	settleSiteStage(t, s, projectID, store.StageDiscovery)
+	second := stageBody(store.StageDiscovery) + "\n- and a third of them move.\n"
 	if _, err := s.SetDesignStage(context.Background(), &quaycrewv1.SetDesignStageRequest{
-		Project: projectID, Stage: store.StageDiscovery, Body: "four bills, and three of them move",
+		Project: projectID, Stage: store.StageDiscovery, Body: second,
 	}); err != nil {
 		t.Fatalf("SetDesignStage: %v", err)
 	}
@@ -309,7 +310,7 @@ func TestTheSiteAnswersAStageWrittenAgainWithoutTheWordItHad(t *testing.T) {
 		t.Errorf("the discovery stage is approved at version %d, want the version the word was given to",
 			held.ApprovedVersion)
 	}
-	if held.Body != "four bills, and three of them move" {
+	if held.Body != second {
 		t.Errorf("the discovery stage reads %q, want what was written second", held.Body)
 	}
 }
@@ -534,7 +535,7 @@ func TestTheSiteSaysWhenAProjectHasNoDesignSystemToAnswer(t *testing.T) {
 	saysTheStageIsMissing(t, "a project that wrote no design system", status, body)
 
 	if _, err := s.SetDesignStage(context.Background(), &quaycrewv1.SetDesignStageRequest{
-		Project: projectID, Stage: store.StageDesignSystem, Body: "the design system body",
+		Project: projectID, Stage: store.StageDesignSystem, Body: stageBody(store.StageDesignSystem),
 	}); err != nil {
 		t.Fatalf("SetDesignStage: %v", err)
 	}
@@ -542,7 +543,7 @@ func TestTheSiteSaysWhenAProjectHasNoDesignSystemToAnswer(t *testing.T) {
 	saysTheStageIsMissing(t, "a design system written as prose alone", status, body)
 
 	if _, err := held.SetDesignStage(context.Background(), projectID, store.DesignStageWrite{
-		Stage: store.StageDesignSystem, Body: "the design system body",
+		Stage: store.StageDesignSystem, Body: stageBody(store.StageDesignSystem),
 		Artifact: `["a design system written before the stage had a shape"]`,
 	}); err != nil {
 		t.Fatalf("writing an older design system: %v", err)

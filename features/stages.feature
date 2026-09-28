@@ -15,7 +15,12 @@ Feature: A project is designed in stages before it is built
 
   Two of the six describe a structure. The data model and the architecture are refused until the
   body holds a diagram, written as a fenced block marked mermaid, so the operator approves a picture
-  rather than a paragraph. The other four are prose and carry whatever they carry.
+  rather than a paragraph.
+
+  Every stage is a brief. It carries seven headings in one order, and it is one page long: Goal,
+  Direction, Assumptions, Decisions for the operator, Done when, Not doing, Open questions. Each one
+  is a thing the operator can agree with or change. Before that a stage was whatever a session wrote,
+  which is the session's research, and the operator read none of it.
 
   A project that has written no stage holds none, which is how every project made before this
   existed reads, and it keeps working exactly as it did.
@@ -30,41 +35,33 @@ Feature: A project is designed in stages before it is built
     Then the project holds no design stages
 
   Scenario: The first stage is written into an empty project
-    When the operator writes the "discovery" design stage as "They pay four bills, and two move."
+    When the operator writes the "discovery" design stage with the goal "They pay four bills, and two move."
     And the operator reads the project's design stages
-    Then the "discovery" design stage reads "They pay four bills, and two move."
+    Then the "discovery" design stage states the goal "They pay four bills, and two move."
     And the "discovery" design stage is not approved
 
   # The refusal this whole feature exists for. It names the stage to go and approve, because an
   # operator told only no has to work out which of five stages they are missing.
   #
-  # The body carries a diagram because the data model is one of the two stages that must, and a body
+  # The brief carries a diagram because the data model is one of the two stages that must, and a body
   # without one is refused before the order is read at all.
   Scenario: A stage is refused while the stage before it is not approved
-    When the operator writes the "data_model" design stage as:
-      """
-      one table for each bill
-
-      ```mermaid
-      erDiagram
-        BILL ||--o{ PAYMENT : has
-      ```
-      """
+    When the operator writes the "data_model" design stage with the goal "one table for each bill"
     Then the control plane refuses it as the wrong state
     And the refusal suggests "discovery"
     And the project holds no design stages
 
   Scenario: A stage goes in once the stage before it is approved
     Given the "discovery" design stage is written and approved
-    When the operator writes the "stories" design stage as "I want to see what is due"
+    When the operator writes the "stories" design stage with the goal "I want to see what is due"
     And the operator reads the project's design stages
-    Then the "stories" design stage reads "I want to see what is due"
+    Then the "stories" design stage states the goal "I want to see what is due"
 
   # Written is not agreed. A stage sitting there unread is no better than a stage nobody wrote, which
   # is the half of the rule a check for the row alone would miss.
   Scenario: A stage written and never approved still refuses the stage after it
-    Given the operator writes the "discovery" design stage as "what we asked"
-    When the operator writes the "stories" design stage as "I want to see what is due"
+    Given the operator writes the "discovery" design stage with the goal "what we asked"
+    When the operator writes the "stories" design stage with the goal "I want to see what is due"
     Then the control plane refuses it as the wrong state
     And the refusal suggests "discovery"
 
@@ -72,8 +69,8 @@ Feature: A project is designed in stages before it is built
   # of the list, and a refusal naming the mockups sends them to a stage they cannot write either.
   Scenario: The refusal names the first stage without approval
     Given the "discovery" design stage is written and approved
-    And the operator writes the "stories" design stage as "I want to see what is due"
-    When the operator writes the "design_system" design stage as "one accent colour"
+    And the operator writes the "stories" design stage with the goal "I want to see what is due"
+    When the operator writes the "design_system" design stage with the goal "one accent colour"
     Then the control plane refuses it as the wrong state
     And the refusal suggests "stories"
 
@@ -88,7 +85,7 @@ Feature: A project is designed in stages before it is built
   # nobody ever agreed to, and the page that lists the six says which of the two this is.
   Scenario: Rewriting a stage takes its own approval away
     Given the "discovery" design stage is written and approved
-    When the operator writes the "discovery" design stage as "what we asked, the second time"
+    When the operator writes the "discovery" design stage with the goal "what we asked, the second time"
     And the operator reads the project's design stages
     Then the "discovery" design stage is not approved
     And the "discovery" design stage reads approved at version 1, holding version 2
@@ -97,7 +94,7 @@ Feature: A project is designed in stages before it is built
   # on each of them is gone and the write says which ones by name.
   Scenario: Rewriting a stage takes the approval off every stage after it
     Given every design stage is written and approved
-    When the operator writes the "stories" design stage as "the stories, rethought"
+    When the operator writes the "stories" design stage with the goal "the stories, rethought"
     Then the write says the approval went from "mockups"
     And the write says the approval went from "architecture"
     And the operator reads the project's design stages
@@ -114,6 +111,72 @@ Feature: A project is designed in stages before it is built
     When the operator writes the "wireframes" design stage as "the wireframes"
     Then the control plane refuses it as invalid
     And the refusal suggests "design_system"
+
+  # The shape of a stage, which is the whole of what the operator reads about a part of the design.
+  #
+  # Nothing held a stage to a shape before, so a stage was whatever a session wrote, and what a
+  # session writes is its research: file lists, line numbers, counts, a section for what it read and
+  # a section for what it did not. One project's stages ran to 46,053, 27,253 and 51,176 characters
+  # and the operator stopped reading them.
+  #
+  # A stage now carries seven headings, in one order, inside one page. Each heading is a thing to
+  # agree with or change, and the refusal names the heading that is missing rather than saying only
+  # that the shape is wrong.
+  Scenario: A stage that leaves a heading out is refused, and the refusal names it
+    When the operator writes the "discovery" design stage as:
+      """
+      # Discovery
+
+      ## Goal
+
+      say what the repository already draws.
+
+      ## Direction
+
+      bills are the whole product, and the three routes are all there is.
+
+      ## Assumptions
+
+      - pence is the unit everywhere. Correct me or I proceed.
+
+      ## Done when
+
+      - each route is written down with the screen it draws.
+
+      ## Not doing
+
+      - the deploy pipeline, because it draws no screen.
+
+      ## Open questions
+
+      - what happens to a bill after somebody pays it?
+      """
+    Then the control plane refuses it as invalid
+    And the refusal suggests "Decisions for the operator"
+    And the project holds no design stages
+
+  # The seven are read in one order. A reader who meets the decisions before the direction reads the
+  # recommendation after the thing it recommends.
+  Scenario: A stage whose headings are in another order is refused
+    When the operator writes the "discovery" design stage with the headings out of order
+    Then the control plane refuses it as invalid
+    And the refusal suggests "order"
+    And the project holds no design stages
+
+  # One page, and the refusal is what holds it to one. A warning kept the text, and a stage of fifty
+  # thousand characters then reached an operator who read none of it.
+  Scenario: A stage longer than one page is refused
+    When the operator writes a "discovery" design stage of 6001 characters
+    Then the control plane refuses it as invalid
+    And the refusal suggests "6,000 characters"
+    And the project holds no design stages
+
+  # The other side of both refusals. A brief of the right shape, at the length a real one runs to,
+  # goes in and comes back whole.
+  Scenario: The discovery the discover skill ships is a stage the control plane takes
+    When a session writes the discovery that the discover skill shows
+    Then the operator reads the project's design stages
+    And the "discovery" design stage carries the seven headings, in order
 
   # The artifact is the structured document a stage carries beside its prose, such as the flows the
   # mockups are played from. It is kept as json, because a reader opens it as json.
@@ -149,15 +212,7 @@ Feature: A project is designed in stages before it is built
 
   Scenario: An architecture stage with a diagram goes in
     Given the first 5 design stages are written and approved
-    When the operator writes the "architecture" design stage as:
-      """
-      the control plane holds the store
-
-      ```mermaid
-      flowchart LR
-        session --> controlplane --> store
-      ```
-      """
+    When the operator writes the "architecture" design stage with the goal "the control plane holds the store"
     And the operator reads the project's design stages
     Then the "architecture" design stage carries a diagram
     And the "architecture" design stage is not approved
@@ -173,6 +228,6 @@ Feature: A project is designed in stages before it is built
   # a rule over all six would refuse a discovery nobody can draw.
   Scenario: A stage that is not the data model or the architecture needs no diagram
     Given the "discovery" design stage is written and approved
-    When the operator writes the "stories" design stage as "I want to see what is due"
+    When the operator writes the "stories" design stage with the goal "I want to see what is due"
     And the operator reads the project's design stages
-    Then the "stories" design stage reads "I want to see what is due"
+    Then the "stories" design stage states the goal "I want to see what is due"

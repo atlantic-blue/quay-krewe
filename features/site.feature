@@ -42,7 +42,7 @@ Feature: A project's stages are read over http
     And the answer carries the brief "four bills, and two of them move"
     And the answer carries the "discovery" stage, written and approved at the same version
     And the answer carries the "stories" stage, written and approved at the same version
-    And the answer says the "stories" stage reads "the stories body"
+    And the answer says the "stories" stage states the goal "what the stories stage is for"
     When the operator reads the site at "/p/acme/no-such-project/stages.json"
     Then the site answers 404
     And the answer says "no-such-project"
@@ -52,12 +52,12 @@ Feature: A project's stages are read over http
   # agreed, written and never agreed, or changed after the word was given.
   Scenario: A stage written again comes back without the word it had
     Given the "discovery" design stage is written and approved
-    And the operator writes the "discovery" design stage as "four bills, and three of them move"
+    And the operator writes the "discovery" design stage with the goal "four bills, and three of them move"
     And the site is served on a local address
     When the operator reads the site at "/p/acme/house-bills/stages.json"
     Then the site answers 200
     And the answer carries the "discovery" stage at version 2, approved at version 1
-    And the answer says the "discovery" stage reads "four bills, and three of them move"
+    And the answer says the "discovery" stage states the goal "four bills, and three of them move"
 
   # The workspace, the project and the stage each name themselves when they are the part that is
   # missing, because an operator told only "not found" has three places to go and look.
@@ -115,7 +115,7 @@ Feature: A project's stages are read over http
   Scenario: The menu shows an approved stage and a stage changed since its approval
     Given the "discovery" design stage is written and approved
     And the "stories" design stage is written and approved
-    And the operator writes the "stories" design stage as "four bills, and three of them move"
+    And the operator writes the "stories" design stage with the goal "four bills, and three of them move"
     And the site is served on a local address
     When the operator reads the site at "/p/acme/house-bills/"
     Then the site answers 200
@@ -136,6 +136,12 @@ Feature: A project's stages are read over http
       """
       # Four bills
 
+      ## Goal
+
+      say what the repository already draws.
+
+      ## Direction
+
       Two of them move every month.
 
       - the rent moves
@@ -148,6 +154,26 @@ Feature: A project's stages are read over http
       <script>alert("the rent")</script>
 
       <img src="x" onerror="alert('the water')">
+
+      ## Assumptions
+
+      - pence is the unit everywhere. Correct me or I proceed.
+
+      ## Decisions for the operator
+
+      - keep the green accent: I recommend keeping it.
+
+      ## Done when
+
+      - each route is written down with the screen it draws.
+
+      ## Not doing
+
+      - the deploy pipeline, because it draws no screen.
+
+      ## Open questions
+
+      - what happens to a bill after somebody pays it?
       """
     And the site is served on a local address
     When the operator reads the site at "/p/acme/house-bills/stages.json"

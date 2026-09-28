@@ -1,31 +1,43 @@
 # discover: what a repository already holds, written down
 
-You read a repository that exists. You write the discovery stage of its project. The operator reads
-that stage and approves it. Every later stage builds on what you wrote. A screen you leave out is a
-screen somebody designs a second time.
+You read a repository that exists, and you write the discovery stage of its project. The operator
+reads it and approves it, and every later stage builds on it. A screen you leave out is a screen
+somebody designs a second time.
 
 Every command here takes an address, written as `<workspace>/<project>`.
 
 ## 1. Read the repository, not your memory of it
 
-Read the files. Write down the file each thing came from. A discovery written from a belief about a
-repository disagrees with the repository.
+Read the files: the routes, the components, the tokens, the entities, the patterns the code follows
+today, and the test tiers with what each covers. A discovery written from a belief about a repository
+disagrees with the repository.
 
-## 2. Write six lists
+The reading is yours. The document is the operator's. So it carries what you found, and never the
+route you took. Write no file path, no line number, no name of a function and no count, unless one
+decision rests on that exact fact. Then write that fact in one sentence, beside that decision.
 
-Write one document. Name the file each item came from.
+Write no list of what you read. Write no list of what you did not read. The files are in the
+artifact, one for each screen, where a later stage can use them.
 
-1. Routes and screens. One line for each route: the path, the screen it draws, and the file.
-2. Components. The parts a screen is built from, and the file of each part.
-3. Tokens. The colours, the fonts, the spacing and the radius, and the file that holds them.
-4. Data entities. The things the product keeps, and the file of each one.
-5. Patterns. The rules the code follows today. How it reads data. How it answers a refusal. How it
-   names a test.
-6. Test tiers. Each kind of test, the command that runs it, and what it covers.
+## 2. Write the stage as a brief
 
-End with one line for what you did not read, and why.
+The operator reads the stage alone and decides on it alone. It is a brief from a team lead: short,
+and every part of it is a thing to agree with or change. Use these seven headings, in this order,
+each written as `## <heading>`.
 
-`example/discovery.md` beside this brief is a whole document of the six lists. Copy its shape.
+    Goal                        one sentence, what this stage is for
+    Direction                   what you recommend and why, two or three short paragraphs
+    Assumptions                 one line each, each ending "correct me or I proceed"
+    Decisions for the operator  one line each, each carrying your recommendation
+    Done when                   one line each, and each one testable
+    Not doing                   one line each, with its reason on the same line
+    Open questions              only the ones a guess is not safe for
+
+One page of prose, and nothing longer. A body over 6,000 characters is refused, so a discovery that
+will not fit is a discovery still carrying its reading. Write no confidence percentage and no section
+for one. Where you are unsure, say so on the line of the decision it affects.
+
+`example/discovery.md` beside this brief is a whole document in this shape. Copy it.
 
 ## 3. Write the draft flows.json
 
@@ -47,17 +59,15 @@ Write a second file. It holds the screens that exist today, and nothing else.
     }
 
 Write the markup of each screen you found. One heading and one list is enough. You are writing down
-what is there, not designing it. Name the component each part stands for with
-`data-component="<the name>"`, and name the screen a part opens with `data-to="<the id>"`.
+what is there, not designing it. Name the component each part stands for with `data-component`, and
+name the screen a part opens with `data-to`.
 
 Four rules hold for every screen.
 
 - The status reads `built`. Discovery writes down what exists. A screen nobody built is not yours.
-- The surface reads `web` or `mobile`. Each one is drawn in its own frame.
-- The source names the file you read the screen from.
-- Write no colour and no font in the markup. Write the token values you read into the discovery
-  document instead, under list 3. The design system stage is where they go, and the operator
-  approves that stage before anybody draws a screen in them.
+- The surface reads `web` or `mobile`. Each is drawn in its own frame.
+- The source names the file you read the screen from. This is where a file path belongs.
+- Write no colour and no font in the markup. Say in the prose which one file holds the token values.
 
 `example/flows.json` beside this brief is a whole file for a repository of three routes. Copy it.
 

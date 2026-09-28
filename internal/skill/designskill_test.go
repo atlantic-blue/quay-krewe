@@ -19,7 +19,7 @@ import (
 func TestTheShippedDesignSkillLoads(t *testing.T) {
 	design := shippedSkill(t, "design")
 
-	if design.Version != 2 {
+	if design.Version != 3 {
 		t.Errorf("the design skill is version %d, and a session is pinned to the one it started with", design.Version)
 	}
 	if !slices.Contains(design.Binaries, "krewe") {
@@ -44,8 +44,8 @@ func TestTheShippedDesignSkillLoads(t *testing.T) {
 // The six parts of a restatement, which is what a session writes before it builds the step it took.
 // A session that reads five of them writes five, and the operator reads a restatement that is
 // missing the part they would have argued with.
-func TestTheDesignBriefStatesTheSixPartsOfARestatement(t *testing.T) {
-	brief := flowed(shippedSkill(t, "design").Brief)
+func TestTheDesignSkillStatesTheSixPartsOfARestatement(t *testing.T) {
+	brief := everythingTheDesignSkillSays(t)
 
 	for part, said := range map[string]string{
 		"what the step changes":        "changes, in your own words",
@@ -63,8 +63,8 @@ func TestTheDesignBriefStatesTheSixPartsOfARestatement(t *testing.T) {
 
 // What a step promises, and what krewe does with each promise. The scenario is the one krewe can
 // check, and the touches are the one krewe compares before it lets two sessions run at once.
-func TestTheDesignBriefSaysWhatEveryStepMustName(t *testing.T) {
-	brief := flowed(shippedSkill(t, "design").Brief)
+func TestTheDesignSkillSaysWhatEveryStepMustName(t *testing.T) {
+	brief := everythingTheDesignSkillSays(t)
 
 	for what, said := range map[string]string{
 		"that a step names the scenario that proves it": "the scenario that proves it",
@@ -248,4 +248,61 @@ func kreweCommands(t *testing.T) map[string]bool {
 		t.Fatalf("no commands were read out of krewe help, so this test proves nothing:\n%s", out)
 	}
 	return commands
+}
+
+// The brief sends a session to path.md, and a session that is never sent there never reads it. The
+// path half of this skill lives in that file because the loader refuses a brief past 4,096 bytes,
+// and a second file nothing names is a file nobody opens.
+func TestTheDesignBriefSendsASessionToThePathDocument(t *testing.T) {
+	design := shippedSkill(t, "design")
+
+	if !strings.Contains(design.Brief, "path.md") {
+		t.Error("the brief never names path.md, so the rules of a step and the restatement reach nobody")
+	}
+	if _, shipped := everyFileOf(t, design)["path.md"]; !shipped {
+		t.Error("the design skill ships no path.md, and the brief sends every session to it")
+	}
+}
+
+// everythingTheDesignSkillSays is every file the skill ships, read as one text.
+//
+// The brief has a size the loader refuses past, so the path document, the rules of one step and the
+// six parts of a restatement sit in path.md beside it. What has to hold is that the skill says them
+// and the brief sends a session there, which the test above holds. Which file carries a sentence is
+// a layout decision and not a promise.
+func everythingTheDesignSkillSays(t *testing.T) string {
+	t.Helper()
+
+	var said strings.Builder
+	for _, body := range everyFileOf(t, shippedSkill(t, "design")) {
+		said.WriteString(flowed(body))
+		said.WriteString(" ")
+	}
+	return said.String()
+}
+
+// The way off the old shape. A stage used to carry the session's reading: the files it opened, one
+// line for each, and the operator read a document whose largest section was a list that nothing else
+// in the system uses. A brief that still asks for it gets it.
+func TestTheDesignBriefAsksForNoReadingList(t *testing.T) {
+	brief := flowed(shippedSkill(t, "design").Brief)
+
+	for what, said := range map[string]string{
+		"a list of the files the session read": "name in the stage what you read, file by file",
+		"a list of what it did not read":       "end with one line for what you did not read",
+		"the file each thing came from":        "write down the file each thing came from",
+	} {
+		if strings.Contains(brief, said) {
+			t.Errorf("the brief still asks for %s: it says %q", what, said)
+		}
+	}
+	for what, said := range map[string]string{
+		"that a file path stays out of the stage": "write no file path",
+		"that no reading list is written":         "write no list of what you read",
+		"that no missing reading list is written": "write no list of what you did not read",
+	} {
+		if !strings.Contains(brief, said) {
+			t.Errorf("the brief never says %s: it never says %q", what, said)
+		}
+	}
 }

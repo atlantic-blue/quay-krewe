@@ -79,7 +79,7 @@ of the project's volume.
     krewe volume cp krewe://<workspace>/<project>/discovery.md .
     krewe volume cp krewe://<workspace>/<project>/flows.json .
 
-Print the discovery document whole. Do not write a summary. Do not print the first list only.
+Print the discovery document whole. Do not write a summary. Do not print one heading only.
 The operator approves the words that the operator reads.
 
 Say how many screens the flows.json holds. Name each one with the file it came from.

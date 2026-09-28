@@ -185,6 +185,21 @@ func initializeSiteSteps(sc *godog.ScenarioContext) {
 			return nil
 		})
 
+	// The goal line of the brief the answer carries, rather than the whole body. A scenario that
+	// compared the whole body would be reading back the seven headings its own setup wrote.
+	sc.Step(`^the answer says the "([^"]*)" stage states the goal "([^"]*)"$`,
+		func(ctx context.Context, stage, want string) error {
+			held, err := siteStage(ctx, stage)
+			if err != nil {
+				return err
+			}
+			if !strings.Contains(held.Body, "## Goal\n\n"+want+"\n") {
+				return fmt.Errorf("the %s stage reads %q in the answer, and its goal is not %q",
+					stage, held.Body, want)
+			}
+			return nil
+		})
+
 	sc.Step(`^the answer says the "([^"]*)" stage reads "([^"]*)"$`,
 		func(ctx context.Context, stage, want string) error {
 			held, err := siteStage(ctx, stage)

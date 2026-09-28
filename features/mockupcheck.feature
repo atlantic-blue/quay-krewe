@@ -121,9 +121,9 @@ Feature: A mockup is refused unless every part names its component
   # Prose first and the page after is how a stage gets written. A mockups stage with nothing to read
   # has nothing to refuse.
   Scenario: A mockups stage carrying prose alone is not refused
-    When the operator writes the "mockups" design stage as "the screens, in words"
+    When the operator writes the "mockups" design stage with the goal "the screens, in words"
     And the operator reads the project's design stages
-    Then the "mockups" design stage reads "the screens, in words"
+    Then the "mockups" design stage states the goal "the screens, in words"
 
   # The check belongs to the mockups and to nothing else. A check that reached the other five would
   # refuse the discovery stage for not being a flows.json.

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
-	"unicode/utf8"
 
 	quaycrewv1 "github.com/atlantic-blue/quay-krewe/gen/quaycrew/v1"
 	"github.com/atlantic-blue/quay-krewe/internal/store"
@@ -27,14 +26,6 @@ import (
 // here would read the stages, decide, and then write, and an approval that landed between the two
 // would let through exactly the write the rule exists to refuse. What lives here is the vocabulary:
 // which six names a person may type, and what a refusal says.
-
-// stageMark is the length past which a stage body is long enough to say so. It is the same number the
-// design body is measured against, because a stage is a part of the design and a page that would be
-// a whole repository pasted into one is a whole repository pasted into the other.
-//
-// It refuses nothing. The text is kept whole either way, and the caller is told the length so a
-// person decides.
-const stageMark = bodyMark
 
 // ListDesignStages returns the stages a project has written, in the order the six are written.
 //
@@ -67,6 +58,9 @@ func (s *Server) SetDesignStage(ctx context.Context, req *quaycrewv1.SetDesignSt
 		return nil, err
 	}
 	if err := checkStageDiagram(req.GetStage(), req.GetBody()); err != nil {
+		return nil, err
+	}
+	if err := checkStageShape(req.GetStage(), req.GetBody()); err != nil {
 		return nil, err
 	}
 
@@ -120,7 +114,7 @@ func (s *Server) SetDesignStage(ctx context.Context, req *quaycrewv1.SetDesignSt
 
 	return &quaycrewv1.SetDesignStageResponse{
 		Stage:    written,
-		Warnings: append(stageWarnings(req.GetStage(), req.GetBody(), approvedBefore), mockupWarnings...),
+		Warnings: append(stageWarnings(req.GetStage(), approvedBefore), mockupWarnings...),
 	}, nil
 }
 
@@ -230,15 +224,17 @@ func (s *Server) approvedStagesAfter(ctx context.Context, project, stage string)
 	return after
 }
 
-// stageWarnings is what a write says beyond having written: the approvals it took away, and a body
-// long enough to be worth saying so.
+// stageWarnings is what a write says beyond having written: the approvals it took away.
+//
+// It says nothing about the length. A stage past the ceiling is refused rather than warned about,
+// because a warning kept the text and that is how a stage of fifty thousand characters reached an
+// operator who then read none of it.
 //
 // The approvals are named rather than counted. An operator who wrote the stories again has to
 // re approve the mockups and the data model, and a warning saying two stages lost their approval
 // sends them to the listing to work out which.
-func stageWarnings(stage, body string, cleared []string) []string {
-	warnings := overMark("the "+stage+" stage", utf8.RuneCountInString(body), stageMark,
-		"one stage of the design")
+func stageWarnings(stage string, cleared []string) []string {
+	var warnings []string
 	if len(cleared) > 0 {
 		warnings = append(warnings, fmt.Sprintf(
 			"writing %s took the approval off %s, because each was agreed under the text that just changed",

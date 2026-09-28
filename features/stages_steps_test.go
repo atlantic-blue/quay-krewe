@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	quaycrewv1 "github.com/atlantic-blue/quay-krewe/gen/quaycrew/v1"
+	"github.com/atlantic-blue/quay-krewe/internal/controlplane"
 	"github.com/atlantic-blue/quay-krewe/internal/store"
 	"github.com/cucumber/godog"
 )
@@ -34,6 +35,15 @@ func initializeStageSteps(sc *godog.ScenarioContext) {
 		return readStages(ctx)
 	})
 
+	// The goal is the one line of a brief a scenario cares about, and the six headings around it are
+	// the shape every stage holds to. A scenario naming a goal is writing a whole brief.
+	sc.Step(`^the operator writes the "([^"]*)" design stage with the goal "([^"]*)"$`,
+		func(ctx context.Context, stage, goal string) error {
+			return writeStage(ctx, stage, briefWithTheGoal(stage, unescape(goal)), "")
+		})
+
+	// The body exactly as the scenario wrote it, which is what a scenario about the shape itself
+	// needs: a stage missing a heading, and a stage past the length one page runs to.
 	sc.Step(`^the operator writes the "([^"]*)" design stage as "([^"]*)"$`,
 		func(ctx context.Context, stage, body string) error {
 			return writeStage(ctx, stage, unescape(body), "")
@@ -51,6 +61,50 @@ func initializeStageSteps(sc *godog.ScenarioContext) {
 	sc.Step(`^the operator writes the "([^"]*)" design stage with the artifact:$`,
 		func(ctx context.Context, stage string, artifact *godog.DocString) error {
 			return writeStage(ctx, stage, settledBody(stage), artifact.Content)
+		})
+
+	// The order alone, with every heading still there. The swap is made here rather than written out
+	// in the scenario, so the seven stay in one place and a scenario cannot drift from them.
+	sc.Step(`^the operator writes the "([^"]*)" design stage with the headings out of order$`,
+		func(ctx context.Context, stage string) error {
+			body := briefWithTheGoal(stage, "what this stage is for")
+			swapped := strings.Replace(body,
+				"## Goal\n\nwhat this stage is for\n\n## Direction",
+				"## Direction\n\nwhat this stage is for\n\n## Goal", 1)
+			if swapped == body {
+				return fmt.Errorf("the swap changed nothing, so this scenario proves nothing about the order")
+			}
+			return writeStage(ctx, stage, swapped, "")
+		})
+
+	// A whole brief with the reading it was written from left on the end, which is the shape the
+	// length refuses: a stage that is really a research document.
+	sc.Step(`^the operator writes a "([^"]*)" design stage of (\d+) characters$`,
+		func(ctx context.Context, stage string, want int) error {
+			body := briefWithTheGoal(stage, "what this stage is for")
+			for len([]rune(body)) < want {
+				body += "the reading, pasted in. "
+			}
+			return writeStage(ctx, stage, body, "")
+		})
+
+	// The seven headings on a stage that went in, in the order a reader meets them.
+	sc.Step(`^the "([^"]*)" design stage carries the seven headings, in order$`,
+		func(ctx context.Context, stage string) error {
+			held, err := stageRead(ctx, stage)
+			if err != nil {
+				return err
+			}
+			at := 0
+			for _, heading := range controlplane.StageHeadings() {
+				found := strings.Index(held.GetBody()[at:], "## "+heading)
+				if found < 0 {
+					return fmt.Errorf("the %s stage carries no %q heading after the one before it: %q",
+						stage, heading, held.GetBody())
+				}
+				at += found + len(heading)
+			}
+			return nil
 		})
 
 	sc.Step(`^the operator approves the "([^"]*)" design stage$`, func(ctx context.Context, stage string) error {
@@ -136,6 +190,21 @@ func initializeStageSteps(sc *godog.ScenarioContext) {
 		}
 		return nil
 	})
+
+	// The goal line alone, which is what a scenario that wrote a brief named. The six headings around
+	// it are setup, and a scenario reading the whole body back would be reading its own setup.
+	sc.Step(`^the "([^"]*)" design stage states the goal "([^"]*)"$`,
+		func(ctx context.Context, stage, want string) error {
+			held, err := stageRead(ctx, stage)
+			if err != nil {
+				return err
+			}
+			if !strings.Contains(held.GetBody(), "## Goal\n\n"+unescape(want)+"\n") {
+				return fmt.Errorf("the %s stage reads %q, and its goal is not %q",
+					stage, held.GetBody(), unescape(want))
+			}
+			return nil
+		})
 
 	sc.Step(`^the "([^"]*)" design stage reads "([^"]*)"$`, func(ctx context.Context, stage, want string) error {
 		held, err := stageRead(ctx, stage)
@@ -270,14 +339,29 @@ func settleStage(ctx context.Context, stage string) error {
 }
 
 // settledBody is the body the setup writes for one stage.
+func settledBody(stage string) string {
+	return briefWithTheGoal(stage, "what the "+stage+" stage is for")
+}
+
+// briefWithTheGoal is a whole stage brief carrying the goal a scenario named.
+//
+// A scenario says what the stage is for and reads that one line back. The six headings around it are
+// the shape the control plane holds every stage to, and a scenario writing them out each time would
+// be six lines of setup around one line of meaning.
 //
 // The data model and the architecture each describe a structure, and a structure is written as a
-// picture, so a write of either carries a diagram or it is refused. A setup without one would be
-// refused, and every scenario standing on it would read as a failure of its own.
-func settledBody(stage string) string {
-	body := "the " + stage + " body"
+// picture, so a brief for either carries a diagram as well or the write is refused.
+func briefWithTheGoal(stage, goal string) string {
+	body := "# The " + stage + "\n\n" +
+		"## Goal\n\n" + goal + "\n\n" +
+		"## Direction\n\nwhat we recommend for the " + stage + ", and the reason we recommend it.\n\n" +
+		"## Assumptions\n\n- four bills, and two of them move. Correct me or I proceed.\n\n" +
+		"## Decisions for the operator\n\n- keep the green accent or pick another: I recommend keeping it.\n\n" +
+		"## Done when\n\n- the stage after this one can be written.\n\n" +
+		"## Not doing\n\n- the deploy pipeline, because it draws no screen.\n\n" +
+		"## Open questions\n\n- what happens to a bill after somebody pays it?\n"
 	if stage == store.StageDataModel || stage == store.StageArchitecture {
-		return body + "\n\n```mermaid\nflowchart TD\n  one --> two\n```\n"
+		return body + "\n```mermaid\nflowchart TD\n  one --> two\n```\n"
 	}
 	return body
 }
