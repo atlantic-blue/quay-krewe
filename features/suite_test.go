@@ -344,6 +344,12 @@ type world struct {
 	// storeStalls makes every health probe wait without answering, for the scenarios about a system
 	// that reads well and cannot write.
 	storeStalls bool
+	// sessionReads counts what a listing asks the store for one session at a time, for the scenarios
+	// about a caller that gives up in the middle of one. Nil leaves the store as it is.
+	sessionReads *countedSessionReads
+	// lastList is what the last session listing answered, kept so a step can read it after the call
+	// that asked for it has ended.
+	lastList *quaycrewv1.ListSessionsResponse
 	// startWait and exportWait are the system's budgets. A scenario about a budget running out sets
 	// them short, because a scenario that waits the real minute out is a scenario nobody runs.
 	startWait time.Duration
@@ -509,6 +515,9 @@ func (w *world) serve() error {
 func (w *world) systemStore() store.Store {
 	if w.storeStalls {
 		return stallingStore{Store: w.store}
+	}
+	if w.sessionReads != nil {
+		return w.sessionReads
 	}
 	return w.store
 }
@@ -744,6 +753,7 @@ func initializeScenario(sc *godog.ScenarioContext) {
 	initializeMacOSSandboxSteps(sc)
 	initializeSystemDirectorySteps(sc)
 	initializeWaitsSteps(sc)
+	initializeListCancelSteps(sc)
 	initializeDegradedSteps(sc)
 	initializeWorkingSteps(sc)
 	initializeDrainSteps(sc)
