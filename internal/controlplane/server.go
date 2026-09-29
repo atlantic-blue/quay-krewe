@@ -297,11 +297,17 @@ func (s *Server) GetUsage(ctx context.Context, _ *quaycrewv1.GetUsageRequest) (*
 	var total sandbox.Usage
 	var counted int64
 	for _, archived := range []bool{false, true} {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		sessions, err := s.store.ListSessions(ctx, store.SessionFilter{Archived: archived})
 		if err != nil {
 			return nil, storeError(err, "list sessions")
 		}
 		for _, session := range sessions {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			spent := s.storage.ConversationUsage(boxOf(session), session.GetModelSessionId())
 			if spent.Empty() {
 				continue
@@ -1957,6 +1963,11 @@ const systemOwnPrefix = "QC_"
 // lets a listing tell a conversation nobody is watching from an empty container. It is asked for
 // rather than always done because the answer costs a question to the sandbox per row, and the
 // callers that resolve an address or find a session by name have no use for it.
+//
+// Each pass over the sessions reads the caller's context before the next one, and the call ends with
+// that error rather than with a listing. A console asks for this every few seconds and gives up on a
+// late answer, so a call that keeps working for a caller who has gone is work taken from the callers
+// still waiting for one.
 func (s *Server) ListSessions(ctx context.Context, req *quaycrewv1.ListSessionsRequest) (*quaycrewv1.ListSessionsResponse, error) {
 	sessions, err := s.store.ListSessions(ctx, store.SessionFilter{
 		Workspace: req.GetWorkspace(),
@@ -1967,11 +1978,18 @@ func (s *Server) ListSessions(ctx context.Context, req *quaycrewv1.ListSessionsR
 		return nil, storeError(err, "list sessions")
 	}
 	for _, session := range sessions {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		s.withUsage(session)
 		s.withContextSpend(session)
 	}
-	s.withContextWindows(ctx, sessions)
-	s.withStaleness(ctx, sessions)
+	if err := s.withContextWindows(ctx, sessions); err != nil {
+		return nil, err
+	}
+	if err := s.withStaleness(ctx, sessions); err != nil {
+		return nil, err
+	}
 	if req.GetPresence() {
 		s.withPresence(ctx, sessions)
 	}
@@ -2006,8 +2024,12 @@ func (s *Server) GetSession(ctx context.Context, req *quaycrewv1.GetSessionReque
 	}
 	s.withUsage(session)
 	s.withContextSpend(session)
-	s.withContextWindows(ctx, []*quaycrewv1.Session{session})
-	s.withStaleness(ctx, []*quaycrewv1.Session{session})
+	if err := s.withContextWindows(ctx, []*quaycrewv1.Session{session}); err != nil {
+		return nil, err
+	}
+	if err := s.withStaleness(ctx, []*quaycrewv1.Session{session}); err != nil {
+		return nil, err
+	}
 	return &quaycrewv1.GetSessionResponse{Session: session}, nil
 }
 
@@ -2015,9 +2037,15 @@ func (s *Server) GetSession(ctx context.Context, req *quaycrewv1.GetSessionReque
 // set. A session with no recorded birth set has no live sandbox and is never stale. The current set
 // is computed once per workspace, not once per session, because a listing is most of what the
 // console asks for.
-func (s *Server) withStaleness(ctx context.Context, sessions []*quaycrewv1.Session) {
+//
+// It costs a store read per session, so it reads the caller's context before each one and gives up
+// with that error when the caller has gone.
+func (s *Server) withStaleness(ctx context.Context, sessions []*quaycrewv1.Session) error {
 	current := map[string]string{}
 	for _, session := range sessions {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		born, err := s.store.SessionSkills(ctx, session.GetId())
 		if err != nil || born == "" {
 			continue
@@ -2028,6 +2056,7 @@ func (s *Server) withStaleness(ctx context.Context, sessions []*quaycrewv1.Sessi
 		}
 		session.Stale = born != current[workspace]
 	}
+	return nil
 }
 
 // withUsage puts what a session's conversation has cost onto it, read from the transcript the model
@@ -2063,9 +2092,15 @@ func (s *Server) withUsage(session *quaycrewv1.Session) {
 // The ceiling goes on beside the two numbers, so a client says what the share means rather than
 // working it out from a limit of its own. It is read once per workspace rather than once per session,
 // the way staleness is: a listing is most of what the console asks for.
-func (s *Server) withContextWindows(ctx context.Context, sessions []*quaycrewv1.Session) {
+//
+// It searches the conversation store per session, so it reads the caller's context before each one
+// and gives up with that error when the caller has gone.
+func (s *Server) withContextWindows(ctx context.Context, sessions []*quaycrewv1.Session) error {
 	ceilings := map[string]int32{}
 	for _, session := range sessions {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		carried := s.storage.ConversationContext(boxOf(session), session.GetModelSessionId())
 		if carried.Empty() {
 			continue
@@ -2082,6 +2117,7 @@ func (s *Server) withContextWindows(ctx context.Context, sessions []*quaycrewv1.
 			Used: carried.Carried(), Size: size, Ceiling: ceilings[workspace],
 		}
 	}
+	return nil
 }
 
 // withContextSpend puts where a session's context went onto it, by category.
