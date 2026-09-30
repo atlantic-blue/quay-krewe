@@ -758,6 +758,7 @@ func initializeScenario(sc *godog.ScenarioContext) {
 	initializeScreenSteps(sc)
 	initializeStatusLineSteps(sc)
 	initializeIdentifierSteps(sc)
+	initializeMemoryPressureSteps(sc)
 	initializePresenceSteps(sc)
 	initializePresenceToolSteps(sc)
 	initializePresenceToolReadingSteps(sc)

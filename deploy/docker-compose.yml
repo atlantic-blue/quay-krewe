@@ -6,6 +6,7 @@ services:
   # switched on.
   redpanda:
     image: redpandadata/redpanda:v24.2.7
+    restart: unless-stopped
     command:
       - redpanda
       - start
@@ -25,6 +26,9 @@ services:
 
   postgres:
     image: postgres:17-alpine
+    restart: unless-stopped
+    # As the control plane below, and a connection process inherits it from the postmaster.
+    oom_score_adj: -900
     environment:
       POSTGRES_DB: quaycrew
       POSTGRES_USER: quaycrew
@@ -40,6 +44,7 @@ services:
 
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.109.0
+    restart: unless-stopped
     command: ["--config=/etc/otel-collector.yaml"]
     volumes:
       - ./otel-collector.yaml:/etc/otel-collector.yaml:ro
@@ -53,6 +58,7 @@ services:
       target: runtime
       args:
         SERVICE: gateway
+    restart: unless-stopped
     environment:
       QC_SERVICE_NAME: gateway
       QC_OTEL_ENDPOINT: otel-collector:4317
@@ -70,6 +76,12 @@ services:
         # Which build this system is, so the tool can say when it and the system are different builds.
         # The up target passes the commit; anything else builds a system that says "dev".
         QC_VERSION: ${QC_VERSION:-dev}
+    restart: unless-stopped
+    # The kernel picks what to kill by a process's size plus this number, and the system's own
+    # services are the smallest things on the machine: at the 0 every container starts with, the
+    # control plane at 110 mebibytes lost to two test runners holding 15.4 gibibytes. Not -1000,
+    # which exempts a process entirely, so one with a memory fault of its own takes the machine down.
+    oom_score_adj: -900
     environment:
       QC_SERVICE_NAME: controlplane
       QC_OTEL_ENDPOINT: otel-collector:4317
@@ -213,6 +225,7 @@ services:
   # command is not a job for a person.
   grafana:
     image: grafana/grafana:11.2.0
+    restart: unless-stopped
     environment:
       GF_AUTH_ANONYMOUS_ENABLED: "true"
       GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
@@ -224,6 +237,7 @@ services:
 
   loki:
     image: grafana/loki:3.2.0
+    restart: unless-stopped
     command: ["-config.file=/etc/loki/local-config.yaml"]
     volumes:
       - ./loki.yaml:/etc/loki/local-config.yaml:ro
@@ -231,6 +245,7 @@ services:
 
   tempo:
     image: grafana/tempo:2.6.0
+    restart: unless-stopped
     command: ["-config.file=/etc/tempo.yaml"]
     # The image ships no default config, so without this mount the container exits on startup and the
     # stack comes up one service short.
@@ -240,6 +255,7 @@ services:
 
   prometheus:
     image: prom/prometheus:v2.54.1
+    restart: unless-stopped
     # Without this it falls back to the image default and scrapes only itself, which looks like a
     # working Prometheus and holds none of the system's numbers.
     command: ["--config.file=/etc/prometheus/prometheus.yml"]
