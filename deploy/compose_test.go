@@ -216,6 +216,11 @@ type composeService struct {
 	Networks    map[string]composeEndpoint `yaml:"networks"`
 	Ports       []string                   `yaml:"ports"`
 	Environment map[string]string          `yaml:"environment"`
+	// KillPriority is oom_score_adj, which the kernel adds to a process's badness score before it
+	// chooses what to kill. A pointer, because zero is what every container carried on the day this
+	// went wrong, so absent and zero have to read differently.
+	KillPriority *int   `yaml:"oom_score_adj"`
+	Restart      string `yaml:"restart"`
 }
 
 // composeEndpoint is what a service says about one of its networks. A null value is the ordinary
@@ -355,5 +360,69 @@ func TestTheSiteIsPublishedAndBoundWhereThePublishedPortCanReachIt(t *testing.T)
 	if told := controlPlane.Environment["QC_SITE_ADDR"]; told != ":50052" {
 		t.Errorf("the control plane is told to serve the site on %q, and a container that binds "+
 			"loopback answers nothing through the published port", told)
+	}
+}
+
+// TestTheSystemsOwnServicesAreTheLastTheKernelKills.
+//
+// On 2026-09-29 the Docker machine ran out of memory. Two sessions' test runners held 15.4 gibibytes
+// between them, and what the kernel killed was the control plane, at about 110 mebibytes. Every exec
+// under way died with "the system restarted while this exec was running". The kernel chooses by a
+// process's size plus its oom_score_adj, every container in this file carried zero, and the system's
+// own services are the smallest things on the machine.
+//
+// So the two that hold the state the rest cannot be rebuilt from are pushed to the back of that
+// queue. -900 and not -1000: at -1000 the kernel never picks the process at all, so a control plane
+// with a memory fault of its own would take the whole machine down instead of dying.
+//
+// A Postgres connection is a process of its own, forked from the postmaster, and oom_score_adj is
+// inherited, so the one line covers every one of them.
+func TestTheSystemsOwnServicesAreTheLastTheKernelKills(t *testing.T) {
+	const priority = -900
+	stack := composeFile(t)
+	if len(stack.Services) == 0 {
+		t.Fatal("no services found in the compose file, so this test proves nothing")
+	}
+
+	for _, name := range []string{"controlplane", "postgres"} {
+		service, declared := stack.Services[name]
+		if !declared {
+			t.Errorf("the compose file has no %s service, so this test guards nothing", name)
+			continue
+		}
+		if service.KillPriority == nil {
+			t.Errorf("the %s service is left at the priority every container starts with, so the kernel "+
+				"weighs it against a session's test runner by size alone and it is the smaller of the two", name)
+			continue
+		}
+		if got := *service.KillPriority; got != priority {
+			t.Errorf("the %s service carries a kill priority of %d, want %d", name, got, priority)
+		}
+	}
+}
+
+// TestEveryServiceComesBackWithoutAPerson refuses the whole class rather than the services that were
+// down on the day.
+//
+// The Docker machine stopped and started again on 2026-09-29, and the stack stayed down: no service
+// in this file asked to be started again, so every container had to be started by hand. A policy on
+// the two that matter would leave the same hole for the collector, the store of traces or the
+// broker, and a stack that comes up nine tenths of the way is a stack whose faults land somewhere
+// other than the missing part.
+//
+// unless-stopped rather than always, because a service the operator stopped on purpose has to stay
+// stopped.
+func TestEveryServiceComesBackWithoutAPerson(t *testing.T) {
+	const policy = "unless-stopped"
+	stack := composeFile(t)
+	if len(stack.Services) == 0 {
+		t.Fatal("no services found in the compose file, so this test proves nothing")
+	}
+
+	for name, service := range stack.Services {
+		if service.Restart != policy {
+			t.Errorf("the %s service is started with %q, so it stays down after the machine restarts until "+
+				"somebody starts it by hand, want %q", name, service.Restart, policy)
+		}
 	}
 }
