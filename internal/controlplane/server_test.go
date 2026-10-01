@@ -3,8 +3,10 @@ package controlplane_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"strings"
+	"sync"
 	"testing"
 
 	quaycrewv1 "github.com/atlantic-blue/quay-krewe/gen/quaycrew/v1"
@@ -440,5 +442,169 @@ func TestASystemSweepNamesTheWorkspaceItCouldNotRead(t *testing.T) {
 	}
 	if reachable.GetId() == unreadable.GetId() {
 		t.Fatal("both workspaces have one id, so this test proves nothing")
+	}
+}
+
+// sessionReads is the store under a caller that walks away: it counts what a listing asks the store
+// for one session at a time, and it is where the caller goes.
+//
+// The conversation store is a struct rather than an interface, so nothing can count the transcripts a
+// listing reads. The store is the one per session read a double can see, and the same loop makes both,
+// so counting one of them says whether the loop stopped.
+type sessionReads struct {
+	store.Store
+	mu     sync.Mutex
+	skills int
+	lists  int
+	// leaveAfterSkills is the session whose skills read takes the caller away, and leaveOnList the
+	// listing that does. Zero is a caller that stays.
+	leaveAfterSkills int
+	leaveOnList      int
+	leave            func()
+}
+
+func (s *sessionReads) SessionSkills(ctx context.Context, id string) (string, error) {
+	born, err := s.Store.SessionSkills(ctx, id)
+	s.mu.Lock()
+	s.skills++
+	leaving := s.leaveAfterSkills > 0 && s.skills == s.leaveAfterSkills
+	s.mu.Unlock()
+	if leaving {
+		s.leave()
+	}
+	return born, err
+}
+
+func (s *sessionReads) ListSessions(ctx context.Context, filter store.SessionFilter) ([]*quaycrewv1.Session, error) {
+	listed, err := s.Store.ListSessions(ctx, filter)
+	s.mu.Lock()
+	s.lists++
+	leaving := s.leaveOnList > 0 && s.lists == s.leaveOnList
+	s.mu.Unlock()
+	if leaving {
+		s.leave()
+	}
+	return listed, err
+}
+
+// leavesAfter arms the caller and forgets what setting the test up read, so the counts below belong
+// to the call under test and to nothing else.
+func (s *sessionReads) leavesAfter(skills, lists int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.skills, s.lists = 0, 0
+	s.leaveAfterSkills, s.leaveOnList = skills, lists
+}
+
+func (s *sessionReads) counted() (skills, lists int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.skills, s.lists
+}
+
+// seedSessions puts sessions in the store without dispatching to any of them, which is the only way a
+// test stands up enough of them to watch a listing stop in the middle of one.
+func seedSessions(t *testing.T, held store.Store, project string, count int) {
+	t.Helper()
+	for i := range count {
+		_, _, err := held.FindOrCreateSession(context.Background(), project,
+			fmt.Sprintf("session-%d", i), store.Birth{})
+		if err != nil {
+			t.Fatalf("seed session %d: %v", i, err)
+		}
+	}
+}
+
+// A console asks for the session list every few seconds and gives up on a list that is late, so the
+// calls nobody waits for are most of what a jammed control plane is busy with. This is the one that
+// says a listing stops where its caller stopped.
+func TestAListStopsWhereItsCallerStopped(t *testing.T) {
+	const sessions = 40
+	const waitedFor = 3
+
+	ctx, gone := context.WithCancel(context.Background())
+	defer gone()
+
+	held := store.NewMemory()
+	reads := &sessionReads{Store: held, leave: gone}
+	s := controlplane.NewServer(controlplane.Config{
+		Store: reads, Runner: &model.FakeRunner{}, Provider: &sandbox.FakeProvider{},
+		Secrets: secrets.NewMemory(),
+	})
+	_, project := newProject(t, s)
+	seedSessions(t, held, project, sessions)
+	reads.leavesAfter(waitedFor, 0)
+
+	listed, err := s.ListSessions(ctx, &quaycrewv1.ListSessionsRequest{Project: project})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("the list answered %v, want the error of the caller that went", err)
+	}
+	if got := len(listed.GetSessions()); got != 0 {
+		t.Errorf("the list hands back %d sessions to a caller that is not there", got)
+	}
+	skills, lists := reads.counted()
+	if skills == 0 {
+		t.Fatal("the list read no session at all, so the caller never went and this test proves nothing")
+	}
+	if skills > waitedFor {
+		t.Errorf("the list read %d sessions, and its caller went after %d", skills, waitedFor)
+	}
+	if lists > 1 {
+		t.Errorf("the list took %d store listings, so it went on counting the hidden ones after its caller went", lists)
+	}
+}
+
+// The other half of the same contract: a caller that waits gets everything it waited for.
+func TestAListAnswersInFullForACallerThatWaits(t *testing.T) {
+	const sessions = 40
+
+	held := store.NewMemory()
+	s := controlplane.NewServer(controlplane.Config{
+		Store: held, Runner: &model.FakeRunner{}, Provider: &sandbox.FakeProvider{},
+		Secrets: secrets.NewMemory(),
+	})
+	_, project := newProject(t, s)
+	seedSessions(t, held, project, sessions)
+
+	listed, err := s.ListSessions(context.Background(), &quaycrewv1.ListSessionsRequest{Project: project})
+	if err != nil {
+		t.Fatalf("ListSessions: %v", err)
+	}
+	if got := len(listed.GetSessions()); got != sessions {
+		t.Fatalf("the list holds %d sessions, want the %d in the system", got, sessions)
+	}
+}
+
+// The usage call reads every transcript the system holds, live and archived, so it is the other call
+// that a console can leave working for a caller that has gone.
+func TestUsageStopsWhenItsCallerHasGone(t *testing.T) {
+	const sessions = 40
+
+	ctx, gone := context.WithCancel(context.Background())
+	defer gone()
+
+	held := store.NewMemory()
+	reads := &sessionReads{Store: held, leave: gone}
+	s := controlplane.NewServer(controlplane.Config{
+		Store: reads, Runner: &model.FakeRunner{}, Provider: &sandbox.FakeProvider{},
+		Secrets: secrets.NewMemory(),
+	})
+	_, project := newProject(t, s)
+	seedSessions(t, held, project, sessions)
+	reads.leavesAfter(0, 1)
+
+	spent, err := s.GetUsage(ctx, &quaycrewv1.GetUsageRequest{})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("the usage call answered %v, want the error of the caller that went", err)
+	}
+	if spent.GetSessions() != 0 {
+		t.Errorf("the usage call counted %d sessions for a caller that is not there", spent.GetSessions())
+	}
+	_, lists := reads.counted()
+	if lists == 0 {
+		t.Fatal("the usage call listed nothing at all, so the caller never went and this test proves nothing")
+	}
+	if lists > 1 {
+		t.Errorf("the usage call took %d store listings, and its caller went during the first", lists)
 	}
 }
