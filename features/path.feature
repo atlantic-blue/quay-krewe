@@ -3614,12 +3614,13 @@ Feature: A project holds a numbered path of steps
   # The run that lost a record on 2 October 2026. A test runner prints "●" at the head of a failure,
   # the cut by byte count landed between its bytes, and Postgres refused the whole write with
   # SQLSTATE 22021. The operator got no record of a run that had finished.
-  Scenario: A step check whose output is cut inside a multibyte character is recorded, and the kept output is valid UTF-8
+  Scenario: A step check whose output is cut inside a multibyte character is recorded, and the kept output is valid UTF-8.
     Given a step taken, restated and approved, naming the scenario "a project carries a brief"
     And the project's proof command is "go test ./features/... -run {scenario}"
     And the run answers 12000 characters with a character across the cut and exits 1
     When the operator checks step 1
-    Then step 1 reads back as failing
+    Then the check came back with a record
+    And step 1 reads back as failing
     And step 1's output is valid UTF-8
     And step 1's output keeps 3998 characters of the run
     And step 1's output carries "the first 8002 characters of this run were cut"

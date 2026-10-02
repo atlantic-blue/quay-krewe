@@ -2707,6 +2707,21 @@ func initializeProofRunSteps(sc *godog.ScenarioContext) {
 		return nil
 	})
 
+	// The refusal this step exists for. A record that was never written reads exactly like a step
+	// nobody checked, so the error the call came back with is the only thing that names the cause.
+	// A gRPC response carries a string field the same way a Postgres column does: neither takes a
+	// character cut in half, and both answer by refusing the whole write.
+	sc.Step(`^the check came back with a record$`, func(ctx context.Context) error {
+		w, p := worldFrom(ctx), pathFrom(ctx)
+		if w.lastErr != nil {
+			return fmt.Errorf("the check recorded nothing, and the run had finished: %v", w.lastErr)
+		}
+		if p.checked == nil {
+			return fmt.Errorf("the check answered nothing at all")
+		}
+		return nil
+	})
+
 	// Carries rather than reads exactly, because the sentence krewe writes is the control plane's and
 	// a scenario asks what is in it: the name of the scenario, and the count the run reported.
 	sc.Step(`^step (\d+)'s result carries "([^"]*)"$`,
