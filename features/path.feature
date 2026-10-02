@@ -3611,6 +3611,20 @@ Feature: A project holds a numbered path of steps
     And step 1's output carries "the first 8000 characters of this run were cut"
     And step 1's output carries "the end of the run"
 
+  # The run that lost a record on 2 October 2026. A test runner prints "●" at the head of a failure,
+  # the cut by byte count landed between its bytes, and Postgres refused the whole write with
+  # SQLSTATE 22021. The operator got no record of a run that had finished.
+  Scenario: A step check whose output is cut inside a multibyte character is recorded, and the kept output is valid UTF-8
+    Given a step taken, restated and approved, naming the scenario "a project carries a brief"
+    And the project's proof command is "go test ./features/... -run {scenario}"
+    And the run answers 12000 characters with a character across the cut and exits 1
+    When the operator checks step 1
+    Then step 1 reads back as failing
+    And step 1's output is valid UTF-8
+    And step 1's output keeps 3998 characters of the run
+    And step 1's output carries "the first 8002 characters of this run were cut"
+    And step 1's output carries "the end of the run"
+
   # A count nobody could read is not a scenario that failed. The output says so, because a verdict
   # with no reason under it sends somebody to read a suite that ran perfectly well.
   Scenario: A pattern that finds no count says so, and the verdict is failing

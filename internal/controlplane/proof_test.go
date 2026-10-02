@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	quaycrewv1 "github.com/atlantic-blue/quay-krewe/gen/quaycrew/v1"
 	"github.com/atlantic-blue/quay-krewe/internal/model"
@@ -135,5 +136,50 @@ func TestCheckTwoRefusesASystemThatKeepsNoDirectory(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "keeps no directory") {
 		t.Fatalf("the refusal is %q, want it to say the system keeps no directory", err.Error())
+	}
+}
+
+// The first of the two cuts. A run that prints without stopping is read to the end and only its last
+// 64 kibibytes are held, and that cut is by byte count, so it can fall between the bytes of one
+// character. What comes out then starts with the rest of a character, which is not text any database
+// takes and not text the proto wire format carries.
+func TestTheEndOfARunIsCutOnACharacterBoundary(t *testing.T) {
+	// The bullet a test runner prints at the head of a failure. It is three bytes, and it sits one
+	// byte before the cut, so the cut falls inside it.
+	const dot = "●"
+	const before = 999
+	ending := "\n1 scenarios (0 passed, 1 failed)\nthe end of the run\n"
+	printed := strings.Repeat("a", before) + dot +
+		strings.Repeat("b", proofOutputRead+1_000-before-len(dot)-len(ending)) + ending
+
+	kept := theEndOfTheRun(strings.NewReader(printed))
+
+	if !utf8.ValidString(kept) {
+		t.Fatalf("the run was cut inside a character: what is kept starts %q", kept[:min(16, len(kept))])
+	}
+	if len(kept) > proofOutputRead {
+		t.Errorf("the run keeps %d bytes, and the ceiling is %d", len(kept), proofOutputRead)
+	}
+	// Forward to the next character and never back, so at most one whole character is lost.
+	if len(kept) < proofOutputRead-utf8.UTFMax {
+		t.Errorf("the run keeps %d bytes, and only the character across the cut is dropped", len(kept))
+	}
+	if !strings.HasSuffix(printed, kept) {
+		t.Error("what is kept is not the end of what the run printed")
+	}
+	if !strings.HasSuffix(kept, ending) {
+		t.Error("the end of the run, which carries the count, was cut off")
+	}
+}
+
+// A run whose output is no character at all. Nothing here is text, so there is no boundary to move
+// to, and the cut still holds the ceiling rather than reading on forever.
+func TestARunThatPrintsNoCharactersIsStillCutToTheCeiling(t *testing.T) {
+	printed := strings.Repeat("\xff", proofOutputRead+1_000)
+
+	kept := theEndOfTheRun(strings.NewReader(printed))
+
+	if len(kept) > proofOutputRead {
+		t.Errorf("the run keeps %d bytes, and the ceiling is %d", len(kept), proofOutputRead)
 	}
 }

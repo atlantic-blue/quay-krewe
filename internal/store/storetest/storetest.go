@@ -15,6 +15,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	quaycrewv1 "github.com/atlantic-blue/quay-krewe/gen/quaycrew/v1"
 	"github.com/atlantic-blue/quay-krewe/internal/deploy"
@@ -6185,6 +6186,83 @@ func runProofResultConformance(t *testing.T, newDataset func(t *testing.T) Opene
 		if read.GetProofOutput() != kept {
 			t.Errorf("the step reads back %d characters, and the write answered %d",
 				len(read.GetProofOutput()), len(kept))
+		}
+	})
+
+	// The cut by byte count is what lost a whole run on 2 October 2026. A test runner prints "●" at
+	// the head of a failure, three bytes wide, and the cut landed between them. Postgres refuses a
+	// string that is not valid UTF-8 with SQLSTATE 22021, so the record of a run that had finished
+	// was never written at all.
+	t.Run("a run cut inside a multibyte character is recorded, and the kept output is valid UTF-8",
+		func(t *testing.T) {
+			s := newDataset(t)(t)
+			ctx := context.Background()
+			feature := newFeature(t, s, newProject(t, s, "acme", "house-bills"), "the bills")
+			writePath(t, s, feature.GetId(), store.Step{Number: 1, Title: "the first"})
+
+			// One byte more than the store keeps, so the character at the front of the tail starts
+			// one byte before the cut and the cut falls inside it.
+			tail := "●" + strings.Repeat("b", store.ProofOutputKept+1-len("●")-len("the end")) + "the end"
+			long := strings.Repeat("a", 12_000-len(tail)) + tail
+
+			written, err := s.RecordProof(ctx, feature.GetId(), 1, store.ProofResult{
+				State: store.ProofFailing, ScenariosRun: 1, Output: long})
+			if err != nil {
+				t.Fatalf("the run was not recorded at all: %v", err)
+			}
+			kept := written.GetProofOutput()
+			if !utf8.ValidString(kept) {
+				t.Fatalf("the output is not valid UTF-8, and no database takes it: it starts %q",
+					kept[:min(16, len(kept))])
+			}
+			first, rest, found := strings.Cut(kept, "\n")
+			if !found {
+				t.Fatalf("the output carries no line above it: %q", kept)
+			}
+			// Forward to the next character and never back, so the limit still holds, and the whole
+			// character the cut fell inside is gone rather than half of it.
+			if len(rest) > store.ProofOutputKept {
+				t.Errorf("the output keeps %d characters of the run, and the limit is %d",
+					len(rest), store.ProofOutputKept)
+			}
+			if !strings.HasSuffix(rest, "the end") {
+				t.Error("the output kept the front of the run rather than the end of it")
+			}
+			// The line says how many characters came before the kept ones, so it moves with the cut.
+			if want := fmt.Sprintf("the first %d characters", len(long)-len(rest)); !strings.Contains(first, want) {
+				t.Errorf("the first line reads %q, want it to say %q", first, want)
+			}
+			// And out of the store as well as out of the write, because what Postgres refuses is the
+			// write and a read that answered from memory would hide it.
+			read, err := s.GetStep(ctx, feature.GetId(), 1)
+			if err != nil {
+				t.Fatalf("GetStep: %v", err)
+			}
+			if read.GetProofOutput() != kept {
+				t.Errorf("the step reads back %d characters, and the write answered %d",
+					len(read.GetProofOutput()), len(kept))
+			}
+		})
+
+	// Bytes that are no character at all. A run that printed part of a binary file, or output in
+	// another encoding, is still a run the operator has to be able to read the end of.
+	t.Run("a run that printed bytes that are not UTF-8 at all is still recorded", func(t *testing.T) {
+		s := newDataset(t)(t)
+		ctx := context.Background()
+		feature := newFeature(t, s, newProject(t, s, "acme", "house-bills"), "the bills")
+		writePath(t, s, feature.GetId(), store.Step{Number: 1, Title: "the first"})
+
+		written, err := s.RecordProof(ctx, feature.GetId(), 1, store.ProofResult{
+			State: store.ProofFailing, ScenariosRun: 1, Output: "1 scenarios \xff\xfe failed"})
+		if err != nil {
+			t.Fatalf("the run was not recorded at all: %v", err)
+		}
+		kept := written.GetProofOutput()
+		if !utf8.ValidString(kept) {
+			t.Fatalf("the output is not valid UTF-8, and no database takes it: %q", kept)
+		}
+		if !strings.HasPrefix(kept, "1 scenarios ") || !strings.HasSuffix(kept, " failed") {
+			t.Errorf("the output reads %q, and the characters around the bytes are the run", kept)
 		}
 	})
 
