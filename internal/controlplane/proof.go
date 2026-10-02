@@ -561,6 +561,10 @@ func noCheckoutToRunIn(places []sandbox.Place, held *quaycrewv1.Step) error {
 
 // theEndOfTheRun is the last proofOutputRead characters the run printed, read to the end.
 //
+// The cut moves forward to the start of a character, because a cut by byte count lands between the
+// bytes of one whenever the run printed a character near the ceiling, and what came out then was
+// text no database and no wire format would carry.
+//
 // Everything is read and the front is thrown away, rather than the reader being cut short: a reader
 // nobody drains stops the command dead as soon as the pipe fills, and a run stopped by the thing
 // watching it reports a failure that never happened.
@@ -574,7 +578,7 @@ func theEndOfTheRun(stream io.Reader) string {
 			if kept.Len() > proofOutputRead {
 				held := kept.String()
 				kept.Reset()
-				kept.WriteString(held[len(held)-proofOutputRead:])
+				kept.WriteString(store.FromAWholeCharacter(held[len(held)-proofOutputRead:]))
 			}
 		}
 		if err != nil {

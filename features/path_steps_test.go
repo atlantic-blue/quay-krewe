@@ -2575,6 +2575,22 @@ func initializeProofRunSteps(sc *godog.ScenarioContext) {
 			})
 		})
 
+	// The same run with one character sitting across the cut. A test runner prints "●" and "›" when
+	// it reports a failure, and each is three bytes, so a cut by byte count lands between them.
+	sc.Step(`^the run answers (\d+) characters with a character across the cut and exits (\d+)$`,
+		func(ctx context.Context, length, code int) error {
+			ending := "\n1 scenarios (0 passed, 1 failed)\nthe end of the run\n"
+			// One byte more than the step keeps, so the character at the front of it starts one byte
+			// before the cut and the cut falls inside it.
+			tail := theRunnersDot +
+				strings.Repeat("b", store.ProofOutputKept+1-len(theRunnersDot)-len(ending)) + ending
+			return theRunAnswers(ctx, sandbox.Reply{
+				Match: theProofCommandRuns,
+				Out:   strings.Repeat("a", length-len(tail)) + tail,
+				Err:   exitedWith(code),
+			})
+		})
+
 	// A command that runs on past the budget it was given. The delay is longer than any budget a
 	// scenario sets, so what ends the run is the budget and never the clock on this machine.
 	sc.Step(`^the run never answers$`, func(ctx context.Context) error {
@@ -2691,6 +2707,21 @@ func initializeProofRunSteps(sc *godog.ScenarioContext) {
 		return nil
 	})
 
+	// The refusal this step exists for. A record that was never written reads exactly like a step
+	// nobody checked, so the error the call came back with is the only thing that names the cause.
+	// A gRPC response carries a string field the same way a Postgres column does: neither takes a
+	// character cut in half, and both answer by refusing the whole write.
+	sc.Step(`^the check came back with a record$`, func(ctx context.Context) error {
+		w, p := worldFrom(ctx), pathFrom(ctx)
+		if w.lastErr != nil {
+			return fmt.Errorf("the check recorded nothing, and the run had finished: %v", w.lastErr)
+		}
+		if p.checked == nil {
+			return fmt.Errorf("the check answered nothing at all")
+		}
+		return nil
+	})
+
 	// Carries rather than reads exactly, because the sentence krewe writes is the control plane's and
 	// a scenario asks what is in it: the name of the scenario, and the count the run reported.
 	sc.Step(`^step (\d+)'s result carries "([^"]*)"$`,
@@ -2762,6 +2793,24 @@ func initializeProofRunSteps(sc *godog.ScenarioContext) {
 			return nil
 		})
 
+	// Postgres refuses a string that is not valid UTF-8, with SQLSTATE 22021, and records nothing at
+	// all. So this is the assertion the whole record depends on, and not a reading of the text.
+	sc.Step(`^step (\d+)'s output is valid UTF-8$`, func(ctx context.Context, number int) error {
+		step, err := stepAsItStands(ctx, int32(number))
+		if err != nil {
+			return err
+		}
+		kept := step.GetProofOutput()
+		if kept == "" {
+			return fmt.Errorf("step %d recorded no output at all, so there is nothing to read", number)
+		}
+		if utf8.ValidString(kept) {
+			return nil
+		}
+		return fmt.Errorf("step %d's output is not valid UTF-8, so no database takes it: it starts %q",
+			number, kept[:min(8, len(kept))])
+	})
+
 	sc.Step(`^step (\d+) carries the moment it was checked$`, func(ctx context.Context, number int) error {
 		step, err := stepAsItStands(ctx, int32(number))
 		if err != nil {
@@ -2820,6 +2869,10 @@ func initializeProofRunSteps(sc *godog.ScenarioContext) {
 // the sandbox matches its answer on. The commands differ in what follows it, and a scenario should
 // not have to repeat the whole command line to say what the run printed.
 const theProofCommandRuns = "-run"
+
+// theRunnersDot is the bullet a test runner prints at the head of a failure. It is three bytes, and
+// it is what a run printed on the day a cut inside a character lost a whole record.
+const theRunnersDot = "●"
 
 // closedByKrewe is the word the row carries when krewe closed a step its own check passed. It is the
 // control plane's and it is read off the wire, so it is named here rather than compared inline.
