@@ -21,6 +21,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	quaycrewv1 "github.com/atlantic-blue/quay-krewe/gen/quaycrew/v1"
 	"github.com/atlantic-blue/quay-krewe/internal/deploy"
@@ -400,13 +401,35 @@ func ARedRun(result ProofResult) bool {
 // Both stores call it, so the two cannot disagree about what a long run reads back as. The line is
 // above the output rather than below it, because a reader who stops after one line has to learn that
 // what follows is the end of a run and not the whole of it.
+//
+// What is kept is always text. A run prints whatever the commands inside it print, and some of that
+// is no character at all, so anything that cannot be read as one is replaced before the cut.
 func KeptProofOutput(output string) string {
+	output = strings.ToValidUTF8(output, "�")
 	if len(output) <= ProofOutputKept {
 		return output
 	}
-	cut := len(output) - ProofOutputKept
+	kept := FromAWholeCharacter(output[len(output)-ProofOutputKept:])
 	return fmt.Sprintf("[the first %d characters of this run were cut, the last %d are kept]\n%s",
-		cut, ProofOutputKept, output[cut:])
+		len(output)-len(kept), len(kept), kept)
+}
+
+// FromAWholeCharacter is s from the first character that starts in it.
+//
+// A cut by byte count lands between the bytes of a character whenever the run printed one near the
+// limit, and what is left then opens with the rest of that character. Postgres refuses such a string
+// with SQLSTATE 22021, and a gRPC string field refuses it too, so a cut one byte out of place costs
+// the whole record rather than one character.
+//
+// It moves forward and never back, so what is kept is never longer than the cut meant to keep. At
+// most three bytes go, because no character is wider than four.
+func FromAWholeCharacter(s string) string {
+	for i := 0; i < len(s) && i < utf8.UTFMax; i++ {
+		if utf8.RuneStart(s[i]) {
+			return s[i:]
+		}
+	}
+	return s
 }
 
 // StepInFlight is one step in state taken, and the feature it sits in. The feature travels with it
